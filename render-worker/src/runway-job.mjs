@@ -197,17 +197,20 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
   // Step 1: re-encode each clip to a uniform codec/framerate so concat works
   // safely. Runway clips can return at varying frame rates and sometimes
   // different containers; normalize first to avoid concat artifacts.
+  // RAM-conscious flags: -threads 1, ultrafast preset, scaled to 1080p max
+  // — Render Standard has 2GB and Chromium is sharing it.
   const normalizedClips = [];
   for (const clip of clipResults) {
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
     await runFFmpeg([
       "-y",
+      "-threads", "1",
       "-i", clip.clipPath,
-      "-vf", "fps=30,scale='trunc(iw/2)*2:trunc(ih/2)*2'",
+      "-vf", "fps=30,scale='min(1920,iw)':-2:flags=fast_bilinear",
       "-c:v", "libx264",
       "-pix_fmt", "yuv420p",
-      "-preset", "veryfast",
-      "-crf", "20",
+      "-preset", "ultrafast",
+      "-crf", "23",
       "-an",
       normalized
     ]);
@@ -224,6 +227,7 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
   const stitched = path.join(tempDir, "stitched.mp4");
   await runFFmpeg([
     "-y",
+    "-threads", "1",
     "-f", "concat",
     "-safe", "0",
     "-i", concatList,
@@ -238,6 +242,7 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
   if (musicUrl) {
     await runFFmpeg([
       "-y",
+      "-threads", "1",
       "-i", stitched,
       "-i", musicUrl,
       "-c:v", "copy",
@@ -252,13 +257,22 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     await fs.copyFile(stitched, outputPath);
   }
 
+  // Free the normalized clips immediately — they can each be 10-30 MB and
+  // we no longer need them after the concat step. Helps RAM pressure on
+  // the Supabase upload that follows.
+  for (const clip of normalizedClips) {
+    await fs.unlink(clip.clipPath).catch(() => {});
+  }
+  await fs.unlink(stitched).catch(() => {});
+
   // Step 4: extract a thumbnail from ~10% in.
   await runFFmpeg([
     "-y",
+    "-threads", "1",
     "-i", outputPath,
     "-ss", "1.5",
     "-vframes", "1",
-    "-q:v", "2",
+    "-q:v", "3",
     thumbnailPath
   ]);
 }
