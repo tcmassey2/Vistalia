@@ -1,17 +1,17 @@
 {
   "cleanUrls": true,
   "trailingSlash": false,
-  "buildCommand": "node scripts/verify-static-deploy.mjs && cd app && npm install --no-audit --no-fund && npm run build",
+  "buildCommand": "node scripts/verify-static-deploy.mjs && cd webapp && npm install --no-audit --no-fund && npm run build",
   "rewrites": [
-    { "source": "/app/assets/:path*", "destination": "/app/dist/assets/:path*" },
-    { "source": "/app", "destination": "/app/dist/index.html" },
-    { "source": "/app/:path*", "destination": "/app/dist/index.html" },
-    { "source": "/demo", "destination": "/app/dist/index.html" },
-    { "source": "/demo/:path*", "destination": "/app/dist/index.html" },
-    { "source": "/beta", "destination": "/app/dist/index.html" },
-    { "source": "/beta/:path*", "destination": "/app/dist/index.html" },
-    { "source": "/waitlist", "destination": "/app/dist/index.html" },
-    { "source": "/waitlist/:path*", "destination": "/app/dist/index.html" }
+    { "source": "/app/assets/:path*", "destination": "/webapp/dist/assets/:path*" },
+    { "source": "/app", "destination": "/webapp/dist/index.html" },
+    { "source": "/app/:path*", "destination": "/webapp/dist/index.html" },
+    { "source": "/demo", "destination": "/webapp/dist/index.html" },
+    { "source": "/demo/:path*", "destination": "/webapp/dist/index.html" },
+    { "source": "/beta", "destination": "/webapp/dist/index.html" },
+    { "source": "/beta/:path*", "destination": "/webapp/dist/index.html" },
+    { "source": "/waitlist", "destination": "/webapp/dist/index.html" },
+    { "source": "/waitlist/:path*", "destination": "/webapp/dist/index.html" }
   ],
   "headers": [
     {

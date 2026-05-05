@@ -1,8 +1,8 @@
 import { access, readFile } from "node:fs/promises";
 
 // Verify the bare minimum of files needed for the deployment to make sense.
-// The new /app/ surface is built by Vite and lives at /app/dist/ after build,
-// so we only check the SOURCE files here (not the build output).
+// The /app/ surface is built by Vite from /webapp/ source. The build output
+// lives at /webapp/dist/ after build, so we only check the SOURCE files here.
 
 const requiredFiles = [
   // Marketing landing
@@ -10,22 +10,22 @@ const requiredFiles = [
   "landing.css",
   "landing.js",
 
-  // App (Vite + React + TypeScript)
-  "app/package.json",
-  "app/index.html",
-  "app/src/main.tsx",
-  "app/src/App.tsx",
-  "app/src/lib/store.ts",
-  "app/src/lib/supabase.ts",
-  "app/src/lib/api.ts",
-  "app/src/lib/types.ts",
-  "app/src/screens/AuthScreen.tsx",
-  "app/src/screens/DashboardScreen.tsx",
-  "app/src/screens/ProjectScreen.tsx",
-  "app/vite.config.ts",
-  "app/tsconfig.json",
-  "app/tailwind.config.js",
-  "app/postcss.config.js",
+  // App (Vite + React + TypeScript) — source lives at /webapp/
+  "webapp/package.json",
+  "webapp/index.html",
+  "webapp/src/main.tsx",
+  "webapp/src/App.tsx",
+  "webapp/src/lib/store.ts",
+  "webapp/src/lib/supabase.ts",
+  "webapp/src/lib/api.ts",
+  "webapp/src/lib/types.ts",
+  "webapp/src/screens/AuthScreen.tsx",
+  "webapp/src/screens/DashboardScreen.tsx",
+  "webapp/src/screens/ProjectScreen.tsx",
+  "webapp/vite.config.ts",
+  "webapp/tsconfig.json",
+  "webapp/tailwind.config.js",
+  "webapp/postcss.config.js",
 
   // API routes (Vercel serverless functions)
   "api/env.js",
@@ -60,6 +60,6 @@ for (const file of requiredFiles) {
 
 JSON.parse(await readFile("vercel.json", "utf8"));
 JSON.parse(await readFile("package.json", "utf8"));
-JSON.parse(await readFile("app/package.json", "utf8"));
+JSON.parse(await readFile("webapp/package.json", "utf8"));
 
 console.log(`EstateMotion static deploy check passed: ${requiredFiles.length} files present.`);
