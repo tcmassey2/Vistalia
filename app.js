@@ -5764,39 +5764,61 @@ function renderExport() {
   const preflightError = accountGate ? "" : validatePreRenderManifest(result, { live: !featureFlags.MOCK_RENDERING });
   const mp4Url = state.exportResult?.mp4Url || state.renderJobStatus?.mp4Url || "";
   const isRendering = ["queued", "rendering"].includes(state.renderJobStatus?.status);
-  const exportOptions = [
-    ["Vertical Reel", "9:16 branded MP4", "Instagram / TikTok / Shorts"],
-    ["Horizontal Tour", "16:9 branded MP4", "YouTube / website"],
-    ["Square Feed", "1:1 branded MP4", "Instagram feed"],
-    ["MLS Clean", "Unbranded clean MP4", "Compliance-ready"],
-    ["Caption Pack", "Caption + hashtags", "Post-ready copy"]
-  ];
+  const engine = state.project.renderEngine === "runway" ? "runway" : "remotion";
   renderLayout(`
-    <div class="screen-title cinematic-title"><p class="eyebrow">Export</p><h2>Your listing video is ready.</h2><p>Create polished versions for Reels, TikTok, YouTube, your website, and MLS-safe sharing.</p></div>
-    <section class="export-delivery-grid">
-      <div class="video-player-shell export-preview-shell">
-        <div class="player-chrome"><span>Final video preview</span><b>${escapeHtml(selectedListingVideoStyleLabel())}</b></div>
-        ${motionSequencePreview(result.scenes, selectedTemplate())}
+    <div class="screen-title"><p class="eyebrow">Step 5 of 5</p><h2>Render your video.</h2><p>Choose a render engine, then generate the final MP4. Quick Reel renders in under 90 seconds; Cinematic AI takes 3–5 minutes and uses true image-to-video AI.</p></div>
+    <section class="panel render-launch-panel">
+      <div class="engine-toggle" role="radiogroup" aria-label="Render engine">
+        <button class="engine-option ${engine === "remotion" ? "active" : ""}" data-set-engine="remotion" type="button">
+          <span class="engine-name">Quick Reel</span>
+          <span class="engine-desc">Cinematic photo motion. Fast, reliable, no AI artifacts.</span>
+          <span class="engine-meta">~90 second render &middot; included with every plan</span>
+        </button>
+        <button class="engine-option ${engine === "runway" ? "active" : ""}" data-set-engine="runway" type="button">
+          <span class="engine-name">Cinematic AI <span class="engine-tag">PRO</span></span>
+          <span class="engine-desc">True image-to-video motion via Runway Gen-3. The buyer-stops-scrolling tier.</span>
+          <span class="engine-meta">3–5 minute render &middot; Cinematic AI plan or higher</span>
+        </button>
       </div>
-      <section class="panel elevated export-command">
-        <div class="section-title"><p>Delivery</p><h3>${accountGate ? "Create account to export" : preflightError ? "One more step" : "Ready to create files"}</h3></div>
-        ${accountGate ? `<div class="state-banner loading-state"><strong>Your preview is ready</strong><span>Create your free account to save the project and export the finished video.</span></div>` : preflightError ? `<div class="state-banner error-state"><strong>Export needs attention</strong><span>${escapeHtml(publicFacingError(preflightError))}</span></div>` : mp4Url ? `<div class="state-banner loading-state"><strong>Real MP4 complete</strong><span>Your final listing video is ready to watch and download below.</span></div>` : isRendering ? `<div class="state-banner loading-state"><span class="spinner"></span><strong>${escapeHtml(state.renderJobStatus.phase || "Rendering scenes")}</strong></div>` : `<div class="state-banner loading-state"><strong>Ready for real MP4 rendering</strong><span>EstateMotion will send this validated manifest to Remotion and create a 45-60 second listing video.</span></div>`}
-        <div class="render-quality-strip">
-          <span>Camera motion: ${escapeHtml([...new Set(result.scenes.map((scene) => scene.cameraMotion || scene.renderMotion).filter(Boolean))].slice(0, 3).join(" / "))}</span>
-          <span>Transitions: ${escapeHtml([...new Set(result.scenes.map((scene) => scene.transition).filter(Boolean))].slice(0, 3).join(" / "))}</span>
-          <span>Music: ${escapeHtml(result.musicTiming?.track?.label || selectedMusicTrack().label)}</span>
-        </div>
-        <div class="export-option-grid">${exportOptions.map(([title, body, format]) => exportOptionCard(title, body, format)).join("")}</div>
-        <div class="actions single-primary-row">
-          <button class="primary" data-queue-pack ${isRendering ? "disabled" : ""}>${mp4Url ? "Render Again" : "Generate Video"}</button>
-          ${mp4Url ? `<a class="secondary button-link" href="${escapeAttr(mp4Url)}" download target="_blank" rel="noreferrer">Download MP4</a>` : ""}
-        </div>
-      </section>
+      ${accountGate
+        ? `<div class="state-banner loading-state"><strong>Your preview is ready.</strong><span>Create a free account to render the final MP4.</span></div>`
+        : preflightError
+          ? `<div class="state-banner error-state"><strong>Almost there.</strong><span>${escapeHtml(publicFacingError(preflightError))}</span></div>`
+          : mp4Url
+            ? `<div class="state-banner loading-state"><strong>Render complete.</strong><span>Your video is ready below.</span></div>`
+            : isRendering
+              ? `<div class="state-banner loading-state"><span class="spinner"></span><strong>${escapeHtml(state.renderJobStatus.phase || "Rendering")}</strong></div>`
+              : ""}
+      <div class="actions single-primary-row">
+        <button class="ghost" data-back-preview type="button">&larr; Back to preview</button>
+        <button class="primary" data-queue-pack type="button" ${isRendering ? "disabled" : ""}>${mp4Url ? "Render Again" : "Generate Video"}</button>
+      </div>
+      ${mp4Url ? `<div class="render-result"><video src="${escapeAttr(mp4Url)}" controls playsinline preload="metadata"></video><a class="secondary" href="${escapeAttr(mp4Url)}" download target="_blank" rel="noreferrer">Download MP4</a></div>` : ""}
     </section>
     ${renderQueuePanel()}
   `);
-  document.querySelector("[data-queue-pack]").addEventListener("click", queueContentPack);
+  document.querySelector("[data-queue-pack]")?.addEventListener("click", queueContentPack);
   document.querySelector("[data-retry-render]")?.addEventListener("click", queueContentPack);
+  document.querySelector("[data-back-preview]")?.addEventListener("click", () => navigate("preview"));
+  document.querySelectorAll("[data-set-engine]").forEach((btn) => {
+    btn.addEventListener("click", () => setRenderEngine(btn.dataset.setEngine));
+  });
+}
+
+function setRenderEngine(engine) {
+  const next = engine === "runway" ? "runway" : "remotion";
+  if ((state.project.renderEngine || "remotion") === next) return;
+  setState((current) => ({
+    ...current,
+    project: {
+      ...current.project,
+      renderEngine: next,
+      // Edit plan must regenerate so it carries Runway prompts (or drops them)
+      motionDirectorPlan: null,
+      motionDirectorStatus: motionDirectorIdleStatus(current.project.motionDirectorStatus)
+    }
+  }));
+  showToast(next === "runway" ? "Cinematic AI selected" : "Quick Reel selected");
 }
 
 function contentPack() {
@@ -5868,7 +5890,8 @@ async function createMotionDirectorPlan({ signature = motionDirectorSignature(),
           photos: apiPhotos,
           listingDetails: pipelineListingDetails(),
           selectedStyle: selectedListingVideoStyleLabel(),
-          exportFormat: "vertical"
+          exportFormat: "vertical",
+          engine: state.project.renderEngine || "remotion"
         })
       }, 30000);
       payload = await response.json().catch(() => payload);
@@ -6507,16 +6530,18 @@ function isLocalOnlyUrl(url = "") {
 function buildExportPayload() {
   const sequence = createPipelineSequence();
   const music = selectedMusicTrack();
+  const engine = state.project.renderEngine === "runway" ? "runway" : "remotion";
   return {
     app: "EstateMotion",
     product: "Professional real estate listing video renderer",
     createdAt: new Date().toISOString(),
+    engine,
     project: state.project,
     brandKit: state.brandKit,
     template: selectedTemplate(),
     stylePack: templatePipelineId(),
     renderer: {
-      engine: "Remotion",
+      engine: engine === "runway" ? "Runway" : "Remotion",
       motionSystem: "deterministic-still-photo-depth-simulation",
       editPlanSource: state.project.motionDirectorPlan?.source || "deterministic-fallback",
       editPlanId: state.project.motionDirectorPlan?.id || "",

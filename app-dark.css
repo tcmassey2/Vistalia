@@ -997,6 +997,98 @@ body {
   .style-gallery-grid { grid-template-columns: 1fr !important; }
 }
 
+/* ============================================================
+   Engine toggle on Export — Quick Reel vs Cinematic AI
+   ============================================================ */
+.render-launch-panel {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 18px !important;
+}
+
+.engine-toggle {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 10px !important;
+}
+@media (min-width: 720px) {
+  .engine-toggle { grid-template-columns: 1fr 1fr !important; }
+}
+
+.engine-option {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 6px !important;
+  padding: 16px !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease) !important;
+  font-family: "Inter", sans-serif !important;
+  color: var(--ink) !important;
+}
+.engine-option:hover {
+  border-color: var(--border-strong) !important;
+  background: var(--surface-raised) !important;
+}
+.engine-option.active {
+  border-color: var(--gold) !important;
+  background: var(--surface-raised) !important;
+  box-shadow: 0 0 0 1px var(--gold) inset !important;
+}
+
+.engine-name {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--ink) !important;
+}
+.engine-tag {
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  padding: 2px 6px !important;
+  background: var(--gold) !important;
+  color: #1A1208 !important;
+  border-radius: 4px !important;
+}
+.engine-desc {
+  font-size: 13px !important;
+  color: var(--ink-soft) !important;
+  line-height: 1.45 !important;
+}
+.engine-meta {
+  font-size: 11px !important;
+  color: var(--muted) !important;
+  margin-top: 2px !important;
+}
+
+/* Render result video player */
+.render-result {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  padding: 16px !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+}
+.render-result video {
+  width: 100% !important;
+  max-height: 560px !important;
+  border-radius: var(--radius) !important;
+  background: #000 !important;
+}
+.render-result .secondary {
+  align-self: flex-start !important;
+}
+
 /* Reduce motion gracefully */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
