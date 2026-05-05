@@ -118,12 +118,17 @@ export const useStore = create<AppState>((set, get) => ({
       authReady: true,
       screen: session ? "dashboard" : "auth"
     });
-    onAuthChange((s) => {
-      const prev = get().session;
-      set({ session: s });
-      if (!prev && s) set({ screen: "dashboard", error: "" });
-      if (prev && !s) set({ ...emptyProject(), screen: "auth", projectList: [], error: "" });
-    });
+    try {
+      onAuthChange((s) => {
+        const prev = get().session;
+        set({ session: s });
+        if (!prev && s) set({ screen: "dashboard", error: "" });
+        if (prev && !s) set({ ...emptyProject(), screen: "auth", projectList: [], error: "" });
+      });
+    } catch {
+      // Supabase not configured — auth state changes won't fire, but the
+      // app still renders. The user will see an error when they try to sign in.
+    }
   },
 
   setSession: (s) => set({ session: s }),

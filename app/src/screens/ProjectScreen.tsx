@@ -278,6 +278,7 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
               {/* Reorder + remove controls */}
               <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
+                  type="button"
                   onClick={() => movePhoto(photo.id, -1)}
                   disabled={idx === 0}
                   className="w-7 h-7 grid place-items-center rounded bg-paper/80 backdrop-blur-sm text-ink hover:text-gold text-xs disabled:opacity-30"
@@ -286,6 +287,7 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
                   ↑
                 </button>
                 <button
+                  type="button"
                   onClick={() => movePhoto(photo.id, 1)}
                   disabled={idx === photos.length - 1}
                   className="w-7 h-7 grid place-items-center rounded bg-paper/80 backdrop-blur-sm text-ink hover:text-gold text-xs disabled:opacity-30"
@@ -294,6 +296,7 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
                   ↓
                 </button>
                 <button
+                  type="button"
                   onClick={() => removePhoto(photo.id)}
                   className="w-7 h-7 grid place-items-center rounded bg-paper/80 backdrop-blur-sm text-ink hover:text-red-400 text-sm"
                   aria-label="Remove"

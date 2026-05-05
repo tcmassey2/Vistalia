@@ -61,6 +61,7 @@ export default function AuthScreen() {
           <div className="bg-surface border border-edge rounded-2xl p-6 sm:p-8">
             <div className="inline-flex p-1 bg-surface-input rounded-full border border-edge mb-6">
               <button
+                type="button"
                 onClick={() => setMode("signin")}
                 className={`h-8 px-4 rounded-full text-sm font-medium transition-colors ${
                   mode === "signin" ? "bg-gold text-paper" : "text-ink-muted hover:text-ink"
@@ -69,6 +70,7 @@ export default function AuthScreen() {
                 Sign in
               </button>
               <button
+                type="button"
                 onClick={() => setMode("signup")}
                 className={`h-8 px-4 rounded-full text-sm font-medium transition-colors ${
                   mode === "signup" ? "bg-gold text-paper" : "text-ink-muted hover:text-ink"
