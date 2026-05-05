@@ -1,0 +1,402 @@
+/* EstateMotion — app shell dark cinematic overrides.
+ *
+ * Loaded AFTER styles.css in app/index.html, demo/index.html, beta/index.html.
+ * Wins the cascade against the older duplicate selectors that exist throughout
+ * styles.css (e.g. .primary is redefined at lines 561, 2220, 2815, 5019 — this
+ * sheet decisively beats all of them by virtue of being last).
+ *
+ * Goal: visual continuity with the new landing page (landing.css). When a user
+ * clicks "Sign in" or "Start free trial" on the landing, the /app surface
+ * should feel like the same product, not a different one.
+ */
+
+/* ============================================================
+   Tokens — re-declared at body scope to win against any inline
+   computed styles that may have cached. Mirrors landing.css.
+   ============================================================ */
+body {
+  --paper: #08080A;
+  --bg-soft: #0E0E12;
+  --card: #15151B;
+  --card-elevated: #1F1F26;
+  --line: #2A2A33;
+  --line-soft: #1A1A22;
+  --ink: #F8F5EF;
+  --ink-soft: #C4C4C8;
+  --muted: #9B9CA0;
+  --gold: #C7A76C;
+  --gold-light: #E3BB73;
+  --dark-gold: #9C773B;
+  --font-display: "Fraunces", "Times New Roman", Georgia, serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  background:
+    radial-gradient(ellipse 60% 40% at 50% -10%, rgba(199, 167, 108, 0.10), transparent 60%),
+    linear-gradient(180deg, var(--bg-soft), var(--paper)) !important;
+  background-attachment: fixed !important;
+  color: var(--ink) !important;
+  font-family: var(--font-body) !important;
+}
+
+/* ============================================================
+   Top nav / sticky chrome
+   ============================================================ */
+.topbar,
+.bottom-nav {
+  background: rgba(8, 8, 10, 0.82) !important;
+  backdrop-filter: blur(18px) saturate(160%) !important;
+  border-bottom-color: var(--line) !important;
+}
+
+.brand h1,
+.screen-title h2,
+.section-title h3,
+h1, h2, h3 {
+  font-family: var(--font-display) !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.02em !important;
+  color: var(--ink) !important;
+}
+
+.eyebrow,
+.brand p {
+  color: var(--gold) !important;
+  font-family: "JetBrains Mono", "SF Mono", monospace !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.18em !important;
+  font-weight: 500 !important;
+  font-size: 12px !important;
+}
+
+.muted,
+.screen-title p {
+  color: var(--muted) !important;
+}
+
+.credit-pill {
+  background: rgba(199, 167, 108, 0.12) !important;
+  color: var(--gold-light) !important;
+  border: 1px solid rgba(199, 167, 108, 0.22) !important;
+  font-weight: 600 !important;
+}
+
+.status-dot {
+  background: rgba(248, 245, 239, 0.04) !important;
+  border-color: var(--line) !important;
+  color: var(--muted) !important;
+}
+.status-dot.live { color: var(--success, #5BBE9B) !important; }
+
+/* ============================================================
+   Surfaces / cards / panels
+   ============================================================ */
+.panel,
+.hero-card,
+.photo-card,
+.template-card,
+.export-card,
+.pricing-card,
+.scene-card,
+.stat-card {
+  background: var(--card) !important;
+  border-color: var(--line) !important;
+  border-radius: 20px !important;
+  color: var(--ink);
+}
+
+.elevated {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.3) !important;
+}
+
+.panel h2, .panel h3, .panel h4 { color: var(--ink) !important; }
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+.primary,
+button.primary,
+.listing-video-app .primary,
+.auth-entry.primary-lite {
+  background: linear-gradient(135deg, var(--gold-light) 0%, var(--gold) 50%, var(--dark-gold) 100%) !important;
+  color: #1A1208 !important;
+  border: 0 !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+  box-shadow: 0 0 40px rgba(199, 167, 108, 0.18), 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+  transition: transform 180ms ease, box-shadow 180ms ease !important;
+}
+.primary:hover,
+button.primary:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 0 60px rgba(199, 167, 108, 0.32), 0 12px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+.secondary,
+button.secondary {
+  background: rgba(248, 245, 239, 0.06) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--ink) !important;
+  backdrop-filter: blur(8px) !important;
+  font-weight: 600 !important;
+}
+.secondary:hover,
+button.secondary:hover {
+  background: rgba(248, 245, 239, 0.10) !important;
+  border-color: var(--dark-gold) !important;
+}
+
+.ghost,
+button.ghost {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--muted) !important;
+  font-weight: 500 !important;
+}
+.ghost:hover, button.ghost:hover { color: var(--ink) !important; }
+
+.danger, button.danger {
+  background: rgba(226, 107, 107, 0.12) !important;
+  border: 1px solid rgba(226, 107, 107, 0.30) !important;
+  color: #E26B6B !important;
+}
+
+.text-button {
+  color: var(--gold-light) !important;
+  font-weight: 600 !important;
+}
+.text-button:hover { color: var(--gold) !important; }
+
+.reset-demo {
+  background: rgba(248, 245, 239, 0.04) !important;
+  border-color: var(--line) !important;
+  color: var(--muted) !important;
+}
+.reset-demo:hover { color: var(--ink) !important; border-color: var(--dark-gold) !important; }
+
+/* ============================================================
+   Form inputs
+   ============================================================ */
+.field input,
+.field select,
+.field textarea {
+  background: var(--card-elevated) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--ink) !important;
+  border-radius: 12px !important;
+  font-family: var(--font-body) !important;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease !important;
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--muted) !important;
+  opacity: 0.7 !important;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none !important;
+  border-color: var(--gold) !important;
+  background: var(--card) !important;
+  box-shadow: 0 0 0 4px rgba(199, 167, 108, 0.14) !important;
+}
+
+.field label {
+  color: var(--muted) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+}
+
+/* ============================================================
+   Auth screen
+   ============================================================ */
+.auth-panel {
+  max-width: 520px !important;
+  margin-inline: auto !important;
+  padding: clamp(28px, 4vw, 44px) !important;
+  background: var(--card) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 24px !important;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(199, 167, 108, 0.06) inset !important;
+}
+
+.auth-panel h2 {
+  font-family: var(--font-display) !important;
+  font-size: clamp(28px, 4vw, 40px) !important;
+  letter-spacing: -0.025em !important;
+  font-weight: 500 !important;
+  margin: 8px 0 12px !important;
+}
+
+.auth-panel > p {
+  color: var(--ink-soft) !important;
+  font-size: 16px !important;
+  line-height: 1.55 !important;
+}
+
+.auth-tabs {
+  background: rgba(248, 245, 239, 0.04) !important;
+  border-color: var(--line) !important;
+}
+.auth-tabs button {
+  color: var(--muted) !important;
+  font-weight: 600 !important;
+  background: transparent !important;
+}
+.auth-tabs button:hover { color: var(--ink) !important; }
+.auth-tabs button.active {
+  background: linear-gradient(135deg, var(--gold-light), var(--dark-gold)) !important;
+  color: #1A1208 !important;
+  font-weight: 700 !important;
+}
+
+.auth-reassurance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+.auth-reassurance span {
+  padding: 6px 10px !important;
+  background: rgba(199, 167, 108, 0.08) !important;
+  border: 1px solid rgba(199, 167, 108, 0.22) !important;
+  border-radius: 999px !important;
+  color: var(--gold-light) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+
+/* ============================================================
+   State banners
+   ============================================================ */
+.state-banner {
+  background: rgba(248, 245, 239, 0.04) !important;
+  border-color: var(--line) !important;
+  color: var(--ink-soft) !important;
+}
+
+.warning-state {
+  background: rgba(184, 135, 70, 0.10) !important;
+  border-color: rgba(184, 135, 70, 0.40) !important;
+}
+.warning-state strong { color: var(--gold-light) !important; }
+
+.error-state {
+  background: rgba(226, 107, 107, 0.08) !important;
+  border-color: rgba(226, 107, 107, 0.35) !important;
+}
+.error-state strong { color: #E26B6B !important; }
+
+.loading-state {
+  background: rgba(199, 167, 108, 0.06) !important;
+  border-color: rgba(199, 167, 108, 0.30) !important;
+}
+.loading-state::after {
+  background: linear-gradient(90deg, transparent, rgba(199, 167, 108, 0.22), transparent) !important;
+}
+
+.spinner {
+  border-color: rgba(199, 167, 108, 0.18) !important;
+  border-top-color: var(--gold) !important;
+}
+
+/* ============================================================
+   Upload zone
+   ============================================================ */
+.upload-zone {
+  border-color: rgba(199, 167, 108, 0.35) !important;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(199, 167, 108, 0.14), transparent 50%),
+    linear-gradient(180deg, var(--card-elevated), var(--card)) !important;
+  color: var(--ink) !important;
+}
+.upload-zone:hover {
+  border-color: var(--gold) !important;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(199, 167, 108, 0.22), transparent 50%),
+    linear-gradient(180deg, var(--card-elevated), var(--card)) !important;
+}
+
+.upload-plus {
+  background: rgba(199, 167, 108, 0.10) !important;
+  border: 1px solid rgba(199, 167, 108, 0.30) !important;
+  color: var(--gold-light) !important;
+}
+
+/* ============================================================
+   Top progress (step pill)
+   ============================================================ */
+.top-progress {
+  background: rgba(248, 245, 239, 0.04) !important;
+  border-color: rgba(199, 167, 108, 0.22) !important;
+}
+.top-progress button {
+  color: var(--muted) !important;
+}
+.top-progress button.active {
+  background: var(--card-elevated) !important;
+  color: var(--gold-light) !important;
+}
+.top-progress button.active span,
+.top-progress button.complete span {
+  background: var(--gold) !important;
+  color: var(--paper) !important;
+}
+.top-progress button span {
+  background: rgba(248, 245, 239, 0.08) !important;
+  color: var(--ink) !important;
+}
+
+/* ============================================================
+   Brand mark / logo block
+   ============================================================ */
+.brand-trust-row span {
+  background: rgba(199, 167, 108, 0.08) !important;
+  border-color: rgba(199, 167, 108, 0.22) !important;
+  color: var(--gold-light) !important;
+}
+
+/* ============================================================
+   Hero/feature cards inside the app (post-auth dashboard)
+   ============================================================ */
+.hero-content h2 {
+  color: var(--ink) !important;
+  font-family: var(--font-display) !important;
+}
+.hero-content p { color: var(--ink-soft) !important; }
+.badge {
+  background: rgba(199, 167, 108, 0.18) !important;
+  color: var(--gold-light) !important;
+  border: 1px solid rgba(199, 167, 108, 0.32) !important;
+  font-weight: 600 !important;
+}
+
+/* ============================================================
+   Misc surfaces
+   ============================================================ */
+.scene-edit-controls .secondary,
+.template-card,
+.export-option,
+.mode-card {
+  background: var(--card) !important;
+  border-color: var(--line) !important;
+  color: var(--ink) !important;
+}
+
+.template-card.selected,
+.mode-card.selected,
+.export-option.selected {
+  border-color: var(--gold) !important;
+  box-shadow: 0 0 0 1px rgba(199, 167, 108, 0.4), 0 0 40px rgba(199, 167, 108, 0.18) !important;
+}
+
+/* Reduce motion gracefully */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

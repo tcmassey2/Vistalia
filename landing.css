@@ -1072,3 +1072,234 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
   }
   .reveal { opacity: 1; transform: none; }
 }
+
+/* ============================================================
+   ABSTRACT CINEMATIC SCENES (no stock photos)
+   ============================================================
+   The hero phone reel, comparison demo, and style gallery use
+   per-scene gradient compositions + film-grain SVG noise + HUD
+   labels in serif/mono. The gradients are tuned to evoke each
+   room's lighting mood without resembling any specific home.
+   ============================================================ */
+
+/* Per-scene gradient palettes — used by both .reel-scene and
+   .slideshow-scene/.estate-scene via shared class names */
+
+.scene-curb {
+  background:
+    radial-gradient(ellipse 70% 60% at 70% 35%, rgba(243, 196, 110, 0.35), transparent 60%),
+    radial-gradient(ellipse 80% 50% at 30% 90%, rgba(110, 60, 24, 0.5), transparent 70%),
+    linear-gradient(160deg, #1A0F08 0%, #3D2010 45%, #6B3E1A 90%) !important;
+}
+.scene-kitchen {
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 85%, rgba(255, 200, 130, 0.45), transparent 60%),
+    radial-gradient(ellipse 70% 60% at 20% 30%, rgba(74, 40, 24, 0.6), transparent 70%),
+    linear-gradient(180deg, #1F1410 0%, #4A2818 50%, #7A4F2A 100%) !important;
+}
+.scene-living {
+  background:
+    radial-gradient(ellipse 70% 60% at 30% 70%, rgba(199, 167, 108, 0.40), transparent 65%),
+    radial-gradient(ellipse 60% 50% at 80% 20%, rgba(54, 50, 80, 0.5), transparent 70%),
+    linear-gradient(135deg, #14141E 0%, #1F1F2A 50%, #4A4030 100%) !important;
+}
+.scene-suite {
+  background:
+    radial-gradient(ellipse 70% 50% at 80% 40%, rgba(243, 196, 110, 0.35), transparent 60%),
+    radial-gradient(ellipse 60% 60% at 20% 80%, rgba(74, 28, 28, 0.55), transparent 70%),
+    linear-gradient(150deg, #1A1010 0%, #2F1818 45%, #6B3F2A 100%) !important;
+}
+.scene-bath {
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 25%, rgba(199, 167, 108, 0.30), transparent 65%),
+    radial-gradient(ellipse 70% 70% at 50% 90%, rgba(31, 35, 45, 0.6), transparent 75%),
+    linear-gradient(180deg, #14161B 0%, #2A2D38 50%, #4A4030 100%) !important;
+}
+
+/* Cinematic vignette + bottom-darken on every scene */
+.reel-scene::after,
+.slideshow-scene::after,
+.estate-scene::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 100% 80% at 50% 50%, transparent 50%, rgba(0, 0, 0, 0.45) 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.55) 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Film-grain noise (SVG) overlay — adds the cinematic "real footage" feel */
+.scene-grain,
+.style-card-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  opacity: 0.18;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.95  0 0 0 0 0.92  0 0 0 0 0.85  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-size: 180px 180px;
+}
+
+/* HUD labels inside hero phone scene */
+.scene-hud-tl, .scene-hud-tr, .scene-hud-br {
+  position: absolute;
+  z-index: 4;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  font-weight: 500;
+  color: var(--gold-light);
+  text-transform: uppercase;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.scene-hud-tl { top: 44px; left: 14px; }
+.scene-hud-tr { top: 44px; right: 14px; opacity: 0.75; color: var(--ink); }
+.scene-hud-br { bottom: 38px; right: 14px; opacity: 0.65; color: var(--ink); }
+
+.scene-room {
+  position: absolute;
+  z-index: 4;
+  left: 18px; right: 18px;
+  bottom: 60px;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 28px;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+}
+
+/* Listing tag pinned to bottom of phone, fades but stays for the whole loop */
+.reel-listing-tag {
+  position: absolute;
+  z-index: 5;
+  left: 18px; right: 18px;
+  bottom: 22px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+  opacity: 0.7;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+/* ============================================================
+   Comparison demo HUD
+   ============================================================ */
+.compare-label {
+  position: absolute;
+  z-index: 4;
+  left: 16px; right: 16px;
+  bottom: 44px;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+.compare-motion {
+  position: absolute;
+  z-index: 4;
+  left: 16px;
+  bottom: 18px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  font-weight: 500;
+  color: var(--gold-light);
+  text-transform: uppercase;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.compare-watermark {
+  position: absolute;
+  z-index: 5;
+  top: 16px; right: 16px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  font-weight: 500;
+  color: var(--ink);
+  opacity: 0.45;
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   Style gallery cards — abstract gradient art per style
+   ============================================================ */
+.style-card-art {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+.style-card:hover .style-card-art { transform: scale(1.06); }
+
+.style-card-art::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 50%, transparent 50%, rgba(0,0,0,0.4) 100%),
+    linear-gradient(180deg, rgba(0,0,0,0) 50%, rgba(0,0,0,0.7) 100%);
+  z-index: 1;
+}
+
+.style-card-mark {
+  position: absolute;
+  z-index: 3;
+  top: 14px; left: 14px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  font-weight: 500;
+  color: var(--ink);
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+.style-card-pace {
+  position: absolute;
+  z-index: 3;
+  top: 14px; right: 14px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  font-weight: 500;
+  color: var(--gold-light);
+  text-transform: uppercase;
+}
+
+/* Per-style gradient signatures (warm-luxury, modern-pop, neutral-clean, deal-direct) */
+.style-art-luxury {
+  background:
+    radial-gradient(ellipse 70% 60% at 70% 30%, rgba(243, 196, 110, 0.55), transparent 60%),
+    radial-gradient(ellipse 80% 50% at 20% 90%, rgba(155, 80, 30, 0.6), transparent 70%),
+    linear-gradient(160deg, #1F1208 0%, #4A2810 50%, #8B5A2B 100%);
+}
+.style-art-social {
+  background:
+    radial-gradient(ellipse 60% 50% at 80% 20%, rgba(255, 100, 180, 0.45), transparent 60%),
+    radial-gradient(ellipse 70% 60% at 20% 80%, rgba(80, 200, 220, 0.40), transparent 65%),
+    linear-gradient(135deg, #1A0E2A 0%, #3A1A3A 50%, #2A4060 100%);
+}
+.style-art-mls {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 30%, rgba(180, 200, 220, 0.30), transparent 65%),
+    radial-gradient(ellipse 60% 60% at 50% 90%, rgba(70, 80, 100, 0.50), transparent 75%),
+    linear-gradient(180deg, #14181F 0%, #20262E 50%, #353D48 100%);
+}
+.style-art-investor {
+  background:
+    radial-gradient(ellipse 70% 50% at 30% 30%, rgba(199, 167, 108, 0.40), transparent 65%),
+    radial-gradient(ellipse 60% 60% at 80% 80%, rgba(60, 95, 70, 0.50), transparent 70%),
+    linear-gradient(140deg, #14180F 0%, #20281C 45%, #3A4A2A 100%);
+}
+
+/* The .style-card-img selector is no longer used; old rule was a no-op without
+   a background-image. Replace its hover-zoom rule with one targeting .style-card-art. */
+.style-card:hover .style-card-img { display: none; } /* belt-and-suspenders cleanup */
+

@@ -6,6 +6,7 @@ const requiredFiles = [
   "landing.js",
   "app.js",
   "styles.css",
+  "app-dark.css",
   "app/index.html",
   "demo/index.html",
   "beta/index.html",
