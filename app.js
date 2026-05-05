@@ -3467,24 +3467,26 @@ function renderProcessing() {
 
 function reelPlanRow(scene, index, caption) {
   const photo = scene.photo || {};
-  const source = photo.classificationSource === "openai-vision" ? "AI Vision" : photo.classificationSource === "manual" ? "Manual" : "Fallback";
-  const features = (photo.visibleFeatures || photo.tags || []).slice(0, 3);
   const sceneId = scene.id;
   return `
     <article class="reel-plan-row editor-row" data-editor-scene="${escapeAttr(sceneId)}">
-      <img src="${photo.uri}" alt="">
-      <span class="scene-order-pill">${String(index + 1).padStart(2, "0")}</span>
-      <div>
-        <label class="mini-field"><small>Category</small><select data-plan-category="${escapeAttr(sceneId)}">${reelCategoryOptions().map((category) => `<option value="${category}" ${scene.category === category ? "selected" : ""}>${escapeHtml(pipelineToSceneCategory(category))}</option>`).join("")}</select></label>
-        <label class="mini-field"><small>Caption</small><input data-plan-caption="${escapeAttr(sceneId)}" value="${escapeAttr(caption || scene.role || "Property tour scene")}"></label>
-        <small>${escapeHtml(source)} · ${sceneConfidence(photo)}% confidence${features.length ? ` · ${features.map(escapeHtml).join(", ")}` : ""}</small>
-        ${photo.description ? `<small>${escapeHtml(photo.description)}</small>` : ""}
+      <div class="scene-thumb">
+        <img src="${photo.uri}" alt="">
+        <span class="scene-order-pill">${String(index + 1).padStart(2, "0")}</span>
+      </div>
+      <div class="scene-fields">
+        <label class="scene-caption-field">
+          <input data-plan-caption="${escapeAttr(sceneId)}" value="${escapeAttr(caption || scene.role || "")}" placeholder="Scene caption">
+        </label>
+        <div class="scene-meta-row">
+          <select class="scene-category" data-plan-category="${escapeAttr(sceneId)}" aria-label="Scene type">${reelCategoryOptions().map((category) => `<option value="${category}" ${scene.category === category ? "selected" : ""}>${escapeHtml(pipelineToSceneCategory(category))}</option>`).join("")}</select>
+          <label class="scene-seconds"><input type="number" min="1" max="6" step="0.1" data-plan-duration="${escapeAttr(sceneId)}" value="${Number(scene.duration || 2).toFixed(1)}"><span>sec</span></label>
+        </div>
       </div>
       <div class="scene-edit-controls">
-        <label class="mini-field"><small>Seconds</small><input type="number" min="1" max="6" step="0.1" data-plan-duration="${escapeAttr(sceneId)}" value="${Number(scene.duration || 2).toFixed(1)}"></label>
-        <button class="ghost icon-button" title="Move scene up" data-plan-move="${escapeAttr(sceneId)}" data-dir="-1">↑</button>
-        <button class="ghost icon-button" title="Move scene down" data-plan-move="${escapeAttr(sceneId)}" data-dir="1">↓</button>
-        <button class="secondary" data-plan-remove="${escapeAttr(sceneId)}">Remove</button>
+        <button class="scene-icon-btn" title="Move up" data-plan-move="${escapeAttr(sceneId)}" data-dir="-1" aria-label="Move scene up">&uarr;</button>
+        <button class="scene-icon-btn" title="Move down" data-plan-move="${escapeAttr(sceneId)}" data-dir="1" aria-label="Move scene down">&darr;</button>
+        <button class="scene-icon-btn scene-remove" title="Remove" data-plan-remove="${escapeAttr(sceneId)}" aria-label="Remove scene">&times;</button>
       </div>
     </article>
   `;
@@ -5527,31 +5529,23 @@ function renderProcessing() {
   const sequence = sequenceFromEditedPlan(plan);
   const captions = pipelineCaptions(sequence);
   const captionByScene = new Map(captions.map((item) => [item.sceneId, item.caption]));
-  const director = state.project.motionDirectorPlan;
+  const totalDuration = beatSyncPlan(renderManifestScenes(sequence)).totalDuration;
   renderLayout(`
-    <div class="screen-title cinematic-title"><p class="eyebrow">Video story</p><h2>Your property tour is organized.</h2><p>Review the order, remove weak photos, or adjust captions before choosing the final look.</p></div>
-    <section class="video-step-grid ai-order-metrics">
-      ${engineMetric("Scene types", new Set(orderedPhotos().map((photo) => sceneLabel(photo.category))).size || 0)}
-      ${engineMetric("Avg confidence", `${averageConfidence(orderedPhotos())}%`)}
-      ${engineMetric("Video length", `${beatSyncPlan(renderManifestScenes(sequence)).totalDuration}s`)}
-      ${engineMetric("Ready", "Preview")}
-    </section>
-    <section class="motion-director-status pro-plan-status ready">
-      <div>
-        <span>Smart edit plan</span>
-        <strong>Scenes, captions, and motion are ready.</strong>
-        <small>EstateMotion built a property-tour sequence from your listing photos.</small>
-      </div>
-      <button class="secondary" data-regenerate-edit-plan>Refresh plan</button>
-    </section>
+    <div class="screen-title cinematic-title"><p class="eyebrow">Step 2 of 4</p><h2>Your tour, sequenced.</h2><p>Reorder, remove, or rewrite captions. Continue when it feels right.</p></div>
     <section class="panel reel-plan-panel">
-      <div class="section-title"><p>Photo order</p><h3>${sequence.scenes.length} scenes in listing-tour order</h3></div>
+      <header class="reel-plan-header">
+        <div>
+          <p class="reel-plan-eyebrow">Photo order</p>
+          <h3>${sequence.scenes.length} ${sequence.scenes.length === 1 ? "scene" : "scenes"} &middot; ${totalDuration}s runtime</h3>
+        </div>
+        <button class="ghost reel-plan-refresh" data-regenerate-edit-plan title="Generate a fresh order">Regenerate</button>
+      </header>
       <div class="reel-plan-grid">
         ${sequence.scenes.map((scene, index) => reelPlanRow(scene, index, captionByScene.get(scene.id))).join("")}
       </div>
       <div class="actions single-primary-row">
-        <button class="secondary" data-reset-ai-plan>Reset order</button>
-        <button class="primary" data-next-style>Choose Style</button>
+        <button class="ghost" data-reset-ai-plan>Reset order</button>
+        <button class="primary" data-next-style>Continue to style &rarr;</button>
       </div>
     </section>
   `);
@@ -5846,7 +5840,7 @@ async function createMotionDirectorPlan({ signature = motionDirectorSignature(),
   motionDirectorInFlightSignature = signature;
   setState((current) => ({
     ...current,
-    loading: canAttemptOpenAI ? "OpenAI Motion Director is planning the edit..." : "Building fallback edit plan...",
+    loading: "Sequencing your tour…",
     error: "",
     project: {
       ...current.project,
@@ -5895,10 +5889,10 @@ async function createMotionDirectorPlan({ signature = motionDirectorSignature(),
         motionDirectorStatus: status
       }
     }));
-    showToast(normalized.source === "openai-motion-director" ? "OpenAI Motion Director edit plan ready" : "Fallback edit plan ready");
+    showToast("Edit plan ready");
   } catch (error) {
     const normalized = normalizeMotionDirectorPlan(deterministicMotionDirectorPlan(), "deterministic-fallback", signature);
-    const reason = error.name === "AbortError" ? "OpenAI Motion Director timed out. Fallback edit plan created." : (error.message || "OpenAI Motion Director unavailable. Fallback edit plan created.");
+    const reason = error.name === "AbortError" ? "Edit plan ready (used fast mode)." : (error.message || "Edit plan ready (used fast mode).");
     setState((current) => ({
       ...current,
       loading: "",
