@@ -3,15 +3,12 @@
   "trailingSlash": false,
   "buildCommand": "node scripts/verify-static-deploy.mjs && cd webapp && npm install --no-audit --no-fund && npm run build",
   "rewrites": [
-    { "source": "/app/assets/:path*", "destination": "/webapp/dist/assets/:path*" },
-    { "source": "/app", "destination": "/webapp/dist/index.html" },
-    { "source": "/app/:path*", "destination": "/webapp/dist/index.html" },
-    { "source": "/demo", "destination": "/webapp/dist/index.html" },
-    { "source": "/demo/:path*", "destination": "/webapp/dist/index.html" },
-    { "source": "/beta", "destination": "/webapp/dist/index.html" },
-    { "source": "/beta/:path*", "destination": "/webapp/dist/index.html" },
-    { "source": "/waitlist", "destination": "/webapp/dist/index.html" },
-    { "source": "/waitlist/:path*", "destination": "/webapp/dist/index.html" }
+    { "source": "/demo", "destination": "/app/index.html" },
+    { "source": "/demo/:path*", "destination": "/app/index.html" },
+    { "source": "/beta", "destination": "/app/index.html" },
+    { "source": "/beta/:path*", "destination": "/app/index.html" },
+    { "source": "/waitlist", "destination": "/app/index.html" },
+    { "source": "/waitlist/:path*", "destination": "/app/index.html" }
   ],
   "headers": [
     {
