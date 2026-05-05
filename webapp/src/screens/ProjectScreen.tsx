@@ -57,22 +57,37 @@ export default function ProjectScreen() {
         </div>
       )}
 
-      {/* Listing details */}
-      <Section title="Listing details" subtitle="What should appear on the video.">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Property address" value={listing.address} onChange={(v) => setListing({ address: v })} placeholder="9828 E Pinnacle Peak Rd" />
-          <Input label="City / area"      value={listing.city}    onChange={(v) => setListing({ city: v })}    placeholder="Scottsdale, AZ" />
-          <Input label="Price"            value={listing.price}   onChange={(v) => setListing({ price: v })}   placeholder="$2,850,000" />
-          <Input label="Square footage"   value={listing.squareFeet} onChange={(v) => setListing({ squareFeet: v })} placeholder="5,640" />
-          <Input label="Beds"             value={listing.beds}    onChange={(v) => setListing({ beds: v })}    placeholder="5" />
-          <Input label="Baths"            value={listing.baths}   onChange={(v) => setListing({ baths: v })}   placeholder="5.5" />
+      {/* Listing details — grouped by visual priority */}
+      <Section title="Listing details" subtitle="The facts that appear on the video.">
+        <div className="bg-surface border border-edge rounded-xl p-5 sm:p-6 flex flex-col gap-4">
+          {/* Address — primary line, full width */}
+          <Input
+            label="Property address"
+            value={listing.address}
+            onChange={(v) => setListing({ address: v })}
+            placeholder="9828 E Pinnacle Peak Rd"
+          />
+          {/* City + price — secondary pair */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input label="City / area" value={listing.city}  onChange={(v) => setListing({ city: v })}  placeholder="Scottsdale, AZ" />
+            <Input label="Price"       value={listing.price} onChange={(v) => setListing({ price: v })} placeholder="$2,850,000" />
+          </div>
+          {/* Beds / baths / sqft — tight numeric trio */}
+          <div className="grid grid-cols-3 gap-3">
+            <Input label="Beds"       value={listing.beds}       onChange={(v) => setListing({ beds: v })}       placeholder="5"     />
+            <Input label="Baths"      value={listing.baths}      onChange={(v) => setListing({ baths: v })}      placeholder="5.5"   />
+            <Input label="Sq ft"      value={listing.squareFeet} onChange={(v) => setListing({ squareFeet: v })} placeholder="5,640" />
+          </div>
+          {/* Hook — optional, deprioritized */}
+          <div className="pt-2 border-t border-edge-soft">
+            <Input
+              label="Hook line (optional)"
+              value={listing.hook}
+              onChange={(v) => setListing({ hook: v })}
+              placeholder="A modern desert retreat built for evenings outside."
+            />
+          </div>
         </div>
-        <Input
-          label="Hook line (optional)"
-          value={listing.hook}
-          onChange={(v) => setListing({ hook: v })}
-          placeholder="A modern desert retreat built for evenings outside."
-        />
       </Section>
 
       {/* Photos */}
@@ -91,8 +106,10 @@ export default function ProjectScreen() {
               key={s.id}
               onClick={() => setStyle(s.id)}
               className={cn(
-                "text-left p-4 rounded-xl bg-surface border transition-colors",
-                selectedStyleId === s.id ? "border-gold bg-surface-raised ring-1 ring-gold/40" : "border-edge hover:border-edge-strong"
+                "card-press text-left p-4 rounded-xl bg-surface border",
+                selectedStyleId === s.id
+                  ? "border-gold bg-surface-raised card-selected"
+                  : "border-edge hover:border-edge-strong"
               )}
             >
               <div className="text-xs uppercase tracking-wider text-ink-muted mb-2 font-mono">
@@ -268,7 +285,7 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
           {photos.map((photo, idx) => (
             <div
               key={photo.id}
-              className="group relative aspect-[4/3] rounded-lg overflow-hidden bg-surface-input border border-edge"
+              className="card-press group relative aspect-[4/3] rounded-lg overflow-hidden bg-surface-input border border-edge hover:border-edge-strong"
             >
               <img src={photo.publicUrl} alt={photo.fileName} className="w-full h-full object-cover" />
               {/* Order pill */}
@@ -356,8 +373,10 @@ function EngineCard({
     <button
       onClick={onClick}
       className={cn(
-        "text-left p-4 rounded-xl bg-surface border transition-colors",
-        active ? "border-gold ring-1 ring-gold/40 bg-surface-raised" : "border-edge hover:border-edge-strong"
+        "card-press text-left p-4 rounded-xl bg-surface border",
+        active
+          ? "border-gold bg-surface-raised card-selected"
+          : "border-edge hover:border-edge-strong"
       )}
     >
       <div className="flex items-center gap-2 mb-1.5">
@@ -480,16 +499,42 @@ function RenderControls() {
   const pollUntilDone = async (jobId: string) => {
     const startTime = Date.now();
     const maxMs = 12 * 60 * 1000; // 12 min hard cap
+    let prevProgress = 0;
+    let prevPhase = "";
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 5; // worker may briefly restart — tolerate it
+
     while (Date.now() - startTime < maxMs) {
       await new Promise((r) => setTimeout(r, 4000));
       try {
         const status = await pollRender(jobId);
-        setRenderJob({ ...status, jobId });
+        consecutiveErrors = 0; // reset on any successful poll
+
+        // Progress monotonicity — never let the bar go backward. Worker
+        // restarts and brief network blips can cause regressions, which
+        // looked like "the bar shoots around" in earlier tests.
+        const incomingProgress = Number(status.progress || 0);
+        const safeProgress = Math.max(prevProgress, incomingProgress);
+        prevProgress = safeProgress;
+        const safePhase = status.phase || prevPhase;
+        prevPhase = safePhase;
+
+        setRenderJob({
+          ...status,
+          jobId,
+          progress: safeProgress,
+          phase: safePhase
+        });
+
         if (status.status === "completed" || status.status === "failed") return;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Status check failed.";
-        setError(msg);
-        return;
+        consecutiveErrors++;
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          const msg = err instanceof Error ? err.message : "Status check failed.";
+          setError(`Lost contact with the render worker: ${msg}`);
+          return;
+        }
+        // Otherwise keep polling — worker may be briefly restarting
       }
     }
     setError("Render timed out after 12 minutes.");
@@ -500,7 +545,10 @@ function RenderControls() {
       <button
         onClick={generate}
         disabled={!canRender}
-        className="h-12 px-6 bg-gold hover:bg-gold-light text-paper font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+        className={cn(
+          "btn-primary-em h-12 px-6 rounded-lg disabled:opacity-50 inline-flex items-center gap-2",
+          canRender && !isComplete && "pulse-glow"
+        )}
       >
         {isRendering ? (
           <>
@@ -509,7 +557,9 @@ function RenderControls() {
         ) : isComplete ? (
           "Render again"
         ) : (
-          "Generate video →"
+          <>
+            Generate video <span aria-hidden="true">→</span>
+          </>
         )}
       </button>
       {photos.length < 3 && (
@@ -569,16 +619,16 @@ function RenderStatusPanel() {
   }
 
   return (
-    <div className="bg-surface border border-edge rounded-xl p-4 flex flex-col gap-3">
+    <div className="bg-surface border border-edge rounded-xl p-4 flex flex-col gap-3 fade-up-in">
       <div className="flex items-center gap-2 text-sm">
         <span className="spinner" />
         <strong>{renderJob.phase || "Rendering"}</strong>
-        <span className="text-ink-muted ml-auto">{renderJob.progress || 0}%</span>
+        <span className="text-ink-muted ml-auto font-mono text-xs">{Math.round(renderJob.progress || 0)}%</span>
       </div>
       <div className="h-1.5 bg-edge rounded-full overflow-hidden">
         <div
-          className="h-full bg-gold transition-all duration-500"
-          style={{ width: `${Math.max(5, renderJob.progress || 5)}%` }}
+          className="progress-fill h-full bg-gold rounded-full"
+          style={{ width: `${Math.max(5, Math.min(100, renderJob.progress || 5))}%` }}
         />
       </div>
       <p className="text-xs text-ink-muted">

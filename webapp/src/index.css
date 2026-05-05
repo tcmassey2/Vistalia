@@ -48,4 +48,113 @@
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
   }
+
+  /* ============================================================
+     Press / hover animations — applied throughout the app to
+     buttons, cards, and interactive surfaces. The base .btn-press
+     adds: transform-on-hover, scale-on-press, smooth color
+     transitions, and reduced-motion compliance.
+     ============================================================ */
+  .btn-press {
+    transition:
+      transform 160ms cubic-bezier(0.16, 1, 0.3, 1),
+      background-color 200ms ease,
+      border-color 200ms ease,
+      color 200ms ease,
+      box-shadow 240ms ease,
+      opacity 200ms ease;
+    will-change: transform;
+  }
+  .btn-press:hover:not(:disabled):not([aria-disabled="true"]) {
+    transform: translateY(-1px);
+  }
+  .btn-press:active:not(:disabled):not([aria-disabled="true"]) {
+    transform: translateY(0) scale(0.98);
+    transition-duration: 80ms;
+  }
+  .btn-press:disabled,
+  .btn-press[aria-disabled="true"] {
+    cursor: not-allowed;
+    transform: none !important;
+  }
+
+  /* Primary CTA — gold with glow on hover */
+  .btn-primary-em {
+    @apply btn-press bg-gold text-paper font-semibold;
+    box-shadow: 0 0 0 0 rgba(199, 167, 108, 0);
+  }
+  .btn-primary-em:hover:not(:disabled):not([aria-disabled="true"]) {
+    @apply bg-gold-light;
+    box-shadow: 0 8px 24px -6px rgba(199, 167, 108, 0.45);
+  }
+
+  /* Secondary CTA — quiet ghost-with-border */
+  .btn-secondary-em {
+    @apply btn-press bg-transparent border border-edge-strong text-ink font-medium;
+  }
+  .btn-secondary-em:hover:not(:disabled):not([aria-disabled="true"]) {
+    @apply border-ink-soft;
+    background: rgba(248, 245, 239, 0.04);
+  }
+
+  /* Card hover lift — for photo cards, project cards, style tiles */
+  .card-press {
+    transition:
+      transform 240ms cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 200ms ease,
+      background-color 200ms ease,
+      box-shadow 240ms ease;
+    will-change: transform;
+  }
+  .card-press:hover {
+    transform: translateY(-2px);
+  }
+
+  /* Selected state for selectable cards (style picker, engine toggle) */
+  .card-selected {
+    box-shadow: 0 0 0 1px theme("colors.gold.DEFAULT") inset, 0 8px 24px -6px rgba(199, 167, 108, 0.25);
+  }
+
+  /* Subtle entrance animation for content sections */
+  .fade-up-in {
+    animation: fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Pulsing glow for the "Generate video" CTA when ready */
+  .pulse-glow {
+    animation: pulse-glow 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(199, 167, 108, 0); }
+    50%      { box-shadow: 0 0 24px 4px rgba(199, 167, 108, 0.18); }
+  }
+
+  /* Smooth progress bar fill (for render progress) */
+  .progress-fill {
+    transition: width 600ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* Respect reduced-motion preferences globally */
+@media (prefers-reduced-motion: reduce) {
+  .btn-press,
+  .btn-primary-em,
+  .btn-secondary-em,
+  .card-press,
+  .fade-up-in,
+  .pulse-glow,
+  .progress-fill,
+  .toast {
+    animation: none !important;
+    transition: none !important;
+  }
+  .btn-press:hover,
+  .btn-press:active,
+  .card-press:hover {
+    transform: none !important;
+  }
 }

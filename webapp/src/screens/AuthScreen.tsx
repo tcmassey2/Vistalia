@@ -122,9 +122,13 @@ export default function AuthScreen() {
               <button
                 type="submit"
                 disabled={busy}
-                className="h-11 mt-2 bg-gold hover:bg-gold-light text-paper font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="btn-primary-em h-11 mt-2 rounded-lg disabled:opacity-50"
               >
-                {busy ? "Working..." : mode === "signup" ? "Create account" : "Sign in"}
+                {busy ? (
+                  <span className="inline-flex items-center gap-2 justify-center">
+                    <span className="spinner" /> Working…
+                  </span>
+                ) : mode === "signup" ? "Create account" : "Sign in"}
               </button>
             </form>
 

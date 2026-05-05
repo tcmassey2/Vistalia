@@ -40,7 +40,7 @@ export default function TopBar() {
           )}
           <button
             onClick={onSignOut}
-            className="text-xs text-ink-muted hover:text-ink px-3 py-1.5 rounded-md border border-edge hover:border-edge-strong transition-colors"
+            className="btn-press text-xs text-ink-muted hover:text-ink px-3 py-1.5 rounded-md border border-edge hover:border-edge-strong"
           >
             Sign out
           </button>

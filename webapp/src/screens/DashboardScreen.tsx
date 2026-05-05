@@ -35,13 +35,13 @@ export default function DashboardScreen() {
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
           <button
             onClick={startWithSample}
-            className="h-11 px-4 border border-edge hover:border-edge-strong text-ink font-medium rounded-lg transition-colors text-sm"
+            className="btn-secondary-em h-11 px-4 rounded-lg text-sm"
           >
             Try with sample listing
           </button>
           <button
             onClick={newProject}
-            className="h-11 px-5 bg-gold hover:bg-gold-light text-paper font-semibold rounded-lg transition-colors inline-flex items-center gap-2"
+            className="btn-primary-em h-11 px-5 rounded-lg inline-flex items-center gap-2"
           >
             <span className="text-lg leading-none">+</span> New listing video
           </button>
@@ -63,13 +63,13 @@ export default function DashboardScreen() {
           <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={newProject}
-              className="h-11 px-5 bg-gold hover:bg-gold-light text-paper font-semibold rounded-lg transition-colors"
+              className="btn-primary-em h-11 px-5 rounded-lg"
             >
               Create your first video
             </button>
             <button
               onClick={startWithSample}
-              className="h-11 px-5 border border-edge hover:border-edge-strong text-ink font-medium rounded-lg transition-colors"
+              className="btn-secondary-em h-11 px-5 rounded-lg"
             >
               Try sample listing
             </button>
@@ -103,7 +103,7 @@ function ProjectCard({
   return (
     <button
       onClick={() => openProject(id)}
-      className="group text-left bg-surface border border-edge hover:border-edge-strong rounded-xl overflow-hidden transition-colors"
+      className="card-press group text-left bg-surface border border-edge hover:border-edge-strong rounded-xl overflow-hidden"
     >
       <div className="aspect-video bg-surface-input relative overflow-hidden">
         {thumbnailUrl ? (
