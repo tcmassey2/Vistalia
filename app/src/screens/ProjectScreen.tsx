@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useStore } from "../lib/store";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions } from "../lib/supabase";
 import { createEditPlan, submitRender, pollRender, type RenderManifest } from "../lib/api";
@@ -118,7 +118,7 @@ export default function ProjectScreen() {
 /* ============================================================
    Section primitive — consistent header + content slot
    ============================================================ */
-function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-4">
       <header>

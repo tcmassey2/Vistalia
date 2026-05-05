@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useStore } from "../lib/store";
 import { signIn, signUp } from "../lib/supabase";
 
@@ -11,7 +11,7 @@ export default function AuthScreen() {
   const [info, setInfo] = useState("");
   const setToast = useStore((s) => s.setToast);
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
     setInfo("");
