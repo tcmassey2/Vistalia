@@ -114,36 +114,30 @@ const templates = [
   }
 ];
 
+// Public Unsplash URLs are usable as durable URLs because they're permanent + CORS-friendly.
+// The render manifest validator requires durableUrl on every photo, so set it explicitly.
 const demoPhotos = [
-  {
-    id: "demo-1",
-    uri: "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80",
-    fileName: "exterior-front.jpg",
-    category: "Exterior",
-    order: 1
-  },
-  {
-    id: "demo-2",
-    uri: "https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?auto=format&fit=crop&w=1200&q=80",
-    fileName: "living-room.jpg",
-    category: "Living room",
-    order: 2
-  },
-  {
-    id: "demo-3",
-    uri: "https://images.unsplash.com/photo-1556911220-bff31c812dba?auto=format&fit=crop&w=1200&q=80",
-    fileName: "kitchen.jpg",
-    category: "Kitchen",
-    order: 3
-  },
-  {
-    id: "demo-4",
-    uri: "https://images.unsplash.com/photo-1615873968403-89e068629265?auto=format&fit=crop&w=1200&q=80",
-    fileName: "primary-bedroom.jpg",
-    category: "Primary bedroom",
-    order: 4
-  }
-];
+  ["demo-1", "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80", "exterior-front.jpg", "Exterior", 1],
+  ["demo-2", "https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?auto=format&fit=crop&w=1200&q=80", "living-room.jpg", "Living room", 2],
+  ["demo-3", "https://images.unsplash.com/photo-1556911220-bff31c812dba?auto=format&fit=crop&w=1200&q=80", "kitchen.jpg", "Kitchen", 3],
+  ["demo-4", "https://images.unsplash.com/photo-1615873968403-89e068629265?auto=format&fit=crop&w=1200&q=80", "primary-bedroom.jpg", "Primary bedroom", 4]
+].map(([id, uri, fileName, category, order]) => ({
+  id, uri, fileName, category, order,
+  publicUrl: uri,
+  public_url: uri,
+  durableUrl: uri,
+  durable_url: uri,
+  pipelineCategory: "exterior",
+  confidence: 92,
+  classificationSource: "demo fixture",
+  tags: [],
+  visibleFeatures: [],
+  bucket: "demo-fixtures",
+  storagePath: "",
+  size: 0,
+  width: 1200,
+  height: 800
+}));
 
 const sampleProjects = [
   {
@@ -5480,22 +5474,45 @@ function professionalPhonePreview(photo, label) {
 function renderUpload() {
   const photos = orderedPhotos();
   const isAnonymousLive = !featureFlags.MOCK_SUPABASE && !authUser && !isDemoRoute();
+
+  // Pre-auth upload was an architectural mistake: in-memory File objects don't
+  // survive the page reload Supabase email confirmation triggers, so uploads
+  // would silently fail after sign-in. Gate the upload UI behind auth instead.
+  if (isAnonymousLive) {
+    renderLayout(`
+      <div class="screen-title"><p class="eyebrow">Step 1 of 5</p><h2>Sign in to start your video.</h2><p>Free 7-day trial. No credit card required. Sign in once and your photos persist for the full edit + export flow.</p></div>
+      <section class="panel auth-gate-card">
+        <div class="auth-gate-copy">
+          <h3>Why sign in first?</h3>
+          <ul class="auth-gate-list">
+            <li>Your photos save to durable Supabase storage so the video render can use them</li>
+            <li>Your project survives page refreshes and email confirmations</li>
+            <li>One free trial unlocks all four video styles</li>
+          </ul>
+        </div>
+        <div class="auth-gate-actions">
+          <button class="primary" data-auth-entry-upload type="button">Start free trial &rarr;</button>
+          <button class="secondary" data-auth-entry-signin type="button">I already have an account</button>
+          <button class="ghost" data-sample-listing type="button">Try the sample listing first</button>
+        </div>
+      </section>
+    `);
+    document.querySelector("[data-auth-entry-upload]")?.addEventListener("click", () => setState({ authMode: "sign-up", authReturnScreen: "upload", screen: "auth", error: "" }));
+    document.querySelector("[data-auth-entry-signin]")?.addEventListener("click", () => setState({ authMode: "sign-in", authReturnScreen: "upload", screen: "auth", error: "" }));
+    document.querySelector("[data-sample-listing]")?.addEventListener("click", loadBetaSampleListing);
+    return;
+  }
+
   renderLayout(`
-    <div class="screen-title cinematic-title"><p class="eyebrow">Photos</p><h2>Drop in your listing photos.</h2><p>Start with the real property images you already have. You can preview before creating an account.</p></div>
-    ${isAnonymousLive ? `<section class="panel sign-in-required-card"><div><p class="eyebrow">No account needed yet</p><h3>Build the preview first.</h3><p class="muted">Create your free account only when you are ready to save and export the finished video.</p></div><button class="secondary" data-auth-entry-upload>Sign in</button></section>` : ""}
+    <div class="screen-title"><p class="eyebrow">Step 1 of 5</p><h2>Upload your listing photos.</h2><p>8&ndash;25 photos. JPG, PNG, or WebP. Drop them all at once or browse from your folder.</p></div>
     <section class="upload-studio-card pro-upload-card">
       <label class="upload-zone" data-upload-zone>
         <input id="photoInput" type="file" accept="image/*" multiple>
         <span class="upload-plus">+</span>
-        <strong>Upload 8-25 listing photos</strong>
+        <strong>Upload 8&ndash;25 listing photos</strong>
         <span class="muted">JPG, PNG, or WebP. Select multiple photos at once or drag a full listing set here.</span>
         <b class="upload-count">${photos.length} photo${photos.length === 1 ? "" : "s"} uploaded</b>
       </label>
-      <aside class="upload-status-card">
-        <span>Video readiness</span>
-        <strong>${photos.length >= 3 ? "Photos ready for AI ordering" : "Add at least 3 photos"}</strong>
-        <small>${isAnonymousLive ? "Your preview is local until export." : "Ready for final video export."}</small>
-      </aside>
     </section>
     <section class="panel listing-basics-panel">
       <div class="section-title"><p>Listing details</p><h3>Add the facts that should appear on the video.</h3></div>
@@ -5504,19 +5521,14 @@ function renderUpload() {
       <div class="grid-2">${field("Square footage", "squareFeet")}${field("City / area", "city")}</div>
       <div class="grid-2">${brandField("Agent name", "name")}${brandField("Brokerage", "brokerage")}</div>
     </section>
+    ${photos.length ? `<section class="photo-grid pro-photo-grid">${photos.map((photo, index) => photoCard(photo, index)).join("")}</section>` : ""}
     <div class="actions single-primary-row">
-      <button class="secondary" data-add-more type="button">Add more photos</button>
-      <button class="secondary" data-sample-listing type="button">Use sample listing</button>
-      <button class="primary" data-next="processing">Build My Video</button>
+      <button class="ghost" data-sample-listing type="button">Use sample listing instead</button>
+      <button class="primary" data-next="processing" type="button">Continue to AI sequencing &rarr;</button>
     </div>
-    <section class="photo-grid pro-photo-grid">
-      ${photos.length ? photos.map((photo, index) => photoCard(photo, index)).join("") : emptyState("No photos uploaded", "Upload listing photos or use the sample listing to see a professional output.")}
-    </section>
   `);
   const input = document.querySelector("#photoInput");
   input.addEventListener("change", handlePhotoFiles);
-  document.querySelector("[data-add-more]").addEventListener("click", () => input.click());
-  document.querySelector("[data-auth-entry-upload]")?.addEventListener("click", () => setState({ authMode: "sign-in", authReturnScreen: "upload", screen: "auth", error: "" }));
   document.querySelector("[data-sample-listing]").addEventListener("click", loadBetaSampleListing);
   document.querySelector("[data-next]").addEventListener("click", () => guard(validatePhotos(), () => navigate("processing")));
   bindUploadDropZone();

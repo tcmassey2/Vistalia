@@ -998,6 +998,71 @@ body {
 }
 
 /* ============================================================
+   Auth gate card — shown on Photos screen before sign-in
+   ============================================================ */
+.auth-gate-card {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 24px !important;
+  padding: 32px !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-lg) !important;
+}
+@media (min-width: 720px) {
+  .auth-gate-card { grid-template-columns: 1.4fr 1fr !important; padding: 40px !important; gap: 40px !important; }
+}
+.auth-gate-copy h3 {
+  font-family: "Inter", sans-serif !important;
+  font-size: 20px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.015em !important;
+  color: var(--ink) !important;
+  margin: 0 0 16px 0 !important;
+}
+.auth-gate-list {
+  list-style: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+}
+.auth-gate-list li {
+  position: relative !important;
+  padding-left: 24px !important;
+  font-size: 14px !important;
+  line-height: 1.55 !important;
+  color: var(--ink-soft) !important;
+}
+.auth-gate-list li::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 7px !important;
+  width: 14px !important;
+  height: 14px !important;
+  border-radius: 50% !important;
+  background: var(--gold-soft) !important;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none'><path d='M3 7.5l2.5 2.5 5-6' stroke='%23C7A76C' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>") !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+}
+.auth-gate-actions {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+  align-items: stretch !important;
+}
+.auth-gate-actions .primary,
+.auth-gate-actions .secondary,
+.auth-gate-actions .ghost {
+  height: 46px !important;
+  width: 100% !important;
+  justify-content: center !important;
+}
+
+/* ============================================================
    Engine toggle on Export — Quick Reel vs Cinematic AI
    ============================================================ */
 .render-launch-panel {
