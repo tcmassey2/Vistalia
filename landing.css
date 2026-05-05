@@ -542,11 +542,14 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
 .comparison-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: var(--s-6);
+  gap: var(--s-8);
   margin-top: var(--s-12);
+  justify-items: center;
+  max-width: 1100px;
+  margin-inline: auto;
 }
 @media (min-width: 768px) {
-  .comparison-grid { grid-template-columns: 1fr 1fr; gap: var(--s-8); }
+  .comparison-grid { grid-template-columns: 1fr 1fr; gap: var(--s-10); }
 }
 
 .compare-card {
@@ -555,49 +558,92 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
   overflow: hidden;
   border: 1px solid var(--border);
   background: var(--surface);
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--s-8) var(--s-6) 0;
 }
 .compare-card.winner {
   border-color: var(--gold-dim);
   box-shadow: var(--shadow-gold);
 }
 
+/* Phone-frame for the comparison panels — same scale as hero phone so the
+   abstract scene gradients read as intentional, not as oversized blobs. */
 .compare-frame {
   position: relative;
-  aspect-ratio: 9 / 16;
+  width: min(100%, 280px);
+  aspect-ratio: 9 / 19.5;
+  background: linear-gradient(180deg, #0F0F14, #050507);
+  border-radius: 36px;
+  border: 1.5px solid var(--border);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  padding: 7px;
   overflow: hidden;
-  background: var(--bg-soft);
+  margin-inline: auto;
 }
 
+.compare-card.winner .compare-frame {
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 60px rgba(199, 167, 108, 0.18);
+}
+
+/* Inner screen of the phone */
+.compare-frame::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: 30px;
+  background: var(--bg-soft);
+  z-index: 0;
+}
+/* Phone notch */
+.compare-frame > .compare-tag {
+  /* tag is repurposed as the notch placement; keep it visible */
+  z-index: 6;
+}
+
+/* Phone tag — small pill at top of phone screen, NOT outside */
 .compare-tag {
   position: absolute;
-  top: var(--s-4); left: var(--s-4);
-  z-index: 5;
-  padding: var(--s-2) var(--s-3);
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  padding: 4px 10px;
   border-radius: var(--r-full);
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(8px);
   font-family: var(--font-mono);
-  font-size: var(--t-xs);
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   color: var(--ink);
+  font-weight: 500;
 }
-.compare-card.winner .compare-tag { background: var(--gold); color: var(--bg); }
+.compare-card.winner .compare-tag {
+  background: linear-gradient(135deg, var(--gold-light), var(--dark-gold));
+  color: #1A1208;
+  font-weight: 700;
+}
 
 .compare-info {
-  padding: var(--s-6);
+  padding: var(--s-8) 0 var(--s-8);
+  text-align: center;
+  max-width: 360px;
 }
 .compare-info h4 {
   font-family: var(--font-display);
   font-size: var(--t-xl);
   font-weight: 500;
-  margin-bottom: var(--s-2);
+  margin-bottom: var(--s-3);
   letter-spacing: -0.02em;
 }
 .compare-info p {
   color: var(--ink-soft);
   font-size: var(--t-sm);
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
 /* Slideshow demo: plain crossfade pan */
@@ -1194,39 +1240,80 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
 .compare-label {
   position: absolute;
   z-index: 4;
-  left: 16px; right: 16px;
-  bottom: 44px;
+  left: 14px; right: 14px;
+  bottom: 38px;
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 17px;
   font-weight: 500;
   letter-spacing: -0.02em;
   color: var(--ink);
-  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 4px 14px rgba(0, 0, 0, 0.7);
 }
 .compare-motion {
   position: absolute;
   z-index: 4;
-  left: 16px;
+  left: 14px;
   bottom: 18px;
   font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.16em;
+  font-size: 8px;
+  letter-spacing: 0.18em;
   font-weight: 500;
   color: var(--gold-light);
   text-transform: uppercase;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 .compare-watermark {
-  position: absolute;
-  z-index: 5;
-  top: 16px; right: 16px;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.18em;
-  font-weight: 500;
-  color: var(--ink);
-  opacity: 0.45;
-  text-transform: uppercase;
+  display: none; /* Replaced by phone-style compare-tag at top of frame */
+}
+
+/* Force scenes to clip to phone screen rounded inner shape */
+.compare-frame .slideshow-scene,
+.compare-frame .estate-scene {
+  border-radius: 30px;
+  overflow: hidden;
+}
+
+/* Add subtle line-art architectural hints to the abstract scenes — gives
+   the eye something to read as "room" without claiming a specific home. */
+.scene-curb::before {
+  content: "";
+  position: absolute; inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 178' preserveAspectRatio='none'><g fill='none' stroke='rgba(248,245,239,0.10)' stroke-width='0.4'><rect x='15' y='90' width='70' height='60'/><rect x='25' y='100' width='20' height='35'/><rect x='55' y='100' width='20' height='35'/><line x1='0' y1='150' x2='100' y2='150'/></g></svg>");
+  background-size: 100% 100%;
+}
+.scene-kitchen::before {
+  content: "";
+  position: absolute; inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 178' preserveAspectRatio='none'><g fill='none' stroke='rgba(248,245,239,0.10)' stroke-width='0.4'><line x1='0' y1='110' x2='100' y2='110'/><line x1='0' y1='112' x2='100' y2='112'/><rect x='25' y='112' width='50' height='30'/><line x1='30' y1='80' x2='30' y2='110'/><line x1='70' y1='80' x2='70' y2='110'/></g></svg>");
+  background-size: 100% 100%;
+}
+.scene-living::before {
+  content: "";
+  position: absolute; inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 178' preserveAspectRatio='none'><g fill='none' stroke='rgba(248,245,239,0.10)' stroke-width='0.4'><rect x='10' y='40' width='80' height='90'/><line x1='10' y1='130' x2='90' y2='130'/><rect x='30' y='100' width='40' height='30'/></g></svg>");
+  background-size: 100% 100%;
+}
+.scene-suite::before {
+  content: "";
+  position: absolute; inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 178' preserveAspectRatio='none'><g fill='none' stroke='rgba(248,245,239,0.10)' stroke-width='0.4'><rect x='25' y='80' width='50' height='40'/><line x1='10' y1='130' x2='90' y2='130'/><rect x='15' y='30' width='25' height='40'/></g></svg>");
+  background-size: 100% 100%;
+}
+.scene-bath::before {
+  content: "";
+  position: absolute; inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 178' preserveAspectRatio='none'><g fill='none' stroke='rgba(248,245,239,0.10)' stroke-width='0.4'><rect x='20' y='100' width='60' height='30' rx='4'/><rect x='30' y='40' width='40' height='40'/><line x1='30' y1='80' x2='70' y2='80'/></g></svg>");
+  background-size: 100% 100%;
 }
 
 /* ============================================================
@@ -1302,4 +1389,266 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
 /* The .style-card-img selector is no longer used; old rule was a no-op without
    a background-image. Replace its hover-zoom rule with one targeting .style-card-art. */
 .style-card:hover .style-card-img { display: none; } /* belt-and-suspenders cleanup */
+
+/* ============================================================
+   HERO VIDEO SHOWCASE
+   Replaces the abstract phone reel. Drop a 9:16 luxury listing
+   MP4 at /showcase/hero-reel.mp4 (or update the <source>
+   src to a direct Pexels / Coverr CDN URL).
+   ============================================================ */
+/* Wide cinematic showcase frame — sized for aerial / horizontal drone footage.
+   Replaces the earlier 9:16 phone-frame because horizontal video doesn't
+   compose into a vertical phone container without ugly cropping. */
+.hero-video-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--r-lg);
+  border: 1.5px solid var(--border);
+  background: linear-gradient(180deg, #0F0F14, #050507);
+  box-shadow:
+    0 32px 80px rgba(0, 0, 0, 0.55),
+    0 8px 24px rgba(0, 0, 0, 0.4),
+    0 0 80px rgba(199, 167, 108, 0.12);
+  overflow: hidden;
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+.hero-visual:hover .hero-video-frame { transform: translateY(-4px); }
+
+/* Subtle gold inner edge for that "premium creative tool" feel */
+.hero-video-frame::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(199, 167, 108, 0.10);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.hero-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 2;
+  background: transparent;
+}
+
+/* Fallback shown while video loads or if URL is missing — looks intentional,
+   not broken. Lives behind the <video> at z-index 1. */
+.hero-video-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 30%, rgba(199, 167, 108, 0.30), transparent 65%),
+    radial-gradient(ellipse 70% 70% at 50% 100%, rgba(74, 40, 24, 0.55), transparent 70%),
+    linear-gradient(180deg, #1F1410 0%, #2F1808 50%, #6B3E1A 100%);
+  padding: var(--s-6);
+}
+.hero-video-fallback p {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--t-md);
+  letter-spacing: -0.015em;
+  max-width: 240px;
+  opacity: 0.8;
+}
+.hero-video-fallback p code {
+  display: inline-block;
+  padding: 2px 6px;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(199, 167, 108, 0.3);
+  border-radius: 6px;
+  color: var(--gold-light);
+}
+.hero-video-fallback-tag {
+  position: absolute;
+  top: 18px; left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--gold-light);
+  font-weight: 500;
+}
+
+.hero-video-overlay {
+  position: absolute;
+  z-index: 4;
+  left: 18px; right: 18px;
+  bottom: 22px;
+  pointer-events: none;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+}
+.hero-video-listing {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.hero-video-runtime {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--gold-light);
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+/* ============================================================
+   PROOF METRICS GRID — replaces the comparison demo
+   ============================================================ */
+.proof-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--s-5);
+  margin-top: var(--s-12);
+}
+@media (min-width: 900px) {
+  .proof-grid { grid-template-columns: repeat(4, 1fr); gap: var(--s-6); }
+}
+
+.proof-stat {
+  padding: var(--s-8) var(--s-6);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: transform var(--duration-base) var(--ease-out),
+              border-color var(--duration-base) var(--ease-out),
+              box-shadow var(--duration-base) var(--ease-out);
+}
+.proof-stat:hover {
+  transform: translateY(-4px);
+  border-color: var(--gold-dim);
+  box-shadow: 0 0 40px rgba(199, 167, 108, 0.14);
+}
+
+.proof-number {
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  color: var(--ink);
+  margin-bottom: var(--s-3);
+  white-space: nowrap;
+}
+.proof-arrow {
+  display: inline-block;
+  margin: 0 6px;
+  color: var(--gold);
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.proof-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold);
+  font-weight: 500;
+  margin-bottom: var(--s-2);
+}
+
+.proof-note {
+  font-size: var(--t-sm);
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+
+/* ============================================================
+   STYLE GALLERY VIDEO CARDS
+   Replaces .style-card-art gradient panels with looping videos.
+   ============================================================ */
+.style-card-video-wrap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg-soft);
+}
+.style-card-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 2;
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+.style-card:hover .style-card-video { transform: scale(1.06); }
+
+/* Per-style fallback gradients (visible while video loads or if missing). */
+.style-card-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.style-card:nth-child(1) .style-card-fallback {
+  background:
+    radial-gradient(ellipse 70% 60% at 70% 30%, rgba(243, 196, 110, 0.55), transparent 60%),
+    radial-gradient(ellipse 80% 50% at 20% 90%, rgba(155, 80, 30, 0.6), transparent 70%),
+    linear-gradient(160deg, #1F1208 0%, #4A2810 50%, #8B5A2B 100%);
+}
+.style-card:nth-child(2) .style-card-fallback {
+  background:
+    radial-gradient(ellipse 60% 50% at 80% 20%, rgba(255, 100, 180, 0.45), transparent 60%),
+    radial-gradient(ellipse 70% 60% at 20% 80%, rgba(80, 200, 220, 0.40), transparent 65%),
+    linear-gradient(135deg, #1A0E2A 0%, #3A1A3A 50%, #2A4060 100%);
+}
+.style-card:nth-child(3) .style-card-fallback {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 30%, rgba(180, 200, 220, 0.30), transparent 65%),
+    radial-gradient(ellipse 60% 60% at 50% 90%, rgba(70, 80, 100, 0.50), transparent 75%),
+    linear-gradient(180deg, #14181F 0%, #20262E 50%, #353D48 100%);
+}
+.style-card:nth-child(4) .style-card-fallback {
+  background:
+    radial-gradient(ellipse 70% 50% at 30% 30%, rgba(199, 167, 108, 0.40), transparent 65%),
+    radial-gradient(ellipse 60% 60% at 80% 80%, rgba(60, 95, 70, 0.50), transparent 70%),
+    linear-gradient(140deg, #14180F 0%, #20281C 45%, #3A4A2A 100%);
+}
+
+/* HUD badges — same look across all cards */
+.style-card-badges {
+  position: absolute;
+  top: 12px; left: 12px; right: 12px;
+  z-index: 4;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.style-card-badges .style-card-mark,
+.style-card-badges .style-card-pace {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  font-weight: 500;
+  color: var(--ink);
+  text-transform: uppercase;
+}
+.style-card-badges .style-card-pace { color: var(--gold-light); }
+
+/* Hide style-card-art if it ever leaks back in via cached HTML */
+.style-card-art { display: none; }
+
 

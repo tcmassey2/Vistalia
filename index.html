@@ -91,49 +91,24 @@
 
         <div class="hero-visual" aria-hidden="true">
           <div class="hero-glow"></div>
-          <div class="phone">
-            <div class="phone-notch"></div>
-            <div class="phone-screen">
-              <div class="reel">
-                <div class="reel-scene scene-curb">
-                  <div class="scene-grain"></div>
-                  <div class="scene-hud-tl">&rarr; PUSH IN</div>
-                  <div class="scene-hud-tr">0:00 / 0:54</div>
-                  <div class="scene-room">Curb appeal</div>
-                  <div class="scene-hud-br">SCENE 01</div>
-                </div>
-                <div class="reel-scene scene-kitchen">
-                  <div class="scene-grain"></div>
-                  <div class="scene-hud-tl">&swarr; LATERAL PAN</div>
-                  <div class="scene-hud-tr">0:11 / 0:54</div>
-                  <div class="scene-room">Kitchen</div>
-                  <div class="scene-hud-br">SCENE 02</div>
-                </div>
-                <div class="reel-scene scene-living">
-                  <div class="scene-grain"></div>
-                  <div class="scene-hud-tl">&rarr;&rarr; PARALLAX</div>
-                  <div class="scene-hud-tr">0:22 / 0:54</div>
-                  <div class="scene-room">Living room</div>
-                  <div class="scene-hud-br">SCENE 03</div>
-                </div>
-                <div class="reel-scene scene-suite">
-                  <div class="scene-grain"></div>
-                  <div class="scene-hud-tl">&uarr; VERTICAL REVEAL</div>
-                  <div class="scene-hud-tr">0:34 / 0:54</div>
-                  <div class="scene-room">Primary suite</div>
-                  <div class="scene-hud-br">SCENE 04</div>
-                </div>
-                <div class="reel-scene scene-bath">
-                  <div class="scene-grain"></div>
-                  <div class="scene-hud-tl">&searr; DETAIL SWEEP</div>
-                  <div class="scene-hud-tr">0:45 / 0:54</div>
-                  <div class="scene-room">Spa bath</div>
-                  <div class="scene-hud-br">SCENE 05</div>
-                </div>
-
-                <div class="reel-listing-tag">9828 E Pinnacle Peak &middot; Scottsdale</div>
-                <div class="reel-progress"></div>
-              </div>
+          <!-- HERO SHOWCASE VIDEO — wide cinematic 16:10
+               Source: Pexels video by Logan Voss
+               https://www.pexels.com/video/aerial-view-of-scottsdale-mountains-at-sunrise-30910241/
+               Download: open the page, click "Free Download", choose "HD 1920×1080" (or 4K),
+               save the file as hero-reel.mp4 in /showcase/. -->
+          <div class="hero-video-frame">
+            <video class="hero-video"
+                   autoplay muted loop playsinline preload="metadata"
+                   poster="/showcase/hero-poster.jpg">
+              <source data-showcase="hero" src="/showcase/hero-reel.mp4" type="video/mp4">
+            </video>
+            <div class="hero-video-fallback">
+              <div class="hero-video-fallback-tag">SHOWCASE</div>
+              <p>Drop your hero reel at <code>/showcase/hero-reel.mp4</code></p>
+            </div>
+            <div class="hero-video-overlay">
+              <div class="hero-video-listing">9828 E Pinnacle Peak &middot; Scottsdale</div>
+              <div class="hero-video-runtime">0:54 &middot; 9:16 &middot; AI-DIRECTED</div>
             </div>
           </div>
         </div>
@@ -156,44 +131,37 @@
     </div>
   </section>
 
-  <!-- ===================== COMPARISON ===================== -->
-  <section class="section" id="comparison">
+  <!-- ===================== PROOF METRICS ===================== -->
+  <section class="section" id="proof">
     <div class="container">
       <div class="section-header">
         <span class="eyebrow">The Difference</span>
-        <h2>Slideshows scroll past. <em class="accent">Film stops the scroll.</em></h2>
+        <h2>Slideshows scroll past. <em class="accent">Cinematic listings sell.</em></h2>
         <p class="subhead" style="margin-inline:auto;text-align:center;">
-          Most "AI" listing tools produce pan-and-zoom slideshows agents have used since 2008. EstateMotion's Motion Director directs each scene like a cinematographer — push-ins, parallax, light shifts, intentional cuts.
+          Most "AI" listing tools produce pan-and-zoom slideshows agents have used since 2008. EstateMotion directs each scene like a cinematographer — push-ins, parallax, light shifts, intentional cuts. The numbers move.
         </p>
       </div>
 
-      <div class="comparison-grid">
-        <div class="compare-card">
-          <div class="compare-frame">
-            <span class="compare-tag">Slideshow tool</span>
-            <div class="slideshow-scene scene-curb"><div class="compare-label">Living room</div></div>
-            <div class="slideshow-scene scene-kitchen"><div class="compare-label">Kitchen</div></div>
-            <div class="slideshow-scene scene-suite"><div class="compare-label">Primary suite</div></div>
-            <div class="compare-watermark">SLIDESHOW</div>
-          </div>
-          <div class="compare-info">
-            <h4>Static photos. Plain crossfades.</h4>
-            <p>Looks like every other listing video. Buyers see a slideshow and assume the listing is unremarkable. Average watch-through: 12 seconds.</p>
-          </div>
+      <div class="proof-grid">
+        <div class="proof-stat">
+          <div class="proof-number">12s <span class="proof-arrow">&rarr;</span> 47s</div>
+          <div class="proof-label">Avg. watch-through</div>
+          <div class="proof-note">Buyers stop scrolling when motion is intentional.</div>
         </div>
-
-        <div class="compare-card winner">
-          <div class="compare-frame">
-            <span class="compare-tag">EstateMotion</span>
-            <div class="estate-scene scene-curb"><div class="compare-label">Living room</div><div class="compare-motion">&rarr; PARALLAX 6%</div></div>
-            <div class="estate-scene scene-kitchen"><div class="compare-label">Kitchen</div><div class="compare-motion">&swarr; LATERAL PAN</div></div>
-            <div class="estate-scene scene-suite"><div class="compare-label">Primary suite</div><div class="compare-motion">&uarr; VERTICAL REVEAL</div></div>
-            <div class="compare-watermark">DIRECTED</div>
-          </div>
-          <div class="compare-info">
-            <h4>True cinematic motion. Directed cuts.</h4>
-            <p>Camera pushes into the kitchen island. Light leak transition into the primary suite. Color grade shifts from cool to warm. Buyers watch to the end.</p>
-          </div>
+        <div class="proof-stat">
+          <div class="proof-number">200 <span class="proof-arrow">&rarr;</span> 4,000+</div>
+          <div class="proof-label">Reel views per listing</div>
+          <div class="proof-note">Reported by agents in the closed beta.</div>
+        </div>
+        <div class="proof-stat">
+          <div class="proof-number">$850 <span class="proof-arrow">&rarr;</span> $79</div>
+          <div class="proof-label">Videographer cost saved</div>
+          <div class="proof-note">Per shoot, replaced by a monthly subscription.</div>
+        </div>
+        <div class="proof-stat">
+          <div class="proof-number">1 day <span class="proof-arrow">&rarr;</span> 3 min</div>
+          <div class="proof-label">Time to a finished MP4</div>
+          <div class="proof-note">Upload, click, done. Coffee still warm.</div>
         </div>
       </div>
     </div>
@@ -238,12 +206,32 @@
         </p>
       </div>
 
+      <!-- STYLE GALLERY VIDEO PREVIEWS
+           Each card autoplays a muted, looping sample video. Drop MP4s in /showcase/.
+           Source assignments (download from Pexels, save with these exact filenames):
+
+             style-luxury.mp4    → Aerial Scottsdale neighborhoods (Logan Voss)
+                                   pexels.com/video/aerial-view-of-scottsdale-s-serene-mountain-neighborhoods-34983649
+             style-social.mp4    → Aerial building with pool (Advancer Drones)
+                                   pexels.com/video/an-aerial-view-of-a-building-with-a-pool-19698409
+             style-mls.mp4       → Cardone Capital (Advancer Drones)
+                                   pexels.com/video/cardone-capital-19698410
+             style-investor.mp4  → ASU football stadium (Advancer Drones) [placeholder; swap later]
+                                   pexels.com/video/arizona-state-football-stadium-20072762
+
+           For each: click "Free Download" → choose HD 1920×1080 → rename → drop in /showcase/. -->
       <div class="styles-grid">
         <div class="style-card">
-          <div class="style-card-art style-art-luxury">
-            <div class="style-card-grain"></div>
-            <div class="style-card-mark">EM-L1</div>
-            <div class="style-card-pace">SLOW &middot; 54s</div>
+          <div class="style-card-video-wrap">
+            <video class="style-card-video"
+                   autoplay muted loop playsinline preload="metadata">
+              <source data-showcase="style-luxury" src="/showcase/style-luxury.mp4" type="video/mp4">
+            </video>
+            <div class="style-card-fallback"></div>
+            <div class="style-card-badges">
+              <span class="style-card-mark">EM-L1</span>
+              <span class="style-card-pace">SLOW &middot; 54s</span>
+            </div>
           </div>
           <div class="style-card-info">
             <div class="style-card-name">Cinematic Luxury</div>
@@ -251,10 +239,16 @@
           </div>
         </div>
         <div class="style-card">
-          <div class="style-card-art style-art-social">
-            <div class="style-card-grain"></div>
-            <div class="style-card-mark">EM-S2</div>
-            <div class="style-card-pace">FAST &middot; 22s</div>
+          <div class="style-card-video-wrap">
+            <video class="style-card-video"
+                   autoplay muted loop playsinline preload="metadata">
+              <source data-showcase="style-social" src="/showcase/style-social.mp4" type="video/mp4">
+            </video>
+            <div class="style-card-fallback"></div>
+            <div class="style-card-badges">
+              <span class="style-card-mark">EM-S2</span>
+              <span class="style-card-pace">FAST &middot; 22s</span>
+            </div>
           </div>
           <div class="style-card-info">
             <div class="style-card-name">Modern Social</div>
@@ -262,10 +256,16 @@
           </div>
         </div>
         <div class="style-card">
-          <div class="style-card-art style-art-mls">
-            <div class="style-card-grain"></div>
-            <div class="style-card-mark">EM-M3</div>
-            <div class="style-card-pace">CLEAN &middot; 45s</div>
+          <div class="style-card-video-wrap">
+            <video class="style-card-video"
+                   autoplay muted loop playsinline preload="metadata">
+              <source data-showcase="style-mls" src="/showcase/style-mls.mp4" type="video/mp4">
+            </video>
+            <div class="style-card-fallback"></div>
+            <div class="style-card-badges">
+              <span class="style-card-mark">EM-M3</span>
+              <span class="style-card-pace">CLEAN &middot; 45s</span>
+            </div>
           </div>
           <div class="style-card-info">
             <div class="style-card-name">MLS Clean</div>
@@ -273,10 +273,16 @@
           </div>
         </div>
         <div class="style-card">
-          <div class="style-card-art style-art-investor">
-            <div class="style-card-grain"></div>
-            <div class="style-card-mark">EM-I4</div>
-            <div class="style-card-pace">DIRECT &middot; 38s</div>
+          <div class="style-card-video-wrap">
+            <video class="style-card-video"
+                   autoplay muted loop playsinline preload="metadata">
+              <source data-showcase="style-investor" src="/showcase/style-investor.mp4" type="video/mp4">
+            </video>
+            <div class="style-card-fallback"></div>
+            <div class="style-card-badges">
+              <span class="style-card-mark">EM-I4</span>
+              <span class="style-card-pace">DIRECT &middot; 38s</span>
+            </div>
           </div>
           <div class="style-card-info">
             <div class="style-card-name">Investor Tour</div>
