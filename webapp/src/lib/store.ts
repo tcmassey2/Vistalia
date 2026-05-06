@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import type { Session } from "@supabase/supabase-js";
 import type {
+  AgentBranding,
   EditPlan,
   ListingDetails,
   Photo,
@@ -43,6 +44,7 @@ interface AppState {
   projectTitle: string;
   photos: Photo[];
   listing: ListingDetails;
+  branding: AgentBranding;
   selectedStyleId: StyleId;
   renderEngine: RenderEngine;
   editPlan: EditPlan | null;
@@ -64,6 +66,7 @@ interface AppState {
 
   setProjectTitle: (t: string) => void;
   setListing: (patch: Partial<ListingDetails>) => void;
+  setBranding: (patch: Partial<AgentBranding>) => void;
   addPhotos: (photos: Photo[]) => void;
   removePhoto: (id: string) => void;
   reorderPhotos: (ids: string[]) => void;
@@ -89,11 +92,44 @@ const emptyListing: ListingDetails = {
   hook: ""
 };
 
+// Brand kit persists across projects via localStorage so the agent doesn't
+// have to retype it every render. Loaded lazily on first project open.
+const BRANDING_STORAGE_KEY = "estatemotion.brandkit.v1";
+
+function loadStoredBranding(): AgentBranding {
+  const empty: AgentBranding = { fullName: "", brokerage: "", phone: "", email: "", headshotUrl: "" };
+  if (typeof window === "undefined") return empty;
+  try {
+    const raw = window.localStorage.getItem(BRANDING_STORAGE_KEY);
+    if (!raw) return empty;
+    const parsed = JSON.parse(raw);
+    return {
+      fullName: String(parsed.fullName || ""),
+      brokerage: String(parsed.brokerage || ""),
+      phone: String(parsed.phone || ""),
+      email: String(parsed.email || ""),
+      headshotUrl: String(parsed.headshotUrl || "")
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function persistBranding(branding: AgentBranding) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(branding));
+  } catch {
+    // ignore storage failures (private mode, quota, etc.)
+  }
+}
+
 const emptyProject = () => ({
   projectId: newProjectId(),
   projectTitle: "Untitled listing",
   photos: [] as Photo[],
   listing: { ...emptyListing },
+  branding: loadStoredBranding(),
   selectedStyleId: "cinematic-luxury" as StyleId,
   renderEngine: "remotion" as RenderEngine,
   editPlan: null as EditPlan | null,
@@ -149,6 +185,11 @@ export const useStore = create<AppState>((set, get) => ({
 
   setProjectTitle: (t) => set({ projectTitle: t }),
   setListing: (patch) => set({ listing: { ...get().listing, ...patch } }),
+  setBranding: (patch) => {
+    const next = { ...get().branding, ...patch };
+    persistBranding(next);
+    set({ branding: next });
+  },
 
   addPhotos: (newOnes) => {
     const existing = get().photos;

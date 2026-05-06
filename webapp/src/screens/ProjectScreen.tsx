@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
 import { useStore } from "../lib/store";
-import { uploadListingPhoto, photoFromUpload, readImageDimensions } from "../lib/supabase";
+import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot } from "../lib/supabase";
 import { createEditPlan, submitRender, pollRender, type RenderManifest } from "../lib/api";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
@@ -98,6 +98,14 @@ export default function ProjectScreen() {
           : `${photos.length} ${photos.length === 1 ? "photo" : "photos"} ready to direct.`}
       >
         <PhotosArea projectId={projectId} userId={session?.user?.id || ""} />
+      </Section>
+
+      {/* Agent brand kit — drives the outro card on every video */}
+      <Section
+        title="Your branding"
+        subtitle="Appears on the closing card of every video. Saved between projects."
+      >
+        <BrandKitArea userId={session?.user?.id || ""} />
       </Section>
 
       {/* Style */}
@@ -332,6 +340,130 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
 }
 
 /* ============================================================
+   Brand kit — agent name, brokerage, headshot. Renders on the outro
+   card for both Quick Reel and Cinematic AI. Persisted in localStorage
+   so the agent never has to re-enter it.
+   ============================================================ */
+function BrandKitArea({ userId }: { userId: string }) {
+  const branding = useStore((s) => s.branding);
+  const setBranding = useStore((s) => s.setBranding);
+  const setError = useStore((s) => s.setError);
+  const setToast = useStore((s) => s.setToast);
+
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const handleHeadshot = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    if (!userId) {
+      setError("Sign in expired. Refresh the page.");
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      setError("Headshot must be an image (JPG, PNG, or WebP).");
+      return;
+    }
+    setUploading(true);
+    try {
+      const { url } = await uploadAgentHeadshot(file, userId);
+      setBranding({ headshotUrl: url });
+      setToast("Headshot saved");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Headshot upload failed";
+      setError(msg);
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  return (
+    <div className="bg-surface border border-edge rounded-xl p-5 sm:p-6 flex flex-col gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-5 items-start">
+        {/* Headshot uploader */}
+        <div className="flex flex-col items-center gap-2">
+          <label
+            className={cn(
+              "card-press relative w-28 h-28 rounded-full overflow-hidden border-2 border-dashed cursor-pointer grid place-items-center bg-surface-input transition-colors",
+              uploading
+                ? "border-gold"
+                : branding.headshotUrl
+                ? "border-edge-strong hover:border-gold"
+                : "border-edge-strong hover:border-gold hover:bg-gold/5"
+            )}
+          >
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handleHeadshot(e.target.files)}
+              disabled={uploading}
+            />
+            {branding.headshotUrl ? (
+              <img
+                src={branding.headshotUrl}
+                alt="Agent headshot"
+                className="w-full h-full object-cover"
+              />
+            ) : uploading ? (
+              <span className="spinner" />
+            ) : (
+              <div className="text-[10px] text-ink-muted text-center px-2 leading-tight">
+                Add<br />headshot
+              </div>
+            )}
+          </label>
+          {branding.headshotUrl && (
+            <button
+              type="button"
+              onClick={() => setBranding({ headshotUrl: "" })}
+              className="text-[11px] text-ink-muted hover:text-red-300 transition-colors"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+
+        {/* Identity fields */}
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Full name"
+              value={branding.fullName}
+              onChange={(v) => setBranding({ fullName: v })}
+              placeholder="Troy Massey"
+            />
+            <Input
+              label="Brokerage"
+              value={branding.brokerage}
+              onChange={(v) => setBranding({ brokerage: v })}
+              placeholder="EstateMotion Realty"
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label="Phone"
+              value={branding.phone}
+              onChange={(v) => setBranding({ phone: v })}
+              placeholder="(555) 555-1234"
+            />
+            <Input
+              label="Email"
+              value={branding.email}
+              onChange={(v) => setBranding({ email: v })}
+              placeholder="agent@example.com"
+              type="email"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    Engine toggle (Quick Reel vs Cinematic AI)
    ============================================================ */
 function EngineToggle({ engine, onChange }: { engine: RenderEngine; onChange: (e: RenderEngine) => void }) {
@@ -402,6 +534,7 @@ function RenderControls() {
   const session = useStore((s) => s.session);
   const photos = useStore((s) => s.photos);
   const listing = useStore((s) => s.listing);
+  const branding = useStore((s) => s.branding);
   const selectedStyleId = useStore((s) => s.selectedStyleId);
   const renderEngine = useStore((s) => s.renderEngine);
   const renderJob = useStore((s) => s.renderJob);
@@ -445,7 +578,18 @@ function RenderControls() {
         app: "EstateMotion",
         engine: renderEngine,
         exportFormat: "vertical",
-        project: { id: projectId, userId: session.user.id, title: projectTitle },
+        project: {
+          id: projectId,
+          userId: session.user.id,
+          title: projectTitle,
+          address: listing.address,
+          city: listing.city,
+          price: listing.price,
+          beds: listing.beds,
+          baths: listing.baths,
+          squareFeet: listing.squareFeet,
+          hook: listing.hook
+        },
         scenes: planResult.editPlan.scenes.map((scene) => {
           const photo = photos.find((p) => p.id === scene.photoId);
           return {
@@ -466,7 +610,8 @@ function RenderControls() {
         outroCard: planResult.editPlan.outroCard,
         musicMood: planResult.editPlan.musicMood,
         selectedStyle: styleLabel,
-        runwayConfig: planResult.editPlan.runwayConfig
+        runwayConfig: planResult.editPlan.runwayConfig,
+        brandKit: branding
       };
 
       // 3. Submit

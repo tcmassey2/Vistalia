@@ -192,10 +192,7 @@ function RenderScene({ scene, manifest, index, total, duration, accentColor, dim
       {stylePack.showContactCta && index === total - 1 ? (
         <ContactCtaCard brandKit={brandKit} project={project} accentColor={accentColor} stylePack={stylePack} progress={progress} />
       ) : null}
-      <MarketingModeOverlay overlay={normalizeMarketingOverlay(scene.marketingOverlay, manifest.marketingOS, project, brandKit)} brandKit={brandKit} accentColor={accentColor} stylePack={stylePack} progress={progress} />
-      <div style={{ position: "absolute", left: 64, right: 64, bottom: 112, color: "white" }}>
-        {scene.featureCard && stylePack.showFeatureCards ? <FeatureCard text={scene.featureCard} accentColor={accentColor} /> : null}
-      </div>
+      <PersistentBrandBadge brandKit={brandKit} accentColor={accentColor} />
       <ComplianceFooter compliance={manifest.compliance || {}} />
     </AbsoluteFill>
   );
@@ -220,82 +217,22 @@ function normalizeProject(project = {}) {
 }
 
 function normalizeBrandKit(brandKit = {}, project = {}) {
+  // Frontend ships AgentBranding ({ fullName, brokerage, phone, email,
+  // headshotUrl }). The renderer historically used { name, brokerage, phone,
+  // website, instagram, ctaText, headshotUrl }. We accept both shapes so
+  // older callers continue to work.
   return {
     ...brandKit,
-    name: brandKit.name || project.agentName || "Your Local Agent",
+    name: brandKit.fullName || brandKit.name || project.agentName || "Your Local Agent",
+    fullName: brandKit.fullName || brandKit.name || project.agentName || "Your Local Agent",
     brokerage: brandKit.brokerage || project.brokerage || "Real Estate Advisor",
     phone: brandKit.phone || project.phone || "",
+    email: brandKit.email || project.email || "",
     website: brandKit.website || project.website || "",
     instagram: brandKit.instagram || project.instagram || "",
+    headshotUrl: brandKit.headshotUrl || brandKit.headshot || "",
     ctaText: brandKit.ctaText || project.cta || "Schedule a private tour"
   };
-}
-
-function normalizeMarketingOverlay(overlay = {}, marketingOS = {}, project = {}, brandKit = {}) {
-  if (overlay?.headline) {
-    return {
-      ...overlay,
-      label: overlay.label || overlay.modeName || "EstateMotion",
-      lines: Array.isArray(overlay.lines) ? overlay.lines.filter(Boolean) : [],
-      disclaimer: overlay.disclaimer || safeModeDisclaimer(overlay.variant || marketingOS.contentMode)
-    };
-  }
-  const mode = marketingOS.contentMode || "listing-reel";
-  const metrics = marketingOS.investorEstimateSummary || marketingOS.investorMetrics || {};
-  if (mode === "seller-lead-magnet") {
-    return {
-      label: "Seller Preview",
-      headline: "See what your home could look like online",
-      lines: ["Your photos", marketingOS.conversionGoal || "Seller consultation"],
-      disclaimer: "Marketing preview only. No sale price or outcome is guaranteed.",
-      variant: "seller"
-    };
-  }
-  if (mode === "investor-breakdown" || mode === "wholesale-opportunity") {
-    const wholesale = mode === "wholesale-opportunity";
-    return {
-      label: wholesale ? "Wholesale Opportunity" : "Investor Estimate",
-      headline: wholesale ? "Assignment-style deal summary" : "Deal snapshot",
-      lines: [
-        `ARV est. ${formatFallbackMoney(metrics.arv)}`,
-        `Rehab est. ${formatFallbackMoney(metrics.rehab || metrics.rehabEstimate)}`,
-        wholesale ? `Assignment est. ${formatFallbackMoney(metrics.assignment || metrics.assignmentFee)}` : `Projected spread est. ${formatFallbackMoney(metrics.projectedSpread)}`
-      ],
-      disclaimer: wholesale ? "Wholesale/investor figures are estimates, not guarantees or financial advice." : "All figures are estimates and require independent verification.",
-      variant: wholesale ? "wholesale" : "investor"
-    };
-  }
-  if (mode === "neighborhood-spotlight") {
-    return {
-      label: "Neighborhood Spotlight",
-      headline: `${project.neighborhood || project.city || "Local area"} lifestyle`,
-      lines: [project.city || "Local market", "Local context", marketingOS.conversionGoal || "Ask me about this area"],
-      disclaimer: "Lifestyle captions are based on listing location and uploaded photos.",
-      variant: "neighborhood"
-    };
-  }
-  if (mode === "agent-brand") {
-    return {
-      label: "Agent Authority",
-      headline: `${brandKit.name || "Your agent"} can help you move next`,
-      lines: [brandKit.brokerage, brandKit.phone, marketingOS.conversionGoal || brandKit.ctaText].filter(Boolean),
-      disclaimer: "Agent contact CTA card.",
-      variant: "agent"
-    };
-  }
-  return null;
-}
-
-function formatFallbackMoney(value) {
-  const numeric = Number(String(value || "").replace(/[$,\s%]/g, ""));
-  if (!Number.isFinite(numeric) || numeric <= 0) return "Estimate needed";
-  return `$${numeric.toLocaleString()}`;
-}
-
-function safeModeDisclaimer(mode = "") {
-  if (String(mode).includes("investor") || String(mode).includes("wholesale")) return "All figures are estimates and require independent verification.";
-  if (String(mode).includes("seller")) return "Marketing preview only. No sale price or outcome is guaranteed.";
-  return "";
 }
 
 function NeighborhoodTitleCard({ project, accentColor, stylePack, progress }) {
@@ -329,29 +266,6 @@ function ContactCtaCard({ brandKit, project, accentColor, stylePack, progress })
     <div style={{ position: "absolute", right: 64, bottom: 86, padding: "18px 22px", borderRadius: 18, background: stylePack.graphicCardBackground, color: stylePack.graphicTextColor, border: `1px solid ${accentColor}`, opacity }}>
       <strong style={{ display: "block", fontSize: 26 }}>{project.cta || brandKit.ctaText || "Schedule a private tour"}</strong>
       <span style={{ display: "block", fontSize: 19, marginTop: 8 }}>{[brandKit.phone, brandKit.website, brandKit.instagram].filter(Boolean).join(" / ") || brandKit.name}</span>
-    </div>
-  );
-}
-
-function MarketingModeOverlay({ overlay, brandKit, accentColor, stylePack, progress }) {
-  if (!overlay?.headline) return null;
-  const opacity = interpolate(progress, [0.12, 0.28, 0.92, 1], [0, 1, 1, 0.9], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const y = interpolate(progress, [0.12, 0.28], [22, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const isAgent = overlay.variant === "agent";
-  const borderColor = overlay.variant === "investor" || overlay.variant === "wholesale" ? "#D7E6B8" : accentColor;
-  return (
-    <div style={{ position: "absolute", left: 64, right: 64, top: isAgent ? 210 : 246, display: "flex", justifyContent: isAgent ? "flex-end" : "flex-start", opacity, transform: `translateY(${y}px)` }}>
-      <div style={{ width: isAgent ? 430 : 560, padding: "22px 24px", borderRadius: 18, background: stylePack.graphicCardBackground || "rgba(13,13,13,.72)", color: stylePack.graphicTextColor || "#fff", border: `1px solid ${borderColor}`, boxShadow: "0 24px 70px rgba(0,0,0,.28)" }}>
-        <p style={{ margin: "0 0 10px", color: borderColor, fontSize: 18, fontWeight: 950, textTransform: "uppercase", letterSpacing: 0 }}>{overlay.label}</p>
-        <h3 style={{ margin: 0, fontSize: isAgent ? 34 : 38, lineHeight: 1, fontWeight: 950 }}>{overlay.headline}</h3>
-        {overlay.lines?.length ? (
-          <div style={{ display: "grid", gap: 7, marginTop: 16 }}>
-            {overlay.lines.slice(0, 3).map((line) => <span key={line} style={{ fontSize: 22, fontWeight: 850 }}>{line}</span>)}
-          </div>
-        ) : null}
-        {isAgent ? <p style={{ margin: "16px 0 0", fontSize: 20 }}>{[brandKit.name, brandKit.phone, brandKit.website].filter(Boolean).join("  /  ") || "Your local real estate advisor"}</p> : null}
-        {overlay.disclaimer ? <p style={{ margin: "16px 0 0", fontSize: 15, opacity: .76 }}>{overlay.disclaimer}</p> : null}
-      </div>
     </div>
   );
 }
@@ -419,10 +333,48 @@ function LowerThird({ facts, price, scene, accentColor, opacity, translateY, pri
   );
 }
 
-function FeatureCard({ text, accentColor }) {
+// Minimal persistent watermark — appears on every scene. Modeled after the
+// Reel-e.ai bottom-left identity badge: tiny circular headshot + name +
+// brokerage on a soft tinted plate. Subtle enough to not distract from the
+// listing photo; consistent enough to drive brand recall across the reel.
+function PersistentBrandBadge({ brandKit, accentColor }) {
+  const name = brandKit?.fullName || brandKit?.name || "";
+  const brokerage = brandKit?.brokerage || "";
+  if (!name && !brokerage && !brandKit?.headshotUrl) return null;
+  const frame = useCurrentFrame();
+  const opacity = interpolate(frame, [4, 22], [0, 0.92], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const headshot = brandKit?.headshotUrl || "";
   return (
-    <div style={{ display: "inline-block", marginTop: 24, padding: "18px 22px", background: "rgba(248,245,239,.94)", color: "#0D0D0D", borderLeft: `7px solid ${accentColor}`, borderRadius: 10, fontSize: 24, fontWeight: 900 }}>
-      {text}
+    <div
+      style={{
+        position: "absolute",
+        left: 36,
+        bottom: 36,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: headshot ? "8px 16px 8px 8px" : "10px 16px",
+        borderRadius: 999,
+        background: "rgba(13,13,13,0.62)",
+        backdropFilter: "blur(8px)",
+        border: `1px solid ${accentColor}55`,
+        opacity,
+        maxWidth: 460
+      }}
+    >
+      {headshot ? (
+        <div style={{ flexShrink: 0, width: 44, height: 44, borderRadius: "50%", overflow: "hidden", border: `1.5px solid ${accentColor}` }}>
+          <Img src={headshot} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1, color: "white", overflow: "hidden" }}>
+        {name ? (
+          <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: 0.2, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{name}</span>
+        ) : null}
+        {brokerage ? (
+          <span style={{ fontSize: 14, fontWeight: 500, opacity: 0.78, marginTop: 2, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{brokerage}</span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -432,13 +384,22 @@ function EndCard({ project, brandKit, compliance, accentColor, stylePack }) {
   const frame = useCurrentFrame();
   const opacity = interpolate(frame, [0, 24], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const y = interpolate(frame, [0, 24], [36, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const headshot = brandKit.headshotUrl || "";
+  const contactLine = [brandKit.phone, brandKit.email, brandKit.website, brandKit.instagram].filter(Boolean).join("  /  ");
   return (
     <AbsoluteFill style={{ justifyContent: "center", alignItems: "center", backgroundColor: stylePack.endCardBackground, color: stylePack.endCardColor }}>
-      <div style={{ width: 820, maxWidth: "82%", borderTop: `10px solid ${accentColor}`, background: stylePack.endCardPanel, color: stylePack.endCardPanelText, borderRadius: 18, padding: 58, boxShadow: "0 34px 90px rgba(13,13,13,.18)", opacity, transform: `translateY(${y}px)` }}>
-        <p style={{ color: accentColor, fontWeight: 900, textTransform: "uppercase", fontSize: 24, margin: "0 0 18px" }}>{cta}</p>
-        <h2 style={{ fontSize: 68, lineHeight: .95, margin: "0 0 18px" }}>{brandKit.name || "Your Local Agent"}</h2>
-        <p style={{ fontSize: 31, color: stylePack.endCardMuted, margin: 0 }}>{brandKit.brokerage || project.brokerage || ""}</p>
-        <p style={{ fontSize: 28, margin: "28px 0 0" }}>{[brandKit.phone, brandKit.website, brandKit.instagram].filter(Boolean).join("  /  ")}</p>
+      <div style={{ width: 820, maxWidth: "82%", borderTop: `10px solid ${accentColor}`, background: stylePack.endCardPanel, color: stylePack.endCardPanelText, borderRadius: 18, padding: 58, boxShadow: "0 34px 90px rgba(13,13,13,.18)", opacity, transform: `translateY(${y}px)`, display: "flex", gap: 36, alignItems: "center" }}>
+        {headshot ? (
+          <div style={{ flexShrink: 0, width: 168, height: 168, borderRadius: "50%", overflow: "hidden", border: `4px solid ${accentColor}`, boxShadow: "0 18px 48px rgba(13,13,13,.22)" }}>
+            <Img src={headshot} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          </div>
+        ) : null}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ color: accentColor, fontWeight: 900, textTransform: "uppercase", fontSize: 22, letterSpacing: 1.2, margin: "0 0 14px" }}>{cta}</p>
+          <h2 style={{ fontSize: 60, lineHeight: .95, margin: "0 0 14px", fontFamily: stylePack.headlineFont }}>{brandKit.name || "Your Local Agent"}</h2>
+          <p style={{ fontSize: 28, color: stylePack.endCardMuted, margin: 0 }}>{brandKit.brokerage || project.brokerage || ""}</p>
+          {contactLine ? <p style={{ fontSize: 24, margin: "22px 0 0", opacity: .9 }}>{contactLine}</p> : null}
+        </div>
       </div>
       <ComplianceFooter compliance={compliance} dark={stylePack.endCardBackground !== "#0D0D0D"} />
     </AbsoluteFill>
@@ -487,50 +448,7 @@ function cameraTransform(style = "Push-in", progress, dimensions, sceneType = ""
     const scale = interpolate(progress, [0, 1], [1.12, 1.055]);
     return `scale(${scale}) translate3d(${x}px, 0, 0)`;
   }
-  if (style === "Exterior slow zoom" || sceneType === "Exterior hero") {
-    const scale = interpolate(progress, [0, 1], [1.015, 1.105]);
-    const y = interpolate(progress, [0, 1], [10, -10]);
-    return `scale(${scale}) translate3d(0, ${y}px, 0)`;
-  }
-  if (style === "Kitchen lateral pan" || sceneType === "Kitchen") {
-    const x = interpolate(progress, [0, 1], [-48, 48]);
-    return `scale(1.085) translate3d(${x}px, 0, 0)`;
-  }
-  if (style === "Living depth zoom" || sceneType === "Living room") {
-    const scale = interpolate(progress, [0, 1], [1.025, 1.13]);
-    const x = interpolate(progress, [0, 1], [-12, 12]);
-    return `scale(${scale}) translate3d(${x}px, 0, 0)`;
-  }
-  if (style === "Bedroom gentle fade" || sceneType === "Primary bedroom" || sceneType === "Bedroom") {
-    const scale = interpolate(progress, [0, 1], [1.055, 1.02]);
-    return `scale(${scale}) translate3d(0, 0, 0)`;
-  }
-  if (style === "Bathroom clean slide" || sceneType === "Bathroom") {
-    const x = interpolate(progress, [0, 1], [28, -18]);
-    return `scale(1.06) translate3d(${x}px, 0, 0)`;
-  }
-  if (style === "Pull-out") {
-    const scale = interpolate(progress, [0, 1], [1.1, 1.02]);
-    return `scale(${scale}) translate3d(0, 0, 0)`;
-  }
-  if (style === "Slow pan") {
-    const x = interpolate(progress, [0, 1], [-pan, pan]);
-    return `scale(1.06) translate3d(${x}px, 0, 0)`;
-  }
-  if (style === "Orbit simulation") {
-    const x = interpolate(progress, [0, 1], [-28, 28]);
-    const rotate = interpolate(progress, [0, 1], [-.22, .22]);
-    return `scale(1.08) translate3d(${x}px, 0, 0) rotate(${rotate}deg)`;
-  }
-  if (style === "Vertical social framing") {
-    const y = interpolate(progress, [0, 1], [20, -20]);
-    return `scale(1.07) translate3d(0, ${y}px, 0)`;
-  }
-  if (style === "Depth zoom") {
-    const scale = interpolate(progress, [0, 1], [1.02, 1.12]);
-    const x = interpolate(progress, [0, 1], [0, -18]);
-    return `scale(${scale}) translate3d(${x}px, 0, 0)`;
-  }
+  // Unknown / missing motion — gentle default push.
   const scale = interpolate(progress, [0, 1], [1.01, 1.09]);
   return `scale(${scale}) translate3d(0, 0, 0)`;
 }
@@ -565,12 +483,16 @@ function transitionLayer(transition = "", entrance, exit, accentColor, stylePack
 }
 
 function stylePackForManifest(manifest = {}) {
-  const id = String(manifest.stylePack || manifest.template?.id || "").toLowerCase();
-  if (id.includes("viral") || id.includes("fast")) return stylePacks.viral;
-  if (id.includes("mls") || id.includes("clean")) return stylePacks.mlsClean;
-  if (id.includes("investor")) return stylePacks.investor;
-  if (id.includes("neighborhood")) return stylePacks.neighborhood;
-  if (id.includes("personalbrand") || id.includes("personal-brand") || id.includes("agent")) return stylePacks.personalBrand;
+  // Live frontend ships `selectedStyle` as the human-readable label — map
+  // that to the four stylepacks the app currently exposes. The legacy
+  // `stylePack` / `template.id` paths are kept as fallbacks so older saved
+  // manifests still render.
+  const label = String(
+    manifest.selectedStyle || manifest.stylePack || manifest.template?.id || ""
+  ).toLowerCase();
+  if (label.includes("social") || label.includes("modern") || label.includes("viral") || label.includes("fast")) return stylePacks.viral;
+  if (label.includes("mls") || label.includes("clean")) return stylePacks.mlsClean;
+  if (label.includes("investor")) return stylePacks.investor;
   return stylePacks.luxury;
 }
 
@@ -704,70 +626,6 @@ const stylePacks = {
     graphicTextColor: "#FFFFFF",
     lightLeakGradient: "radial-gradient(circle at 85% 20%, rgba(199,167,108,.24), transparent 32%)"
   },
-  neighborhood: {
-    label: "Neighborhood Authority",
-    background: "#0E1719",
-    transitionColor: "#0E1719",
-    gradient: "linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,.04) 40%, rgba(0,0,0,.8))",
-    badgeBackground: "rgba(14,23,25,.72)",
-    imageFilter: "contrast(1.04) saturate(1.04)",
-    priceBackground: "rgba(248,245,239,.94)",
-    priceColor: "#0E1719",
-    endCardBackground: "#0E1719",
-    endCardPanel: "#F8F5EF",
-    endCardColor: "#F8F5EF",
-    endCardPanelText: "#0E1719",
-    endCardMuted: "#46575b",
-    headlineFont: "Inter, Arial, sans-serif",
-    heroSize: 68,
-    sceneTitleSize: 52,
-    defaultSceneDuration: 2,
-    outroDuration: 3,
-    overlapFrames: 7,
-    showFeatureCards: true,
-    showPremiumGraphics: true,
-    showLightLeak: true,
-    showBrandedFrame: true,
-    showMapPin: true,
-    showContactCta: true,
-    showMusicFallback: true,
-    musicVolume: 0.36,
-    graphicCardBackground: "rgba(14,23,25,.72)",
-    graphicTextColor: "#FFFFFF",
-    lightLeakGradient: "radial-gradient(circle at 22% 18%, rgba(62,110,120,.34), transparent 34%)"
-  },
-  personalBrand: {
-    label: "Agent Authority",
-    background: "#0D0D0D",
-    transitionColor: "#0D0D0D",
-    gradient: "linear-gradient(180deg, rgba(0,0,0,.14), rgba(0,0,0,.05) 42%, rgba(0,0,0,.86))",
-    badgeBackground: "rgba(13,13,13,.72)",
-    imageFilter: "contrast(1.05) saturate(1.03)",
-    priceBackground: "rgba(199,167,108,.96)",
-    priceColor: "#0D0D0D",
-    endCardBackground: "#0D0D0D",
-    endCardPanel: "#F8F5EF",
-    endCardColor: "#F8F5EF",
-    endCardPanelText: "#0D0D0D",
-    endCardMuted: "#4d4942",
-    headlineFont: "Inter, Arial, sans-serif",
-    heroSize: 70,
-    sceneTitleSize: 54,
-    defaultSceneDuration: 2,
-    outroDuration: 3.4,
-    overlapFrames: 8,
-    showFeatureCards: true,
-    showPremiumGraphics: true,
-    showLightLeak: true,
-    showBrandedFrame: true,
-    showMapPin: true,
-    showContactCta: true,
-    showMusicFallback: true,
-    musicVolume: 0.4,
-    graphicCardBackground: "rgba(13,13,13,.68)",
-    graphicTextColor: "#FFFFFF",
-    lightLeakGradient: "radial-gradient(circle at 75% 18%, rgba(199,167,108,.30), transparent 32%)"
-  }
 };
 
 function scenesFromManifest(manifest = {}) {

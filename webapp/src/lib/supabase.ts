@@ -101,6 +101,39 @@ export async function uploadListingPhoto(
 }
 
 /* ============================================================
+   Agent headshot upload — same bucket, dedicated path namespace.
+   Reusing listing-photos avoids needing a new bucket + RLS policy.
+   The render-worker only needs a public URL, so this works the same.
+   ============================================================ */
+
+export async function uploadAgentHeadshot(
+  file: File,
+  userId: string
+): Promise<{ url: string; storagePath: string }> {
+  const e = env();
+  const bucket = e.LISTING_PHOTOS_BUCKET || "listing-photos";
+  const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+  // Stable path so a re-uploaded headshot replaces the prior one.
+  const storagePath = `${userId}/brand-kit/headshot-${Date.now()}-${safeFileName}`;
+
+  const { error } = await supabase()
+    .storage
+    .from(bucket)
+    .upload(storagePath, file, {
+      cacheControl: "3600",
+      upsert: true,
+      contentType: file.type || "image/jpeg"
+    });
+
+  if (error) {
+    throw new Error(`Headshot upload failed: ${error.message}`);
+  }
+
+  const url = supabase().storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;
+  return { url, storagePath };
+}
+
+/* ============================================================
    Image dimensions probe (client-side, free)
    ============================================================ */
 

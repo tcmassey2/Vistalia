@@ -193,20 +193,29 @@ async function pollRunwayTask(taskId, sceneIndex) {
 async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbnailPath) {
   clipResults.sort((a, b) => a.sceneIndex - b.sceneIndex);
   const tempDir = path.dirname(outputPath);
+  const dimensions = runwayDimensions(manifest);
+  const brand = normalizeBrandKitForFFmpeg(manifest.brandKit || {});
 
   // Step 1: re-encode each clip to a uniform codec/framerate so concat works
   // safely. Runway clips can return at varying frame rates and sometimes
-  // different containers; normalize first to avoid concat artifacts.
-  // RAM-conscious flags: -threads 1, ultrafast preset, scaled to 1080p max
-  // — Render Standard has 2GB and Chromium is sharing it.
+  // different containers; normalize to a known resolution + apply the
+  // persistent brand watermark in the same pass (saves a re-encode step).
+  // RAM-conscious flags: -threads 1, ultrafast preset.
+  const watermarkFilter = buildWatermarkDrawtext(brand, dimensions);
   const normalizedClips = [];
   for (const clip of clipResults) {
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
+    const filterChain = [
+      `fps=30`,
+      `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=fast_bilinear`,
+      `crop=${dimensions.width}:${dimensions.height}`,
+      ...(watermarkFilter ? [watermarkFilter] : [])
+    ].join(",");
     await runFFmpeg([
       "-y",
       "-threads", "1",
       "-i", clip.clipPath,
-      "-vf", "fps=30,scale='min(1920,iw)':-2:flags=fast_bilinear",
+      "-vf", filterChain,
       "-c:v", "libx264",
       "-pix_fmt", "yuv420p",
       "-preset", "ultrafast",
@@ -217,9 +226,15 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     normalizedClips.push({ ...clip, clipPath: normalized });
   }
 
-  // Step 2: concat with FFmpeg concat demuxer (lossless, fast).
+  // Step 2: append a 5-second branding outro card — solid background with
+  // agent name + brokerage + contact, centered. Same dimensions/codec as
+  // the photo clips so concat is lossless.
+  const outroClip = await buildBrandOutroClip(brand, dimensions, tempDir);
+  const allClips = outroClip ? [...normalizedClips, { clipPath: outroClip, sceneIndex: 9999 }] : normalizedClips;
+
+  // Step 3: concat with FFmpeg concat demuxer (lossless, fast).
   const concatList = path.join(tempDir, "concat.txt");
-  const concatContent = normalizedClips
+  const concatContent = allClips
     .map((clip) => `file '${clip.clipPath.replace(/'/g, "'\\''")}'`)
     .join("\n");
   await fs.writeFile(concatList, concatContent);
@@ -235,7 +250,7 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     stitched
   ]);
 
-  // Step 3: optional audio mix from manifest.musicMood mapping. We honor a
+  // Step 4: optional audio mix from manifest.musicMood mapping. We honor a
   // RUNWAY_MUSIC_<MOOD>_URL env var pointing to a remote MP3. If no music
   // configured, the final video has no audio (acceptable for v1).
   const musicUrl = pickMusicUrl(manifest);
@@ -257,15 +272,15 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     await fs.copyFile(stitched, outputPath);
   }
 
-  // Free the normalized clips immediately — they can each be 10-30 MB and
-  // we no longer need them after the concat step. Helps RAM pressure on
-  // the Supabase upload that follows.
+  // Free intermediates immediately — each can be 10-30 MB and we don't need
+  // them after concat. Helps RAM pressure on the Supabase upload below.
   for (const clip of normalizedClips) {
     await fs.unlink(clip.clipPath).catch(() => {});
   }
+  if (outroClip) await fs.unlink(outroClip).catch(() => {});
   await fs.unlink(stitched).catch(() => {});
 
-  // Step 4: extract a thumbnail from ~10% in.
+  // Step 5: extract a thumbnail from ~10% in.
   await runFFmpeg([
     "-y",
     "-threads", "1",
@@ -275,6 +290,143 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     "-q:v", "3",
     thumbnailPath
   ]);
+}
+
+/* =================================================================
+   Brand outro + persistent watermark
+   ================================================================= */
+
+const FFMPEG_FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf";
+const FFMPEG_FONT_REGULAR = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf";
+
+function normalizeBrandKitForFFmpeg(brandKit = {}) {
+  return {
+    name: ffEscape(brandKit.fullName || brandKit.name || ""),
+    brokerage: ffEscape(brandKit.brokerage || ""),
+    phone: ffEscape(brandKit.phone || ""),
+    email: ffEscape(brandKit.email || ""),
+    cta: ffEscape(brandKit.ctaText || "Schedule a private tour")
+  };
+}
+
+// drawtext expects backslash-escaped colons, single quotes, and percent signs.
+function ffEscape(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/:/g, "\\:")
+    .replace(/'/g, "\\'")
+    .replace(/%/g, "\\%");
+}
+
+function runwayDimensions(manifest) {
+  const ratio = String(manifest?.runwayConfig?.ratio || manifest?.exportFormat || "vertical").toLowerCase();
+  if (ratio === "16:9" || ratio === "wide") return { width: 1920, height: 1080 };
+  if (ratio === "1:1" || ratio === "square") return { width: 1080, height: 1080 };
+  return { width: 1080, height: 1920 };
+}
+
+// Lower-left tinted plate with name + brokerage. drawtext box is the closest
+// ffmpeg-native equivalent of the Reel-e.ai persistent identity badge.
+function buildWatermarkDrawtext({ name, brokerage }, dimensions) {
+  if (!name && !brokerage) return "";
+  const baseY = dimensions.height - 130;
+  const fontSize = Math.max(22, Math.round(dimensions.width / 50));
+  const subSize = Math.max(18, Math.round(dimensions.width / 64));
+  const filters = [];
+  if (name) {
+    filters.push(
+      `drawtext=fontfile='${FFMPEG_FONT}'` +
+      `:text='${name}'` +
+      `:fontcolor=white:fontsize=${fontSize}` +
+      `:x=36:y=${baseY}` +
+      `:box=1:boxcolor=black@0.55:boxborderw=12`
+    );
+  }
+  if (brokerage) {
+    const subY = name ? baseY + fontSize + 10 : baseY;
+    filters.push(
+      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}'` +
+      `:text='${brokerage}'` +
+      `:fontcolor=white@0.85:fontsize=${subSize}` +
+      `:x=36:y=${subY}` +
+      `:box=1:boxcolor=black@0.55:boxborderw=10`
+    );
+  }
+  return filters.join(",");
+}
+
+// Build a 5-second outro card via ffmpeg lavfi: solid background, agent name
+// large + centered, brokerage below, contact line below. No headshot in v1
+// (circular masks via geq are slow on the worker; Quick Reel renders the
+// headshot circle the proper way via Remotion).
+async function buildBrandOutroClip({ name, brokerage, phone, email, cta }, dimensions, tempDir) {
+  if (!name && !brokerage) return null;
+  const outroPath = path.join(tempDir, "brand-outro.mp4");
+  const bg = "0x0D0D0D"; // luxury black, matches Remotion luxury stylepack
+  const accent = "0xC7A76C";
+  const centerY = Math.round(dimensions.height / 2);
+  const nameSize = Math.max(56, Math.round(dimensions.width / 14));
+  const brokerSize = Math.max(28, Math.round(dimensions.width / 32));
+  const ctaSize = Math.max(20, Math.round(dimensions.width / 50));
+  const contactSize = Math.max(22, Math.round(dimensions.width / 44));
+
+  const filters = [];
+  // CTA / eyebrow (above name)
+  if (cta) {
+    filters.push(
+      `drawtext=fontfile='${FFMPEG_FONT}'` +
+      `:text='${cta.toUpperCase()}'` +
+      `:fontcolor=0xC7A76C:fontsize=${ctaSize}` +
+      `:x=(w-text_w)/2:y=${centerY - nameSize - 60}`
+    );
+  }
+  // Agent name — primary
+  filters.push(
+    `drawtext=fontfile='${FFMPEG_FONT}'` +
+    `:text='${name || "Your Local Agent"}'` +
+    `:fontcolor=white:fontsize=${nameSize}` +
+    `:x=(w-text_w)/2:y=${centerY - nameSize / 2}`
+  );
+  // Brokerage
+  if (brokerage) {
+    filters.push(
+      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}'` +
+      `:text='${brokerage}'` +
+      `:fontcolor=white@0.78:fontsize=${brokerSize}` +
+      `:x=(w-text_w)/2:y=${centerY + nameSize / 2 + 18}`
+    );
+  }
+  // Contact line
+  const contact = [phone, email].filter(Boolean).join("   /   ");
+  if (contact) {
+    filters.push(
+      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}'` +
+      `:text='${contact}'` +
+      `:fontcolor=white@0.86:fontsize=${contactSize}` +
+      `:x=(w-text_w)/2:y=${centerY + nameSize / 2 + 18 + brokerSize + 26}`
+    );
+  }
+  // Accent rule under everything
+  filters.push(
+    `drawbox=x=(w-280)/2:y=${centerY + nameSize / 2 + 18 + brokerSize + 26 + contactSize + 36}:w=280:h=3:color=0xC7A76C:t=fill`
+  );
+
+  await runFFmpeg([
+    "-y",
+    "-threads", "1",
+    "-f", "lavfi",
+    "-i", `color=c=${bg}:size=${dimensions.width}x${dimensions.height}:rate=30:duration=5`,
+    "-vf", filters.join(","),
+    "-c:v", "libx264",
+    "-pix_fmt", "yuv420p",
+    "-preset", "ultrafast",
+    "-crf", "23",
+    "-an",
+    outroPath
+  ]);
+  // accent is referenced for future-proofing color theming; silence unused-var lint:
+  void accent;
+  return outroPath;
 }
 
 async function runFFmpeg(args) {

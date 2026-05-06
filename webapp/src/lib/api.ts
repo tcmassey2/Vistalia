@@ -3,6 +3,7 @@
 
 import { getSession } from "./supabase";
 import type {
+  AgentBranding,
   EditPlan,
   ExportFormat,
   ListingDetails,
@@ -104,7 +105,21 @@ export interface RenderManifest {
   app: "EstateMotion";
   engine: RenderEngine;
   exportFormat: ExportFormat;
-  project: { id: string; userId: string; title: string };
+  // The Remotion composition reads listing facts from manifest.project to
+  // populate address overlays, lower-third price card, and the EndCard.
+  // Keep these fields populated; missing values render as blank slots.
+  project: {
+    id: string;
+    userId: string;
+    title: string;
+    address?: string;
+    city?: string;
+    price?: string;
+    beds?: string;
+    baths?: string;
+    squareFeet?: string;
+    hook?: string;
+  };
   scenes: Array<{
     photoId: string;
     type: "photo" | "intro" | "outro" | "stat";
@@ -123,6 +138,9 @@ export interface RenderManifest {
   musicMood: string;
   selectedStyle: string;
   runwayConfig?: { model: string; ratio: string; duration: number } | null;
+  // Brand kit drives the closing card on every video — agent headshot,
+  // brokerage, contact line. Both engines (Remotion + Runway) consume this.
+  brandKit: AgentBranding;
 }
 
 export interface SubmitRenderResult {

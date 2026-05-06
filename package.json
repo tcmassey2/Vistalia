@@ -2,15 +2,9 @@
   "name": "estatemotion-static-web",
   "version": "0.1.0",
   "private": true,
-  "description": "Static browser MVP deployment for EstateMotion.",
+  "description": "EstateMotion — Vercel-hosted landing + Vite/React app at /app, Render.com worker for video.",
   "scripts": {
     "build": "node scripts/verify-static-deploy.mjs",
-    "check:static": "node scripts/verify-static-deploy.mjs",
-    "serve:static": "python3 -m http.server 4173"
-  },
-  "dependencies": {},
-  "devDependencies": {},
-  "estatemotionFutureStacks": {
-    "note": "Expo, React Native, Remotion, Stripe, and TypeScript dependencies are intentionally not installed for the static Vercel MVP. See docs/FUTURE_NATIVE_RENDERING_DEPS.md before re-enabling them."
+    "check:static": "node scripts/verify-static-deploy.mjs"
   }
 }

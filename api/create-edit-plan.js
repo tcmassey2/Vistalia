@@ -1,7 +1,15 @@
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
-const DEFAULT_TIMEOUT_MS = 25000;
-const OPENAI_PHOTO_LIMIT = 3;
+const DEFAULT_TIMEOUT_MS = 35000;
+// Number of photos sent to OpenAI Vision for actual visual analysis.
+// Cost-controlled: at gpt-4.1-mini "low" detail, ~$0.002/image so 12 images =
+// ~$0.024 per render. Photos beyond this cap are still INCLUDED in the edit
+// plan — OpenAI just orders them via metadata (filename, upload order, etc.)
+// instead of visual quality scoring.
+const OPENAI_VISION_PHOTO_LIMIT = 12;
+// Max scenes the edit plan can contain. Each scene in Cinematic AI = ~5 sec
+// of Runway-rendered video, so 24 scenes ≈ 2-minute output (the target).
+const MAX_PLAN_SCENES = 24;
 
 const ROOM_TYPES = ["exterior", "kitchen", "living", "bedroom", "bathroom", "outdoor", "amenity", "detail"];
 const CAMERA_MOTIONS = ["push_in", "pull_out", "lateral_pan", "vertical_reveal", "parallax_zoom", "detail_sweep"];
@@ -70,7 +78,9 @@ export default async function handler(request, response) {
     });
   }
   const photos = normalizeInputPhotos(rawPhotos);
-  const requestPhotos = photos.slice(0, OPENAI_PHOTO_LIMIT);
+  // Photos sent for VISION analysis are capped for cost. ALL photos are
+  // referenced in the plan via metadata.
+  const visionPhotos = photos.slice(0, OPENAI_VISION_PHOTO_LIMIT);
   const listingDetails = normalizeListingDetails(body.listingDetails || {});
   const selectedStyle = String(body.selectedStyle || "Cinematic Luxury");
   const exportFormat = String(body.exportFormat || "vertical");
@@ -106,7 +116,7 @@ export default async function handler(request, response) {
   }
 
   try {
-    const urlCheck = await validateRemotePhotos(requestPhotos);
+    const urlCheck = await validateRemotePhotos(visionPhotos);
     if (!urlCheck.valid) {
       const reason = `Motion Director unavailable: ${urlCheck.reason}`;
       logMotionDirector("warn", "invalid photo URLs rejected before OpenAI", {
@@ -125,9 +135,11 @@ export default async function handler(request, response) {
 
     logMotionDirector("info", "OpenAI request started", {
       photoCount: photos.length,
-      openaiPhotoCount: requestPhotos.length,
+      visionPhotoCount: visionPhotos.length,
+      maxScenes: Math.min(photos.length, MAX_PLAN_SCENES),
       selectedStyle,
       exportFormat,
+      engine,
       model: motionModel(),
       timeoutMs: Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS)
     });
@@ -138,7 +150,7 @@ export default async function handler(request, response) {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(buildOpenAIRequest({ photos: requestPhotos, listingDetails, selectedStyle, exportFormat }))
+      body: JSON.stringify(buildOpenAIRequest({ allPhotos: photos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine }))
     }, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
 
     const payload = await openaiResponse.json().catch(() => ({}));
@@ -157,7 +169,8 @@ export default async function handler(request, response) {
     }
 
     const parsed = parseOpenAIJson(payload);
-    const validation = validateEditPlan(parsed, requestPhotos);
+    // Validate against ALL photos — the AI is allowed to reference any of them.
+    const validation = validateEditPlan(parsed, photos);
     if (!validation.valid) {
       logMotionDirector("warn", "JSON parse/validation failure; fallback used", {
         category: "schema_validation",
@@ -198,8 +211,12 @@ export default async function handler(request, response) {
   }
 }
 
-function buildOpenAIRequest({ photos, listingDetails, selectedStyle, exportFormat }) {
-  const capped = photos.slice(0, OPENAI_PHOTO_LIMIT);
+function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine = "remotion" }) {
+  // Target scene count: use every photo, capped at MAX_PLAN_SCENES.
+  // The AI will be instructed to use ALL provided photos as scenes (no skipping).
+  const targetSceneCount = Math.min(allPhotos.length, MAX_PLAN_SCENES);
+  const isCinematicAI = engine === "runway";
+
   return {
     model: motionModel(),
     input: [
@@ -210,13 +227,18 @@ function buildOpenAIRequest({ photos, listingDetails, selectedStyle, exportForma
             type: "input_text",
             text: [
               "You are EstateMotion Motion Director, a professional real estate video editor.",
-              "Create a cinematic edit plan from uploaded listing photos only.",
+              "Build a cinematic edit plan from the uploaded listing photos.",
+              "USE EVERY PHOTO PROVIDED — do not skip any. Each photo becomes one scene.",
+              "Order the scenes as a professional property tour: exterior hero → entry → kitchen → living/great room → dining → primary bedroom → other bedrooms → bathrooms → outdoor/pool → neighborhood/amenities → detail/outro.",
               "Never invent property features, views, amenities, upgrades, materials, or room names.",
-              "Only describe visible image details or user-provided listing facts.",
+              "Only describe details visible in the image or user-provided listing facts.",
               `Allowed roomType values: ${ROOM_TYPES.join(", ")}.`,
               `Allowed cameraMotion values: ${CAMERA_MOTIONS.join(", ")}.`,
               `Allowed transition values: ${TRANSITIONS.join(", ")}.`,
-              "Prefer vertical 9:16 pacing. Build a professional property-tour order: exterior, kitchen, living, bedrooms, baths, outdoor/amenity, detail/outro.",
+              "Prefer vertical 9:16 pacing.",
+              isCinematicAI
+                ? "Engine is Cinematic AI (Runway image-to-video). Set scene duration to 5 seconds. Pick subtle motion that won't induce hallucination."
+                : "Engine is Quick Reel (Ken Burns photo motion). Scene duration 2.0–3.0s for kitchen/living, 1.6–2.4s for detail shots, 2.6–3.2s for hero shots.",
               "Return strict JSON only."
             ].join(" ")
           }
@@ -231,14 +253,20 @@ function buildOpenAIRequest({ photos, listingDetails, selectedStyle, exportForma
               listingDetails,
               selectedStyle,
               exportFormat,
-              photos: capped.map((photo, index) => ({
+              engine,
+              targetSceneCount,
+              instruction: `Generate exactly ${targetSceneCount} scenes — one per photo. Use every photo ID below. Photos with images visible to you should anchor the order; the rest should be inferred from filename and category.`,
+              photos: allPhotos.map((photo, index) => ({
                 id: photo.id,
                 fileName: photo.fileName,
-                uploadOrder: index + 1
+                uploadOrder: index + 1,
+                category: photo.category || "",
+                hasImage: index < visionPhotos.length
               }))
             })
           },
-          ...capped.flatMap((photo) => [
+          // Visual analysis on the first N photos only — cost control
+          ...visionPhotos.flatMap((photo) => [
             {
               type: "input_text",
               text: `Photo ID: ${photo.id}. Filename: ${photo.fileName}. Use this exact ID if selected.`
@@ -253,10 +281,11 @@ function buildOpenAIRequest({ photos, listingDetails, selectedStyle, exportForma
       }
     ],
     text: {
-      format: editPlanTextFormat(capped.map((photo) => photo.id))
+      // Schema enum allows AI to reference ANY uploaded photo, not just visioned ones.
+      format: editPlanTextFormat(allPhotos.map((photo) => photo.id), targetSceneCount)
     },
     temperature: 0.2,
-    max_output_tokens: 1600
+    max_output_tokens: 4000
   };
 }
 
@@ -264,16 +293,21 @@ function motionModel() {
   return process.env.OPENAI_MOTION_MODEL || process.env.OPENAI_MOTION_DIRECTOR_MODEL || DEFAULT_MODEL;
 }
 
-function editPlanTextFormat(photoIds) {
+function editPlanTextFormat(photoIds, targetSceneCount) {
   return {
     type: "json_schema",
     name: "estate_motion_edit_plan",
     strict: true,
-    schema: editPlanSchema(photoIds)
+    schema: editPlanSchema(photoIds, targetSceneCount)
   };
 }
 
-function editPlanSchema(photoIds) {
+function editPlanSchema(photoIds, targetSceneCount) {
+  // Min/max scenes: aim for the target but allow ±1 slack so the AI doesn't
+  // get stuck if a photo is genuinely unusable (e.g. duplicated from upload).
+  const minScenes = Math.max(3, Math.min(targetSceneCount - 1, photoIds.length));
+  const maxScenes = Math.min(MAX_PLAN_SCENES, photoIds.length);
+
   return {
     type: "object",
     additionalProperties: false,
@@ -302,14 +336,14 @@ function editPlanSchema(photoIds) {
       },
       scenes: {
         type: "array",
-        minItems: 3,
-        maxItems: 12,
+        minItems: minScenes,
+        maxItems: maxScenes,
         items: {
           type: "object",
           additionalProperties: false,
           properties: {
             photoId: { type: "string", enum: photoIds },
-            order: { type: "integer", minimum: 1, maximum: 25 },
+            order: { type: "integer", minimum: 1, maximum: MAX_PLAN_SCENES },
             roomType: { type: "string", enum: ROOM_TYPES },
             visibleFeatures: {
               type: "array",
@@ -317,7 +351,8 @@ function editPlanSchema(photoIds) {
               items: { type: "string" }
             },
             qualityScore: { type: "number", minimum: 0, maximum: 100 },
-            duration: { type: "number", minimum: 1.2, maximum: 5 },
+            // Allow up to 6s — Cinematic AI worker uses 5 or 10s based on this.
+            duration: { type: "number", minimum: 1.2, maximum: 6 },
             cameraMotion: { type: "string", enum: CAMERA_MOTIONS },
             transition: { type: "string", enum: TRANSITIONS },
             overlay: {
@@ -346,10 +381,12 @@ function deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFo
       qualityScore: qualityScore(photo, index)
     }))
     .sort((a, b) => roomRank(a.roomType) - roomRank(b.roomType) || b.qualityScore - a.qualityScore);
+  // Use ALL photos as scenes (was capped at 10). The cap was hiding 60–70%
+  // of the user's uploads from the final video.
   const unique = [];
   const used = new Set();
   ranked.forEach((photo) => {
-    if (unique.length < 10 && !used.has(photo.id)) {
+    if (unique.length < MAX_PLAN_SCENES && !used.has(photo.id)) {
       used.add(photo.id);
       unique.push(photo);
     }
@@ -362,7 +399,7 @@ function deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFo
       roomType,
       visibleFeatures: fallbackVisibleFeatures(photo, roomType),
       qualityScore: photo.qualityScore,
-      duration: durationFor(roomType, selectedStyle, index),
+      duration: durationFor(roomType, selectedStyle, index, engine),
       cameraMotion: motionFor(roomType, selectedStyle, index),
       transition: transitionFor(roomType, selectedStyle, index),
       overlay: overlayFor(roomType, listingDetails, index)
@@ -405,17 +442,24 @@ function validateEditPlan(plan, photos) {
 
 function normalizeEditPlan(plan, photos, context) {
   const photoIds = new Set(photos.map((photo) => photo.id));
+  const engine = RENDER_ENGINES.includes(context.engine) ? context.engine : "remotion";
+  // Cinematic AI: clip duration up to 10 (worker decides 5 vs 10 based on >5.5 boundary).
+  // Quick Reel: clip duration capped at 5 (Ken Burns shouldn't sit on one photo longer).
+  const maxDuration = engine === "runway" ? 10 : 5;
+  const defaultDuration = engine === "runway" ? 5 : 2.4;
   const scenes = [...(plan.scenes || [])]
     .filter((scene) => photoIds.has(scene.photoId))
     .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
-    .slice(0, 12)
+    // Cap at MAX_PLAN_SCENES (24) — was hard-capped at 12, which is why
+    // 2-minute renders silently turned into 1-minute renders.
+    .slice(0, MAX_PLAN_SCENES)
     .map((scene, index) => ({
       photoId: scene.photoId,
       order: index + 1,
       roomType: ROOM_TYPES.includes(scene.roomType) ? scene.roomType : inferRoomType(photos.find((photo) => photo.id === scene.photoId), index),
       visibleFeatures: cleanStringArray(scene.visibleFeatures).slice(0, 5),
       qualityScore: clamp(Number(scene.qualityScore || 70), 0, 100),
-      duration: clamp(Number(scene.duration || 2.4), 1.2, 5),
+      duration: clamp(Number(scene.duration || defaultDuration), 1.2, maxDuration),
       cameraMotion: CAMERA_MOTIONS.includes(scene.cameraMotion) ? scene.cameraMotion : "parallax_zoom",
       transition: TRANSITIONS.includes(scene.transition) ? scene.transition : "crossfade",
       overlay: {
@@ -423,7 +467,6 @@ function normalizeEditPlan(plan, photos, context) {
         subline: cleanText(scene.overlay?.subline || overlayFor(scene.roomType, context.listingDetails, index).subline, 90)
       }
     }));
-  const engine = RENDER_ENGINES.includes(context.engine) ? context.engine : "remotion";
   const finalScenes = engine === "runway"
     ? scenes.map((scene) => ({
         ...scene,
@@ -615,7 +658,12 @@ function qualityScore(photo, index) {
   return clamp(92 - index * 3 + resolution - roomRank(inferRoomType(photo, index)), 45, 98);
 }
 
-function durationFor(roomType, style, index) {
+function durationFor(roomType, style, index, engine = "remotion") {
+  // Cinematic AI: every scene is exactly one Runway Gen-3 Turbo clip.
+  // Runway returns 5s clips natively. 24 photos × 5s = 120s = the 2-minute
+  // target output. The worker reads duration > 5.5 as a signal to upgrade to
+  // a 10s clip — keep us at exactly 5 so cost stays predictable.
+  if (engine === "runway") return 5;
   const fast = /social|modern/i.test(style || "");
   if (index === 0) return fast ? 2.1 : 3.0;
   if (roomType === "kitchen" || roomType === "living") return fast ? 1.8 : 2.7;
