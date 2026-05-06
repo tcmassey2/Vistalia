@@ -170,11 +170,16 @@ async function generateClip(scene, manifest, tempDir, sceneIndex) {
   const duration = clamp(Number(scene.duration || 5) > 5.5 ? 10 : 5, 5, 10);
   const model = config.model || "gen3a_turbo";
 
-  // Submit task
-  const submitResponse = await fetch(`${RUNWAY_API_BASE}/image_to_video`, {
-    method: "POST",
-    headers: runwayHeaders(),
-    body: JSON.stringify({
+  // Submit task — with 429 / 5xx resilience.
+  // Runway's task-submit endpoint hits us with three failure modes worth
+  // distinguishing:
+  //   1. 429 "rate limit" — short-window throttle. Backoff + retry.
+  //   2. 429 "daily task limit reached" — terminal until tomorrow or
+  //      until the user upgrades. No point retrying. Surface a clear
+  //      error so the frontend can prompt for an upgrade.
+  //   3. 5xx — transient Runway side. Retry with backoff.
+  const submitResponse = await submitRunwayTaskWithRetry({
+    body: {
       model,
       promptImage: imageUrl,
       promptText: prompt,
@@ -182,14 +187,21 @@ async function generateClip(scene, manifest, tempDir, sceneIndex) {
       duration,
       watermark: false,
       ...(config.seed != null ? { seed: Number(config.seed) } : {})
-    })
+    },
+    sceneIndex,
+    maxAttempts: 5
   });
 
   if (!submitResponse.ok) {
     const errBody = await safeText(submitResponse);
-    throw new Error(
-      `Runway submit failed for scene ${sceneIndex + 1} (HTTP ${submitResponse.status}): ${errBody.slice(0, 240)}`
-    );
+    const isDailyCap = /daily.*(task|limit|cap|quota)/i.test(errBody);
+    const message = isDailyCap
+      ? `Cinematic AI is at its daily render cap. Upgrade your Runway plan to Unlimited ($95/mo) to remove the cap, or wait until tomorrow.`
+      : `Runway submit failed for scene ${sceneIndex + 1} (HTTP ${submitResponse.status}): ${errBody.slice(0, 240)}`;
+    const error = new Error(message);
+    error.code = isDailyCap ? "RUNWAY_DAILY_CAP" : "RUNWAY_SUBMIT_FAILED";
+    error.httpStatus = submitResponse.status;
+    throw error;
   }
 
   const submitData = await submitResponse.json();
@@ -700,6 +712,45 @@ function runwayHeaders() {
   };
 }
 
+// Submit a Runway image_to_video task with exponential-backoff retry on
+// 429 (short-window rate limit) and 5xx (transient server error). Stops
+// retrying immediately on a 429 that contains "daily" — that's a terminal
+// quota error, retrying just wastes time and floods their logs.
+//
+// Backoff: 2s, 5s, 12s, 25s — total worst-case 44s before giving up. With
+// concurrency=4 across 24 scenes, the per-minute rate-limit window
+// usually clears within the first or second backoff cycle.
+async function submitRunwayTaskWithRetry({ body, sceneIndex, maxAttempts = 5 }) {
+  let lastResponse = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const response = await fetch(`${RUNWAY_API_BASE}/image_to_video`, {
+      method: "POST",
+      headers: runwayHeaders(),
+      body: JSON.stringify(body)
+    });
+    if (response.ok) return response;
+
+    // Read body once so we can both inspect for "daily" and propagate it.
+    const errBody = await response.clone().text().catch(() => "");
+    const isDailyCap = response.status === 429 && /daily/i.test(errBody);
+    const isShortRateLimit = response.status === 429 && !isDailyCap;
+    const isTransientServerError = response.status >= 500 && response.status < 600;
+
+    if (isDailyCap || (!isShortRateLimit && !isTransientServerError)) {
+      // Terminal — no point retrying.
+      return response;
+    }
+
+    lastResponse = response;
+    if (attempt === maxAttempts - 1) break;
+
+    const delayMs = Math.min(25000, 2000 * Math.pow(2.2, attempt));
+    console.warn(`[runway] scene ${sceneIndex + 1} got ${response.status}, retrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt + 1}/${maxAttempts})`);
+    await sleep(delayMs);
+  }
+  return lastResponse;
+}
+
 async function safeText(response) {
   try { return await response.text(); } catch { return ""; }
 }
@@ -729,9 +780,15 @@ async function pMap(items, fn, { concurrency = 4 } = {}) {
   try {
     await Promise.all(workers);
   } catch {
-    // Surface the first error with full context
+    // Surface the first error with full context. Preserve the structured
+    // error.code from the underlying call (e.g. RUNWAY_DAILY_CAP) so the
+    // worker's status endpoint and the frontend can surface upgrade prompts
+    // instead of a generic failure.
     const first = errors[0];
-    throw new Error(`Runway scene ${first.index + 1} failed: ${first.error.message}`);
+    const wrapped = new Error(first.error.message || `Runway scene ${first.index + 1} failed.`);
+    wrapped.code = first.error.code;
+    wrapped.httpStatus = first.error.httpStatus;
+    throw wrapped;
   }
   return results;
 }

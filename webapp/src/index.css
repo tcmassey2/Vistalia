@@ -137,6 +137,13 @@
   .progress-fill {
     transition: width 600ms cubic-bezier(0.16, 1, 0.3, 1);
   }
+
+  /* Continuous shimmer that traverses the render progress bar so it feels
+     alive even during long phases without status changes. */
+  @keyframes render-shimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(800%); }
+  }
 }
 
 /* Respect reduced-motion preferences globally */

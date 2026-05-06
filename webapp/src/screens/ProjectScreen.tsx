@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useStore } from "../lib/store";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot } from "../lib/supabase";
 import { createEditPlan, submitRender, pollRender, lookupProperty, type RenderManifest } from "../lib/api";
@@ -849,7 +849,26 @@ function RenderControls() {
     if (photos.length < 3) { setError("Add at least 3 photos before we can render."); return; }
 
     setError("");
-    setLoading("Directing your tour…");
+
+    // KEY FIX #1: show the progress panel IMMEDIATELY on click. The earlier
+    // implementation showed a tiny "Directing…" toast for ~10 seconds before
+    // anything moved on screen. Now the user sees the panel mount the same
+    // frame they click, and the bar starts ticking forward right away.
+    setRenderJob({
+      jobId: "",
+      status: "queued",
+      phase: "Directing your tour",
+      progress: 2,
+      engine: renderEngine
+    });
+    // The legacy `loading` toast is replaced by the progress panel — clear it.
+    setLoading("");
+
+    // KEY FIX #2: while waiting on async work that has no real progress
+    // signal (edit plan generation, render submission), creep the bar forward
+    // a tiny bit so the user always sees forward motion. When the real
+    // progress signal arrives from the worker, we snap to it.
+    const phaseCreep = startPhaseCreep({ ceilingProgress: 9 });
 
     try {
       // 1. Get edit plan
@@ -868,7 +887,7 @@ function RenderControls() {
       setEditPlan(planResult.editPlan);
 
       // 2. Build manifest
-      setLoading("Sending the cut to the renderer…");
+      phaseCreep.update({ phase: "Sending the cut to the renderer", progressFloor: 10, ceilingProgress: 14 });
       const manifest: RenderManifest = {
         app: "EstateMotion",
         engine: renderEngine,
@@ -917,21 +936,23 @@ function RenderControls() {
       // 3. Submit
       const submitted = await submitRender(manifest);
       if (submitted.upgradeRequired) {
+        phaseCreep.stop();
+        setRenderJob(null); // clear the panel — error message takes over
         setError(submitted.error || "Cinematic AI needs the $149 plan or higher. Upgrade to unlock real AI motion.");
-        setLoading("");
         return;
       }
       if (submitted.status === "failed") {
         throw new Error(submitted.error || "The renderer turned us down. Try again.");
       }
+
+      phaseCreep.stop();
       setRenderJob({
         jobId: submitted.jobId || "",
         status: submitted.status,
-        phase: submitted.phase || "Queued",
-        progress: submitted.progress || 5,
+        phase: submitted.phase || "Queued for render",
+        progress: Math.max(15, Number(submitted.progress) || 15),
         engine: renderEngine
       });
-      setLoading("");
       setToast(renderEngine === "runway"
         ? "Cinematic AI render started — this takes 3 to 5 minutes."
         : "Quick Reel render started — under 90 seconds.");
@@ -939,11 +960,53 @@ function RenderControls() {
       // 4. Poll
       if (submitted.jobId) pollUntilDone(submitted.jobId);
     } catch (err) {
+      phaseCreep.stop();
+      setRenderJob(null);
       const msg = err instanceof Error ? err.message : "Something blocked the render. Try once more.";
       setError(msg);
-      setLoading("");
     }
   };
+
+  // Drives a subtle forward creep on the progress bar while we're waiting
+  // on async work whose real progress we can't observe. Returns an object
+  // with `update()` to retarget the creep mid-flight (e.g. from "Directing"
+  // to "Sending to renderer") and `stop()` to halt before the worker takes
+  // over reporting real progress.
+  function startPhaseCreep(initial: { ceilingProgress: number }) {
+    const state = {
+      ceiling: initial.ceilingProgress,
+      stopped: false
+    };
+    const tick = () => {
+      if (state.stopped) return;
+      const cur = useStore.getState().renderJob;
+      if (!cur) return;
+      // Increment by tiny amounts until we hit ceiling. The visible CSS
+      // transition smooths this even further so it never looks jerky.
+      if (cur.progress < state.ceiling) {
+        setRenderJob({ ...cur, progress: Math.min(state.ceiling, cur.progress + 0.35) });
+      }
+    };
+    const interval = window.setInterval(tick, 350);
+    return {
+      update: ({ phase, progressFloor, ceilingProgress }: { phase?: string; progressFloor?: number; ceilingProgress?: number }) => {
+        if (state.stopped) return;
+        const cur = useStore.getState().renderJob;
+        if (cur) {
+          setRenderJob({
+            ...cur,
+            phase: phase || cur.phase,
+            progress: Math.max(cur.progress, progressFloor || cur.progress)
+          });
+        }
+        if (ceilingProgress != null) state.ceiling = ceilingProgress;
+      },
+      stop: () => {
+        state.stopped = true;
+        window.clearInterval(interval);
+      }
+    };
+  }
 
   const pollUntilDone = async (jobId: string) => {
     const startTime = Date.now();
@@ -953,15 +1016,22 @@ function RenderControls() {
     let consecutiveErrors = 0;
     const maxConsecutiveErrors = 5; // worker may briefly restart — tolerate it
 
+    // KEY FIX #3: poll IMMEDIATELY on the first iteration instead of waiting
+    // 4 seconds. The worker has already started by the time we get here,
+    // so there's real progress to display right now.
+    let firstIteration = true;
+    const POLL_INTERVAL_MS = 3000; // was 4000 — tighter feedback loop
+
     while (Date.now() - startTime < maxMs) {
-      await new Promise((r) => setTimeout(r, 4000));
+      if (!firstIteration) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      }
+      firstIteration = false;
       try {
         const status = await pollRender(jobId);
-        consecutiveErrors = 0; // reset on any successful poll
+        consecutiveErrors = 0;
 
-        // Progress monotonicity — never let the bar go backward. Worker
-        // restarts and brief network blips can cause regressions, which
-        // looked like "the bar shoots around" in earlier tests.
+        // Progress monotonicity — never let the bar go backward.
         const incomingProgress = Number(status.progress || 0);
         const safeProgress = Math.max(prevProgress, incomingProgress);
         prevProgress = safeProgress;
@@ -1130,32 +1200,220 @@ function RenderStatusPanel() {
   }
 
   if (renderJob.status === "failed") {
+    // Detect Runway daily-cap errors from the worker so we can show a
+    // proper upgrade card instead of a scary red error box. The worker
+    // surfaces this with the literal phrase "daily render cap".
+    const errorText = renderJob.error || "";
+    const isRunwayDailyCap = /daily render cap|daily.*(task|limit|cap|quota)|429/i.test(errorText) && /runway|cinematic ai/i.test(errorText);
+
+    if (isRunwayDailyCap) {
+      return (
+        <div className="bg-surface border border-gold/40 rounded-xl p-5 fade-up-in">
+          <div className="flex items-start gap-3">
+            <div className="grid place-items-center w-9 h-9 rounded-full bg-gold/15 text-gold flex-shrink-0">
+              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 8v4m0 4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold text-gold-light">Cinematic AI is at its daily cap</h3>
+              <p className="text-xs text-ink-soft mt-1 leading-relaxed">
+                Your Runway plan ran out of tasks for today. Upgrade to Runway Unlimited
+                ($95/mo) to remove the daily cap and run uncapped renders. Or wait until
+                tomorrow — Runway's daily limit resets at midnight UTC.
+              </p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                <a
+                  href="https://runwayml.com/pricing"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary-em h-9 px-4 rounded-lg text-xs inline-flex items-center"
+                >
+                  Upgrade Runway →
+                </a>
+                <button
+                  type="button"
+                  onClick={() => useStore.getState().setEngine("remotion")}
+                  className="btn-secondary-em h-9 px-4 rounded-lg text-xs"
+                >
+                  Switch to Quick Reel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="bg-surface border border-red-500/30 rounded-xl p-4 text-sm text-red-300">
         <strong className="text-red-200">Render failed.</strong>{" "}
-        {renderJob.error || "Try again or contact support."}
+        {errorText || "Try again or contact support."}
       </div>
     );
   }
 
+  return <ActiveRenderPanel />;
+}
+
+/* ============================================================
+   Active render panel — the in-progress visual.
+   Lives as its own component so it can hold local UI state for the
+   smooth-creep + ETA tracking without re-rendering the rest of the page.
+   ============================================================ */
+function ActiveRenderPanel() {
+  const renderJob = useStore((s) => s.renderJob);
+
+  // The "display progress" is what the bar actually shows. It tracks the
+  // real progress (from the worker / generate flow) but creeps forward
+  // smoothly between updates so the bar always feels alive — even during
+  // a long Runway scene that takes 90 seconds without status changes.
+  const [displayProgress, setDisplayProgress] = useState<number>(renderJob?.progress ?? 0);
+  // Time we first saw a non-zero progress — used to compute an ETA.
+  const [renderStartedAt] = useState<number>(() => Date.now());
+
+  // Whenever the real progress jumps, snap display forward (never back).
+  useEffect(() => {
+    if (!renderJob) return;
+    setDisplayProgress((prev) => Math.max(prev, renderJob.progress || 0));
+  }, [renderJob?.progress]);
+
+  // Soft creep: between real updates, advance the display progress by a
+  // tiny amount every 250ms so the bar never sits still during long phases.
+  // Capped so we never overshoot real progress by more than ~5 percentage
+  // points — that way when a real update arrives we don't have to rubber-band.
+  useEffect(() => {
+    if (!renderJob) return;
+    if (renderJob.status === "completed" || renderJob.status === "failed") return;
+    const interval = window.setInterval(() => {
+      setDisplayProgress((prev) => {
+        const realProgress = useStore.getState().renderJob?.progress ?? prev;
+        const ceiling = Math.min(99, realProgress + 5);
+        if (prev >= ceiling) return prev;
+        // Slower creep at high progress (we're closer to "real" than at low)
+        const creepRate = prev < 30 ? 0.35 : prev < 70 ? 0.22 : 0.12;
+        return Math.min(ceiling, prev + creepRate);
+      });
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [renderJob?.status]);
+
+  if (!renderJob) return null;
+
+  const clampedDisplay = Math.max(2, Math.min(100, displayProgress));
+  const isRunway = renderJob.engine === "runway";
+  const totalEstimateSec = isRunway ? 240 : 75; // 4 min vs 75 s
+
+  // ETA — only show after we've seen real forward motion, otherwise the
+  // first reading is meaningless ("about an hour left" before we even begin).
+  const elapsedSec = Math.max(0, (Date.now() - renderStartedAt) / 1000);
+  const showEta = clampedDisplay >= 12 && clampedDisplay < 95;
+  let etaLabel = "";
+  if (showEta) {
+    // Linear extrapolation against the chosen total estimate, with a floor
+    // so we never show "about 0 seconds left" for the last 5%.
+    const fractionDone = clampedDisplay / 100;
+    const projectedTotal = elapsedSec / Math.max(0.05, fractionDone);
+    const remaining = Math.max(8, projectedTotal - elapsedSec);
+    // Use the heuristic estimate as a sanity cap so a slow first poll
+    // doesn't extrapolate into "12 minutes left."
+    const capped = Math.min(remaining, totalEstimateSec * 1.5);
+    etaLabel = capped < 60
+      ? `about ${Math.round(capped)}s left`
+      : `about ${Math.round(capped / 60)} min left`;
+  }
+
   return (
-    <div className="bg-surface border border-edge rounded-xl p-4 flex flex-col gap-3 fade-up-in">
-      <div className="flex items-center gap-2 text-sm">
-        <span className="spinner" />
-        <strong>{renderJob.phase || "Rendering"}</strong>
-        <span className="text-ink-muted ml-auto font-mono text-xs">{Math.round(renderJob.progress || 0)}%</span>
+    <div className="bg-surface border border-edge rounded-xl p-5 flex flex-col gap-4 fade-up-in">
+      {/* Header row: phase + percentage */}
+      <div className="flex items-center gap-3">
+        <div className="grid place-items-center w-8 h-8 rounded-full bg-gold/15 text-gold flex-shrink-0">
+          <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold tracking-tightish truncate">
+            {renderJob.phase || "Rendering"}
+          </div>
+          <div className="text-[11px] text-ink-muted mt-0.5">
+            {isRunway ? "Cinematic AI · Runway image-to-video" : "Quick Reel · Ken Burns motion"}
+            {etaLabel && <span> · {etaLabel}</span>}
+          </div>
+        </div>
+        <div className="font-mono text-sm font-semibold text-gold tabular-nums">
+          {Math.round(clampedDisplay)}%
+        </div>
       </div>
-      <div className="h-1.5 bg-edge rounded-full overflow-hidden">
+
+      {/* The bar itself — CSS transition does the smoothing between frames */}
+      <div className="h-2 bg-edge rounded-full overflow-hidden relative">
         <div
-          className="progress-fill h-full bg-gold rounded-full"
-          style={{ width: `${Math.max(5, Math.min(100, renderJob.progress || 5))}%` }}
+          className="absolute inset-y-0 left-0 bg-gradient-to-r from-gold-dim via-gold to-gold-light rounded-full"
+          style={{
+            width: `${clampedDisplay}%`,
+            transition: "width 0.45s cubic-bezier(0.22, 1, 0.36, 1)"
+          }}
+        />
+        {/* Shimmer pass */}
+        <div
+          className="absolute inset-y-0 w-24 bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none"
+          style={{
+            animation: "render-shimmer 1.8s linear infinite",
+            mixBlendMode: "overlay"
+          }}
         />
       </div>
-      <p className="text-xs text-ink-muted">
-        {renderJob.engine === "runway"
-          ? "Cinematic AI uses Runway image-to-video — typically 3–5 minutes."
-          : "Quick Reel renders in under 90 seconds."}
-      </p>
+
+      {/* Phase chips — visualizes the multi-stage pipeline */}
+      <PhaseChips currentProgress={clampedDisplay} engine={renderJob.engine} />
+    </div>
+  );
+}
+
+function PhaseChips({ currentProgress, engine }: { currentProgress: number; engine?: "remotion" | "runway" }) {
+  // Each chip shows a stage of the pipeline. The frontier (last "active"
+  // chip) pulses subtly to draw the eye to where we are right now.
+  const stages = engine === "runway"
+    ? [
+        { label: "Direct", endsAt: 10 },
+        { label: "Render scenes", endsAt: 76 },
+        { label: "Voice + mix", endsAt: 86 },
+        { label: "Variants + shorts", endsAt: 94 },
+        { label: "Upload", endsAt: 100 }
+      ]
+    : [
+        { label: "Direct", endsAt: 12 },
+        { label: "Render frames", endsAt: 78 },
+        { label: "Voice + mix", endsAt: 86 },
+        { label: "Variants + shorts", endsAt: 94 },
+        { label: "Upload", endsAt: 100 }
+      ];
+
+  // Find the current stage (the first one whose endsAt is ahead of progress)
+  const currentIndex = stages.findIndex((s) => currentProgress < s.endsAt);
+  const activeIdx = currentIndex === -1 ? stages.length - 1 : currentIndex;
+
+  return (
+    <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 pb-0.5">
+      {stages.map((stage, idx) => {
+        const isDone = idx < activeIdx;
+        const isActive = idx === activeIdx;
+        return (
+          <div
+            key={stage.label}
+            className={cn(
+              "flex-shrink-0 px-2.5 py-1 rounded-md text-[10px] font-medium tracking-tightish whitespace-nowrap border transition-colors",
+              isDone
+                ? "bg-gold/15 text-gold-light border-gold/30"
+                : isActive
+                ? "bg-gold/10 text-gold border-gold/40 animate-pulse"
+                : "bg-surface-input text-ink-muted border-edge"
+            )}
+          >
+            {isDone && <span className="mr-1">✓</span>}
+            {stage.label}
+          </div>
+        );
+      })}
     </div>
   );
 }
