@@ -4,7 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
-import { createClient } from "@supabase/supabase-js";
+import { deriveAspectVariants, buildSocialShorts } from "./aspect-variants.mjs";
+import { applyVoiceNarration } from "./voice-mixer.mjs";
+import { writeRenderAudit } from "./audit-log.mjs";
+// uploadDeliverables is shared between both engines — defined alongside the
+// Runway pipeline since it was the first to need multi-format upload.
+import { uploadDeliverables } from "./runway-job.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const compositionId = "EstateMotionRender";
@@ -53,7 +58,7 @@ export async function renderEstateMotionJob({ manifest, requestedFormat = "verti
     }
   });
 
-  options.onProgress?.({ phase: "Finalizing MP4", progress: 84 });
+  options.onProgress?.({ phase: "Finalizing MP4", progress: 78 });
   await renderStill({
     composition,
     serveUrl: bundleLocation,
@@ -63,21 +68,67 @@ export async function renderEstateMotionJob({ manifest, requestedFormat = "verti
     timeoutInMilliseconds: 60000
   });
 
-  options.onProgress?.({ phase: "Uploading final MP4", progress: 92 });
-  const upload = await uploadRenderAssets({ manifest, jobId, mp4Path, thumbnailPath });
+  options.onProgress?.({ phase: "Adding voice narration", progress: 80 });
+  const narration = await applyVoiceNarration({
+    masterMp4: mp4Path,
+    scenes: manifest.scenes,
+    brandKit: manifest.brandKit || {},
+    tempDir,
+    jobId,
+    onProgress: (info) => {
+      options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
+    }
+  });
+  const masterForVariants = narration.narrationApplied ? narration.masterMp4 : mp4Path;
+
+  options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
+  const variants = await deriveAspectVariants({ masterMp4: masterForVariants, tempDir, jobId });
+
+  options.onProgress?.({ phase: "Cutting social shorts", progress: 90 });
+  const shorts = await buildSocialShorts({
+    masterMp4: masterForVariants,
+    scenes: manifest.scenes,
+    tempDir,
+    jobId,
+    count: 3
+  });
+
+  options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
+  const upload = await uploadDeliverables({
+    manifest,
+    jobId,
+    variants,
+    shorts,
+    thumbnailPath,
+    pathPrefix: "generated"
+  });
+
+  // Audit log — never throws, never blocks.
+  await writeRenderAudit({
+    manifest,
+    jobId,
+    engine: "remotion",
+    upload,
+    narration
+  });
 
   return {
     status: "complete",
     mock: false,
     jobId,
-    mp4Url: upload.mp4Url,
+    mp4Url: upload.formats?.vertical?.mp4Url || "",
     thumbnailUrl: upload.thumbnailUrl,
-    storagePath: upload.storagePath,
+    storagePath: upload.formats?.vertical?.storagePath,
     thumbnailPath: upload.thumbnailStoragePath,
     localMp4Path: upload.storageSkipped ? mp4Path : "",
     localThumbnailPath: upload.storageSkipped ? thumbnailPath : "",
     storageSkipped: upload.storageSkipped,
     storageWarning: upload.storageWarning || "",
+    formats: upload.formats,
+    socialShorts: upload.socialShorts,
+    narration: narration.narrationApplied
+      ? { applied: true, voiceId: narration.voiceId, lineCount: narration.narrationLineCount }
+      : { applied: false, reason: narration.reason },
     format: inputProps.format,
     durationInFrames: composition.durationInFrames
   };
@@ -121,51 +172,6 @@ function normalizeFormat(format) {
   if (value === "16:9" || value === "wide" || value === "youtube") return "wide";
   if (value === "mls") return "mls";
   return "vertical";
-}
-
-async function uploadRenderAssets({ manifest, jobId, mp4Path, thumbnailPath }) {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  const bucket = process.env.SUPABASE_GENERATED_VIDEOS_BUCKET || "generated-videos";
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return {
-      storageSkipped: true,
-      storageWarning: "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required to upload rendered videos."
-    };
-  }
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
-
-  const ownerId = slug(manifest.project?.userId || manifest.project?.id || "demo");
-  const basePath = `${ownerId}/generated/${jobId}`;
-  const storagePath = `${basePath}/estate-motion.mp4`;
-  const thumbnailStoragePath = `${basePath}/thumbnail.png`;
-
-  const mp4Buffer = await fs.readFile(mp4Path);
-  const thumbnailBuffer = await fs.readFile(thumbnailPath);
-
-  const videoUpload = await supabase.storage.from(bucket).upload(storagePath, mp4Buffer, {
-    contentType: "video/mp4",
-    upsert: true
-  });
-  if (videoUpload.error) throw new Error(videoUpload.error.message);
-
-  const thumbUpload = await supabase.storage.from(bucket).upload(thumbnailStoragePath, thumbnailBuffer, {
-    contentType: "image/png",
-    upsert: true
-  });
-  if (thumbUpload.error) throw new Error(thumbUpload.error.message);
-
-  return {
-    storageSkipped: false,
-    storagePath,
-    thumbnailStoragePath,
-    mp4Url: supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl,
-    thumbnailUrl: supabase.storage.from(bucket).getPublicUrl(thumbnailStoragePath).data.publicUrl
-  };
 }
 
 function createJobId(manifest) {

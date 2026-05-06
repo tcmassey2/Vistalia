@@ -6,6 +6,7 @@ export default function TopBar() {
   const session = useStore((s) => s.session);
   const goToScreen = useStore((s) => s.goToScreen);
   const projectTitle = useStore((s) => s.projectTitle);
+  const organization = useStore((s) => s.organization);
 
   const onSignOut = async () => {
     try {
@@ -34,9 +35,34 @@ export default function TopBar() {
           </span>
         )}
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button
+            onClick={() => goToScreen("dashboard")}
+            className={`btn-press text-xs px-3 py-1.5 rounded-md transition-colors ${
+              screen === "dashboard" || screen === "project"
+                ? "text-ink bg-surface-input border border-edge-strong"
+                : "text-ink-muted hover:text-ink border border-transparent"
+            }`}
+          >
+            My work
+          </button>
+          <button
+            onClick={() => goToScreen("brokerage")}
+            className={`btn-press text-xs px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1.5 ${
+              screen === "brokerage"
+                ? "text-ink bg-surface-input border border-edge-strong"
+                : "text-ink-muted hover:text-ink border border-transparent"
+            }`}
+          >
+            Brokerage
+            {organization && (
+              <span className="text-[9px] font-bold tracking-widest px-1 py-px rounded bg-gold/20 text-gold-light uppercase">
+                {organization.role}
+              </span>
+            )}
+          </button>
           {session?.user?.email && (
-            <span className="hidden sm:inline text-xs text-ink-muted">{session.user.email}</span>
+            <span className="hidden lg:inline text-xs text-ink-muted ml-2">{session.user.email}</span>
           )}
           <button
             onClick={onSignOut}

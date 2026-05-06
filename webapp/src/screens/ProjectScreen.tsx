@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { useStore } from "../lib/store";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot } from "../lib/supabase";
-import { createEditPlan, submitRender, pollRender, type RenderManifest } from "../lib/api";
+import { createEditPlan, submitRender, pollRender, lookupProperty, type RenderManifest } from "../lib/api";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
 
@@ -59,35 +59,7 @@ export default function ProjectScreen() {
 
       {/* Listing details — grouped by visual priority */}
       <Section title="Listing details" subtitle="The facts that appear on the finished video.">
-        <div className="bg-surface border border-edge rounded-xl p-5 sm:p-6 flex flex-col gap-4">
-          {/* Address — primary line, full width */}
-          <Input
-            label="Property address"
-            value={listing.address}
-            onChange={(v) => setListing({ address: v })}
-            placeholder="9828 E Pinnacle Peak Rd"
-          />
-          {/* City + price — secondary pair */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input label="City / area" value={listing.city}  onChange={(v) => setListing({ city: v })}  placeholder="Scottsdale, AZ" />
-            <Input label="Price"       value={listing.price} onChange={(v) => setListing({ price: v })} placeholder="$2,850,000" />
-          </div>
-          {/* Beds / baths / sqft — tight numeric trio */}
-          <div className="grid grid-cols-3 gap-3">
-            <Input label="Beds"       value={listing.beds}       onChange={(v) => setListing({ beds: v })}       placeholder="5"     />
-            <Input label="Baths"      value={listing.baths}      onChange={(v) => setListing({ baths: v })}      placeholder="5.5"   />
-            <Input label="Sq ft"      value={listing.squareFeet} onChange={(v) => setListing({ squareFeet: v })} placeholder="5,640" />
-          </div>
-          {/* Hook — optional, deprioritized */}
-          <div className="pt-2 border-t border-edge-soft">
-            <Input
-              label="Hook line (optional)"
-              value={listing.hook}
-              onChange={(v) => setListing({ hook: v })}
-              placeholder="A modern desert retreat built for evenings outside."
-            />
-          </div>
-        </div>
+        <ListingDetailsCard />
       </Section>
 
       {/* Photos */}
@@ -184,6 +156,149 @@ function Input({
         className="h-10 px-3.5 bg-surface-input border border-edge rounded-lg text-ink text-sm placeholder:text-ink-dim focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/15 transition-colors"
       />
     </label>
+  );
+}
+
+/* ============================================================
+   Listing details — with public-records auto-fill (RentCast)
+   ============================================================ */
+function ListingDetailsCard() {
+  const listing = useStore((s) => s.listing);
+  const setListing = useStore((s) => s.setListing);
+  const setError = useStore((s) => s.setError);
+  const setToast = useStore((s) => s.setToast);
+
+  const [looking, setLooking] = useState(false);
+  // Verified facts surfaced after a successful lookup. Lets the agent see
+  // bonus details (year built, lot size, last sale) without crowding the
+  // main form, and signals "this came from public records" — the trust
+  // signal that anchors the anti-hallucination claim.
+  const [verifiedFacts, setVerifiedFacts] = useState<{
+    yearBuilt: string;
+    lotSize: string;
+    propertyType: string;
+    lastSalePrice: string;
+  } | null>(null);
+
+  const runLookup = async () => {
+    const address = listing.address.trim();
+    if (!address) {
+      setError("Type the property address first, then look it up.");
+      return;
+    }
+    setLooking(true);
+    try {
+      const result = await lookupProperty(address);
+      if (result.status === "ok" && result.property) {
+        const p = result.property;
+        // Only overwrite fields that are currently empty so we don't clobber
+        // anything the agent already typed. Address/city always update —
+        // RentCast normalizes them better than the agent will.
+        setListing({
+          address: p.address || listing.address,
+          city: p.city || listing.city,
+          beds: listing.beds || p.beds,
+          baths: listing.baths || p.baths,
+          squareFeet: listing.squareFeet || p.squareFeet
+        });
+        setVerifiedFacts({
+          yearBuilt: p.extras.yearBuilt,
+          lotSize: p.extras.lotSize,
+          propertyType: p.extras.propertyType,
+          lastSalePrice: p.extras.lastSalePrice
+        });
+        setToast("Listing facts pulled from public records.");
+      } else if (result.status === "not_found") {
+        setError(result.message || "Address not found in public records. Fill the details manually.");
+      } else {
+        setError(result.message || "Property lookup unavailable. Fill the details manually.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Property lookup failed.";
+      setError(msg);
+    } finally {
+      setLooking(false);
+    }
+  };
+
+  return (
+    <div className="bg-surface border border-edge rounded-xl p-5 sm:p-6 flex flex-col gap-4">
+      {/* Address row — input + verify button */}
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+        <div className="flex-1">
+          <Input
+            label="Property address"
+            value={listing.address}
+            onChange={(v) => setListing({ address: v })}
+            placeholder="9828 E Pinnacle Peak Rd, Scottsdale AZ"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={runLookup}
+          disabled={looking || !listing.address.trim()}
+          className="btn-secondary-em h-10 px-4 rounded-lg text-sm whitespace-nowrap disabled:opacity-50 inline-flex items-center gap-2"
+        >
+          {looking ? (
+            <><span className="spinner" /> Looking up…</>
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Verify from public records
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Verified facts callout — the trust signal */}
+      {verifiedFacts && (
+        <div className="px-3.5 py-3 rounded-lg bg-gold/5 border border-gold/30 fade-up-in">
+          <div className="flex items-start gap-2.5">
+            <div className="grid place-items-center w-5 h-5 mt-0.5 rounded-full bg-gold text-paper">
+              <svg viewBox="0 0 12 12" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M2 6l3 3 5-6" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-xs font-semibold text-gold-light tracking-tightish">
+                Verified from public records
+              </p>
+              <p className="text-[11px] text-ink-muted mt-0.5">
+                {[
+                  verifiedFacts.propertyType,
+                  verifiedFacts.yearBuilt && `built ${verifiedFacts.yearBuilt}`,
+                  verifiedFacts.lotSize && `${verifiedFacts.lotSize} lot`,
+                  verifiedFacts.lastSalePrice && `last sale ${verifiedFacts.lastSalePrice}`
+                ].filter(Boolean).join(" · ") || "County records confirm the listing details below."}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* City + price — secondary pair */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Input label="City / area" value={listing.city}  onChange={(v) => setListing({ city: v })}  placeholder="Scottsdale, AZ" />
+        <Input label="Price"       value={listing.price} onChange={(v) => setListing({ price: v })} placeholder="$2,850,000" />
+      </div>
+      {/* Beds / baths / sqft — tight numeric trio */}
+      <div className="grid grid-cols-3 gap-3">
+        <Input label="Beds"       value={listing.beds}       onChange={(v) => setListing({ beds: v })}       placeholder="5"     />
+        <Input label="Baths"      value={listing.baths}      onChange={(v) => setListing({ baths: v })}      placeholder="5.5"   />
+        <Input label="Sq ft"      value={listing.squareFeet} onChange={(v) => setListing({ squareFeet: v })} placeholder="5,640" />
+      </div>
+      {/* Hook — optional, deprioritized */}
+      <div className="pt-2 border-t border-edge-soft">
+        <Input
+          label="Hook line (optional)"
+          value={listing.hook}
+          onChange={(v) => setListing({ hook: v })}
+          placeholder="A modern desert retreat built for evenings outside."
+        />
+      </div>
+    </div>
   );
 }
 
@@ -352,6 +467,9 @@ function BrandKitArea({ userId }: { userId: string }) {
 
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const voiceFileInput = useRef<HTMLInputElement>(null);
+  const [cloning, setCloning] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const handleHeadshot = async (files: FileList | null) => {
     const file = files?.[0];
@@ -376,6 +494,80 @@ function BrandKitArea({ userId }: { userId: string }) {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
     }
+  };
+
+  const handleVoiceSample = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("audio/")) {
+      setError("Voice sample must be an audio file (MP3, M4A, or WAV).");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setError("Voice sample must be under 8MB. Trim it to about 60–90 seconds.");
+      return;
+    }
+    if (!branding.fullName.trim()) {
+      setError("Add your full name first — it labels the cloned voice.");
+      return;
+    }
+    setCloning(true);
+    try {
+      const audioBase64 = await fileToBase64(file);
+      const res = await fetch("/api/clone-voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audioBase64,
+          fileName: file.name,
+          contentType: file.type,
+          voiceLabel: branding.fullName.split(/\s+/)[0] || branding.fullName
+        })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || `Voice clone failed (${res.status}).`);
+      setBranding({
+        voiceId: payload.voiceId,
+        voiceLabel: payload.voiceLabel || branding.fullName.split(/\s+/)[0] || ""
+      });
+      setToast("Your voice is cloned and ready.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Voice clone failed";
+      setError(msg);
+    } finally {
+      setCloning(false);
+      if (voiceFileInput.current) voiceFileInput.current.value = "";
+    }
+  };
+
+  const previewVoice = async () => {
+    if (!branding.voiceId) return;
+    setPreviewLoading(true);
+    try {
+      const text = `Hi, I'm ${branding.voiceLabel || branding.fullName.split(/\s+/)[0] || "your agent"}. This is how I'll sound on every EstateMotion video.`;
+      const res = await fetch("/api/synthesize-narration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voiceId: branding.voiceId, text })
+      });
+      if (!res.ok) {
+        const errPayload = await res.json().catch(() => ({}));
+        throw new Error(errPayload.error || `Preview failed (${res.status}).`);
+      }
+      const blob = await res.blob();
+      const audio = new Audio(URL.createObjectURL(blob));
+      audio.play().catch(() => setError("Couldn't autoplay — your browser blocked it."));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Preview failed";
+      setError(msg);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const removeVoice = () => {
+    setBranding({ voiceId: "", voiceLabel: "" });
+    setToast("Voice clone removed");
   };
 
   return (
@@ -459,8 +651,109 @@ function BrandKitArea({ userId }: { userId: string }) {
           </div>
         </div>
       </div>
+
+      {/* Voice clone — the differentiator. Reel-e.ai gives silent reels.
+          EstateMotion narrates every video in the agent's actual voice. */}
+      <div className="pt-5 border-t border-edge-soft">
+        <div className="flex items-baseline justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold tracking-tightish flex items-center gap-2">
+              Voice clone
+              <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold text-paper">PRO</span>
+            </h3>
+            <p className="text-xs text-ink-muted mt-0.5">
+              Every video gets narrated in your voice. Record 60–90 seconds of clear speech, upload, done.
+            </p>
+          </div>
+        </div>
+
+        {branding.voiceId ? (
+          <div className="flex flex-wrap items-center gap-3 p-3 bg-surface-input border border-gold/30 rounded-lg">
+            <div className="grid place-items-center w-9 h-9 rounded-full bg-gold/15 text-gold">
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <path d="M12 2v6m0 8v6M5 12h14" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium truncate">
+                {branding.voiceLabel || "Your voice"} — ready
+              </div>
+              <div className="text-xs text-ink-muted">Used on every future render.</div>
+            </div>
+            <button
+              type="button"
+              onClick={previewVoice}
+              disabled={previewLoading}
+              className="btn-secondary-em h-9 px-3 rounded-lg text-xs disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {previewLoading ? <span className="spinner" /> : "▸"} Preview
+            </button>
+            <button
+              type="button"
+              onClick={removeVoice}
+              className="text-xs text-ink-muted hover:text-red-300 transition-colors"
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <label
+            className={cn(
+              "block cursor-pointer rounded-lg border-[1.5px] border-dashed transition-colors p-4 text-center",
+              cloning ? "border-gold bg-gold/5" : "border-edge-strong hover:border-gold hover:bg-gold/5"
+            )}
+          >
+            <input
+              ref={voiceFileInput}
+              type="file"
+              accept="audio/*"
+              className="hidden"
+              onChange={(e) => handleVoiceSample(e.target.files)}
+              disabled={cloning}
+            />
+            <div className="flex items-center justify-center gap-3">
+              <div className="grid place-items-center w-10 h-10 rounded-full bg-gold/10 text-gold">
+                {cloning ? <span className="spinner" /> : (
+                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <rect x="9" y="3" width="6" height="12" rx="3" />
+                    <path d="M5 11a7 7 0 0 0 14 0M12 18v4" />
+                  </svg>
+                )}
+              </div>
+              <div className="text-left">
+                <div className="text-sm font-medium">
+                  {cloning ? "Cloning your voice…" : "Upload a voice sample"}
+                </div>
+                <div className="text-xs text-ink-muted">
+                  {cloning
+                    ? "ElevenLabs is fingerprinting your speech. About 30 seconds."
+                    : "MP3, M4A, or WAV. 60–90 seconds of clear speech in a quiet room."}
+                </div>
+              </div>
+            </div>
+          </label>
+        )}
+      </div>
     </div>
   );
+}
+
+// Helper — convert a File to base64 for the clone endpoint. We use FileReader
+// instead of Blob.arrayBuffer() so we can show progress on slow connections
+// later if needed.
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      // result is "data:audio/mpeg;base64,XXXX" — strip the prefix
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(new Error("File read failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 /* ============================================================
@@ -535,6 +828,7 @@ function RenderControls() {
   const photos = useStore((s) => s.photos);
   const listing = useStore((s) => s.listing);
   const branding = useStore((s) => s.branding);
+  const organization = useStore((s) => s.organization);
   const selectedStyleId = useStore((s) => s.selectedStyleId);
   const renderEngine = useStore((s) => s.renderEngine);
   const renderJob = useStore((s) => s.renderJob);
@@ -565,7 +859,8 @@ function RenderControls() {
         listing,
         selectedStyle: styleLabel,
         exportFormat: "vertical",
-        engine: renderEngine
+        engine: renderEngine,
+        brandKit: branding
       });
       if (!planResult.editPlan) {
         throw new Error(planResult.reason || "We couldn't draft an edit plan. Try again in a moment.");
@@ -599,10 +894,14 @@ function RenderControls() {
             publicUrl: photo?.publicUrl,
             fileName: photo?.fileName,
             duration: scene.duration,
+            roomType: scene.roomType,
+            qualityScore: scene.qualityScore,
             cameraMotion: scene.cameraMotion,
             transition: scene.transition,
             overlay: scene.overlay,
-            runwayPrompt: scene.runwayPrompt
+            runwayPrompt: scene.runwayPrompt,
+            // narrationLine drives ElevenLabs synthesis on the worker
+            narrationLine: scene.narrationLine || ""
           };
         }),
         orderedPhotos: photos,
@@ -611,7 +910,8 @@ function RenderControls() {
         musicMood: planResult.editPlan.musicMood,
         selectedStyle: styleLabel,
         runwayConfig: planResult.editPlan.runwayConfig,
-        brandKit: branding
+        brandKit: branding,
+        organizationId: organization?.id || null
       };
 
       // 3. Submit
@@ -728,29 +1028,100 @@ function RenderStatusPanel() {
   if (!renderJob) return null;
 
   if (renderJob.status === "completed" && renderJob.mp4Url) {
+    const formats = renderJob.formats || {};
+    const verticalUrl = formats.vertical?.mp4Url || renderJob.mp4Url;
+    const squareUrl = formats.square?.mp4Url || "";
+    const wideUrl = formats.wide?.mp4Url || "";
+    const shorts = renderJob.socialShorts || [];
+
+    const formatPills: Array<{ label: string; sublabel: string; url: string; ratio: string }> = [
+      { label: "9:16", sublabel: "Reels · TikTok · Shorts", url: verticalUrl, ratio: "9:16" }
+    ];
+    if (squareUrl) formatPills.push({ label: "1:1", sublabel: "Instagram feed", url: squareUrl, ratio: "1:1" });
+    if (wideUrl)   formatPills.push({ label: "16:9", sublabel: "YouTube · Zillow · MLS", url: wideUrl, ratio: "16:9" });
+
     return (
-      <div className="bg-surface border border-gold/40 rounded-xl p-4 flex flex-col gap-3">
+      <div className="bg-surface border border-gold/40 rounded-xl p-4 flex flex-col gap-5">
         <video
-          src={renderJob.mp4Url}
+          src={verticalUrl}
           controls
           playsInline
+          poster={renderJob.thumbnailUrl}
           className="w-full max-h-[600px] rounded-lg bg-black"
         />
-        <div className="flex flex-wrap gap-3">
-          <a
-            href={renderJob.mp4Url}
-            download
-            className="h-10 px-4 bg-gold hover:bg-gold-light text-paper font-semibold rounded-lg transition-colors inline-flex items-center"
-          >
-            Download MP4
-          </a>
+
+        {/* Format bundle — one render, every aspect ratio */}
+        <div>
+          <div className="flex items-baseline justify-between mb-2.5">
+            <h3 className="text-sm font-semibold tracking-tightish">Your full bundle</h3>
+            <span className="text-xs text-ink-muted">All from one render.</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {formatPills.map((pill) => (
+              <a
+                key={pill.ratio}
+                href={pill.url}
+                download
+                className="card-press flex items-center justify-between gap-3 p-3 bg-surface-input hover:bg-surface-raised border border-edge hover:border-gold rounded-lg transition-colors"
+              >
+                <div>
+                  <div className="font-mono text-base font-semibold text-gold">{pill.label}</div>
+                  <div className="text-xs text-ink-muted">{pill.sublabel}</div>
+                </div>
+                <span className="text-ink-muted group-hover:text-gold text-sm">↓</span>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        {/* Social shorts — Instagram Reels / TikTok ready */}
+        {shorts.length > 0 && (
+          <div>
+            <div className="flex items-baseline justify-between mb-2.5">
+              <h3 className="text-sm font-semibold tracking-tightish">Hero shorts</h3>
+              <span className="text-xs text-ink-muted">{shorts.length} reel-ready cuts</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {shorts.map((short) => (
+                <a
+                  key={short.clipNumber}
+                  href={short.mp4Url}
+                  download
+                  className="card-press group block bg-surface-input hover:bg-surface-raised border border-edge hover:border-gold rounded-lg overflow-hidden transition-colors"
+                >
+                  <div className="aspect-[9/16] bg-black grid place-items-center text-gold/60 text-xs font-mono uppercase tracking-wider relative">
+                    <video
+                      src={short.mp4Url}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                    <span className="relative bg-paper/70 backdrop-blur-sm px-2 py-0.5 rounded text-[10px]">
+                      {Math.round(short.durationSec)}s
+                    </span>
+                  </div>
+                  <div className="p-2">
+                    <div className="text-xs font-medium capitalize">
+                      Short {short.clipNumber}
+                      {short.roomType && <span className="text-ink-muted ml-1">· {short.roomType}</span>}
+                    </div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Footer extras — thumbnail + render again */}
+        <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-edge-soft">
           {renderJob.thumbnailUrl && (
             <a
               href={renderJob.thumbnailUrl}
               download
-              className="h-10 px-4 border border-edge hover:border-edge-strong text-ink rounded-lg transition-colors inline-flex items-center text-sm"
+              className="text-xs text-ink-muted hover:text-gold transition-colors"
             >
-              Download thumbnail
+              Download poster image
             </a>
           )}
         </div>

@@ -22,6 +22,7 @@ const requiredFiles = [
   "webapp/src/screens/AuthScreen.tsx",
   "webapp/src/screens/DashboardScreen.tsx",
   "webapp/src/screens/ProjectScreen.tsx",
+  "webapp/src/screens/BrokerageScreen.tsx",
   "webapp/vite.config.ts",
   "webapp/tsconfig.json",
   "webapp/tailwind.config.js",
@@ -33,6 +34,10 @@ const requiredFiles = [
   "api/render.js",
   "api/classify-image.js",
   "api/create-edit-plan.js",
+  "api/clone-voice.js",
+  "api/synthesize-narration.js",
+  "api/organization.js",
+  "api/lookup-property.js",
   "api/usage.js",
   "api/create-checkout-session.js",
   "api/stripe-webhook.js",
@@ -42,12 +47,16 @@ const requiredFiles = [
   "supabase/seed.sql",
   "supabase/migrations/02_subscriptions.sql",
   "supabase/migrations/03_storage_policies.sql",
+  "supabase/migrations/04_brokerages.sql",
 
   // Render worker
   "render-worker/server.mjs",
   "render-worker/Dockerfile",
   "render-worker/src/render-job.mjs",
   "render-worker/src/runway-job.mjs",
+  "render-worker/src/aspect-variants.mjs",
+  "render-worker/src/voice-mixer.mjs",
+  "render-worker/src/audit-log.mjs",
 
   // Config
   "vercel.json",

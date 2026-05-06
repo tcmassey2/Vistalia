@@ -82,9 +82,15 @@ export default async function handler(request, response) {
   // referenced in the plan via metadata.
   const visionPhotos = photos.slice(0, OPENAI_VISION_PHOTO_LIMIT);
   const listingDetails = normalizeListingDetails(body.listingDetails || {});
+  const brandKit = normalizeBrandKitForPrompt(body.brandKit || {});
   const selectedStyle = String(body.selectedStyle || "Cinematic Luxury");
   const exportFormat = String(body.exportFormat || "vertical");
   const engine = RENDER_ENGINES.includes(String(body.engine || "")) ? String(body.engine) : "remotion";
+  // Narration is requested when ElevenLabs is configured server-side. The
+  // worker uses the agent's voiceId if set, otherwise a stock voice — but
+  // either way, we want narration lines in the plan so the worker has
+  // something to synthesize.
+  const includeNarration = Boolean(process.env.ELEVENLABS_API_KEY);
 
   if (photos.length < 3) {
     const error = invalidPhotoUrls.length
@@ -110,7 +116,7 @@ export default async function handler(request, response) {
       status: "fallback",
       reason,
       errorCategory: "missing_openai_api_key",
-      editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine })
+      editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine, includeNarration })
     });
     return;
   }
@@ -128,7 +134,7 @@ export default async function handler(request, response) {
         status: "fallback",
         reason,
         errorCategory: "inaccessible_image_url",
-        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine })
+        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine, includeNarration })
       });
       return;
     }
@@ -150,7 +156,7 @@ export default async function handler(request, response) {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(buildOpenAIRequest({ allPhotos: photos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine }))
+      body: JSON.stringify(buildOpenAIRequest({ allPhotos: photos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine, brandKit, includeNarration }))
     }, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
 
     const payload = await openaiResponse.json().catch(() => ({}));
@@ -163,7 +169,7 @@ export default async function handler(request, response) {
         reason,
         errorCategory: openaiError.category,
         requestId: openaiError.requestId,
-        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine })
+        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine, includeNarration })
       });
       return;
     }
@@ -181,7 +187,7 @@ export default async function handler(request, response) {
         status: "fallback",
         reason: `Motion Director unavailable: schema validation failed. ${validation.error}`,
         errorCategory: "schema_validation",
-        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine })
+        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine, includeNarration })
       });
       return;
     }
@@ -192,7 +198,7 @@ export default async function handler(request, response) {
     });
     response.status(200).json({
       status: "complete",
-      editPlan: normalizeEditPlan(parsed, photos, { listingDetails, selectedStyle, exportFormat, engine })
+      editPlan: normalizeEditPlan(parsed, photos, { listingDetails, selectedStyle, exportFormat, engine, includeNarration })
     });
   } catch (error) {
     const category = error.name === "AbortError" ? "timeout" : "openai_exception";
@@ -206,16 +212,33 @@ export default async function handler(request, response) {
       status: "fallback",
       reason,
       errorCategory: category,
-      editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine })
+      editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine, includeNarration })
     });
   }
 }
 
-function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine = "remotion" }) {
+function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine = "remotion", brandKit = {}, includeNarration = false }) {
   // Target scene count: use every photo, capped at MAX_PLAN_SCENES.
   // The AI will be instructed to use ALL provided photos as scenes (no skipping).
   const targetSceneCount = Math.min(allPhotos.length, MAX_PLAN_SCENES);
   const isCinematicAI = engine === "runway";
+
+  // Narration guidance: how many scenes should get a line, and how to write
+  // them. Real estate narration that converts is conversational, agent-led,
+  // and references concrete listing facts — never generic ("This stunning
+  // home features..."). When `includeNarration` is on we ask for ~6 lines
+  // out of `targetSceneCount` so most scenes still let the photo + music
+  // breathe.
+  const narrationTargetCount = Math.min(8, Math.max(4, Math.round(targetSceneCount * 0.35)));
+  const narrationGuidance = includeNarration
+    ? [
+        `Add narrationLine to about ${narrationTargetCount} of the ${targetSceneCount} scenes — the ones that gain from a spoken beat. Always include narration on scene 1 (intro), the kitchen, primary bedroom, the strongest outdoor/view shot, and the final scene (outro/CTA). Leave detail shots and repeat-room shots silent.`,
+        `Each narrationLine is 8-22 words, conversational, in the agent's voice. Example tone: "Welcome to 9828 East Pinnacle Peak — five bedrooms across 5,640 square feet of modern desert living."`,
+        `The agent's name is "${brandKit.fullName || "the listing agent"}", brokerage "${brandKit.brokerage || "their brokerage"}". Refer to them naturally only on scene 1 and the outro CTA. Don't repeat the agent name on every scene.`,
+        `Narration MUST stay grounded in the listing facts provided (price, beds, baths, sq ft, address) and what is visible in the photo. Never invent features, views, schools, or neighborhoods.`,
+        `Scenes without narration: omit the narrationLine field entirely OR set it to an empty string. Do NOT pad silence with filler text.`
+      ].join(" ")
+    : "Do NOT include narrationLine on any scene.";
 
   return {
     model: motionModel(),
@@ -239,6 +262,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
               isCinematicAI
                 ? "Engine is Cinematic AI (Runway image-to-video). Set scene duration to 5 seconds. Pick subtle motion that won't induce hallucination."
                 : "Engine is Quick Reel (Ken Burns photo motion). Scene duration 2.0–3.0s for kitchen/living, 1.6–2.4s for detail shots, 2.6–3.2s for hero shots.",
+              narrationGuidance,
               "Return strict JSON only."
             ].join(" ")
           }
@@ -282,7 +306,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
     ],
     text: {
       // Schema enum allows AI to reference ANY uploaded photo, not just visioned ones.
-      format: editPlanTextFormat(allPhotos.map((photo) => photo.id), targetSceneCount)
+      format: editPlanTextFormat(allPhotos.map((photo) => photo.id), targetSceneCount, { includeNarration })
     },
     temperature: 0.2,
     max_output_tokens: 4000
@@ -293,16 +317,16 @@ function motionModel() {
   return process.env.OPENAI_MOTION_MODEL || process.env.OPENAI_MOTION_DIRECTOR_MODEL || DEFAULT_MODEL;
 }
 
-function editPlanTextFormat(photoIds, targetSceneCount) {
+function editPlanTextFormat(photoIds, targetSceneCount, options = {}) {
   return {
     type: "json_schema",
     name: "estate_motion_edit_plan",
     strict: true,
-    schema: editPlanSchema(photoIds, targetSceneCount)
+    schema: editPlanSchema(photoIds, targetSceneCount, options)
   };
 }
 
-function editPlanSchema(photoIds, targetSceneCount) {
+function editPlanSchema(photoIds, targetSceneCount, { includeNarration = false } = {}) {
   // Min/max scenes: aim for the target but allow ±1 slack so the AI doesn't
   // get stuck if a photo is genuinely unusable (e.g. duplicated from upload).
   const minScenes = Math.max(3, Math.min(targetSceneCount - 1, photoIds.length));
@@ -363,9 +387,20 @@ function editPlanSchema(photoIds, targetSceneCount) {
                 subline: { type: "string" }
               },
               required: ["headline", "subline"]
-            }
+            },
+            // Optional voiceover line. Empty string OR null = silent scene.
+            // Capped at ~140 chars so a single ElevenLabs call stays cheap
+            // and the voice fits comfortably inside a 5s scene at
+            // conversational speaking rate (~150 wpm). OpenAI strict mode
+            // requires every listed property to also appear in `required`,
+            // so we model "optional" as "string or null" and require it.
+            ...(includeNarration ? {
+              narrationLine: { type: ["string", "null"], maxLength: 140 }
+            } : {})
           },
-          required: ["photoId", "order", "roomType", "visibleFeatures", "qualityScore", "duration", "cameraMotion", "transition", "overlay"]
+          required: includeNarration
+            ? ["photoId", "order", "roomType", "visibleFeatures", "qualityScore", "duration", "cameraMotion", "transition", "overlay", "narrationLine"]
+            : ["photoId", "order", "roomType", "visibleFeatures", "qualityScore", "duration", "cameraMotion", "transition", "overlay"]
         }
       }
     },
@@ -373,7 +408,7 @@ function editPlanSchema(photoIds, targetSceneCount) {
   };
 }
 
-function deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine = "remotion" }) {
+function deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFormat, engine = "remotion", includeNarration = false }) {
   const ranked = photos
     .map((photo, index) => ({
       ...photo,
@@ -393,6 +428,7 @@ function deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFo
   });
   const scenes = unique.map((photo, index) => {
     const roomType = photo.roomType;
+    const isLast = index === unique.length - 1;
     return {
       photoId: photo.id,
       order: index + 1,
@@ -402,7 +438,8 @@ function deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFo
       duration: durationFor(roomType, selectedStyle, index, engine),
       cameraMotion: motionFor(roomType, selectedStyle, index),
       transition: transitionFor(roomType, selectedStyle, index),
-      overlay: overlayFor(roomType, listingDetails, index)
+      overlay: overlayFor(roomType, listingDetails, index),
+      narrationLine: includeNarration ? fallbackNarrationFor(roomType, listingDetails, index, isLast) : ""
     };
   });
   return normalizeEditPlan({
@@ -465,7 +502,11 @@ function normalizeEditPlan(plan, photos, context) {
       overlay: {
         headline: cleanText(scene.overlay?.headline || overlayFor(scene.roomType, context.listingDetails, index).headline, 70),
         subline: cleanText(scene.overlay?.subline || overlayFor(scene.roomType, context.listingDetails, index).subline, 90)
-      }
+      },
+      // Narration: only include if non-empty. Treat null / "" / whitespace
+      // as silent. This becomes the source-of-truth for the worker's
+      // synthesizer.
+      narrationLine: cleanText(scene.narrationLine || "", 240) || ""
     }));
   const finalScenes = engine === "runway"
     ? scenes.map((scene) => ({
@@ -619,6 +660,40 @@ function validateImageContentType(contentType, url) {
   if (type.startsWith("image/")) return { valid: true };
   if (/\.(jpe?g|png|webp|gif)(\?|#|$)/i.test(url)) return { valid: true };
   return { valid: false, reason: `unsupported_content_type:${type}` };
+}
+
+function normalizeBrandKitForPrompt(brandKit) {
+  return {
+    fullName: cleanText(brandKit.fullName || brandKit.name || "", 80),
+    brokerage: cleanText(brandKit.brokerage || "", 80),
+    voiceLabel: cleanText(brandKit.voiceLabel || "", 80),
+    voiceId: cleanText(brandKit.voiceId || "", 64)
+  };
+}
+
+// Fallback narration for the deterministic edit plan (only used when OpenAI
+// is unavailable). Keeps it terse and grounded in user-supplied facts so we
+// never hallucinate. Only narrates 4-5 key beats per video.
+function fallbackNarrationFor(roomType, details, index, isLast) {
+  const address = details.address || "this listing";
+  const city = details.city || "";
+  const beds = details.beds ? `${details.beds}-bed` : "";
+  const baths = details.baths ? `${details.baths}-bath` : "";
+  const sqft = details.squareFeet ? `${details.squareFeet} square feet` : "";
+  const facts = [beds, baths, sqft].filter(Boolean).join(", ");
+  if (index === 0) {
+    const intro = city ? `Welcome to ${address} in ${city}.` : `Welcome to ${address}.`;
+    return facts ? `${intro} ${facts}.` : intro;
+  }
+  if (isLast) {
+    const cta = details.cta || "Schedule your private tour today.";
+    const agent = details.agentName ? `Reach out to ${details.agentName}.` : "";
+    return [cta, agent].filter(Boolean).join(" ");
+  }
+  if (roomType === "kitchen") return "The kitchen anchors the home — open, bright, and built for the way real life happens.";
+  if (roomType === "outdoor") return "Step outside. The desert light hits this space differently every hour of the day.";
+  if (roomType === "bedroom" && index < 6) return "The primary suite — quiet, private, and finished with care.";
+  return "";
 }
 
 function normalizeListingDetails(details) {

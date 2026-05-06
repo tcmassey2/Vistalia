@@ -13,6 +13,9 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
+import { deriveAspectVariants, buildSocialShorts } from "./aspect-variants.mjs";
+import { applyVoiceNarration } from "./voice-mixer.mjs";
+import { writeRenderAudit } from "./audit-log.mjs";
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -54,8 +57,10 @@ export async function renderRunwayJob(body, options = {}) {
       const result = await generateClip(scene, manifest, tempDir, index);
       scenesCompleted++;
       options.onProgress?.({
+        // Reserve 78–100% for stitch + derive + shorts + upload, so the
+        // Runway phase tops out at ~74% rather than overrunning the bar.
         phase: `Rendering scene ${scenesCompleted}/${photoScenes.length}`,
-        progress: 10 + Math.floor((scenesCompleted / photoScenes.length) * 70),
+        progress: 10 + Math.floor((scenesCompleted / photoScenes.length) * 64),
         scenesCompleted,
         scenesTotal: photoScenes.length
       });
@@ -64,14 +69,60 @@ export async function renderRunwayJob(body, options = {}) {
     { concurrency }
   );
 
-  options.onProgress?.({ phase: "Stitching final video", progress: 84 });
+  options.onProgress?.({ phase: "Stitching final video", progress: 76 });
   const finalMp4 = path.join(tempDir, `${jobId}.mp4`);
   const thumbnailPath = path.join(tempDir, `${jobId}.png`);
 
   await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath);
 
-  options.onProgress?.({ phase: "Uploading final MP4", progress: 92 });
-  const upload = await uploadRunwayAssets({ manifest, jobId, finalMp4, thumbnailPath });
+  // Voice narration — synthesize per-scene narration via ElevenLabs and mix
+  // it into the master with music ducking. Skipped silently when no
+  // narration lines are present or ELEVENLABS_API_KEY isn't set.
+  options.onProgress?.({ phase: "Adding voice narration", progress: 80 });
+  const narration = await applyVoiceNarration({
+    masterMp4: finalMp4,
+    scenes: manifest.scenes,
+    brandKit: manifest.brandKit || {},
+    tempDir,
+    jobId,
+    onProgress: (info) => {
+      options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
+    }
+  });
+  // If narration was applied, the mixed file replaces our master going
+  // forward. The original silent master gets cleaned up at the end.
+  const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
+
+  options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
+  const variants = await deriveAspectVariants({ masterMp4: masterForVariants, tempDir, jobId });
+
+  options.onProgress?.({ phase: "Cutting social shorts", progress: 90 });
+  const shorts = await buildSocialShorts({
+    // Use the narrated master (if any) so social shorts also have voice.
+    masterMp4: masterForVariants,
+    scenes: manifest.scenes,
+    tempDir,
+    jobId,
+    count: 3
+  });
+
+  options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
+  const upload = await uploadRunwayAssets({
+    manifest,
+    jobId,
+    variants,
+    shorts,
+    thumbnailPath
+  });
+
+  // Audit log — never throws.
+  await writeRenderAudit({
+    manifest,
+    jobId,
+    engine: "runway",
+    upload,
+    narration
+  });
 
   options.onProgress?.({ phase: "Ready to download", progress: 100 });
 
@@ -80,14 +131,20 @@ export async function renderRunwayJob(body, options = {}) {
     mock: false,
     engine: "runway",
     jobId,
-    mp4Url: upload.mp4Url,
+    // Primary deliverable (vertical) — kept at top level for backward compat.
+    mp4Url: upload.formats.vertical?.mp4Url || "",
     thumbnailUrl: upload.thumbnailUrl,
-    storagePath: upload.storagePath,
+    storagePath: upload.formats.vertical?.storagePath,
     thumbnailPath: upload.thumbnailStoragePath,
     localMp4Path: upload.storageSkipped ? finalMp4 : "",
     localThumbnailPath: upload.storageSkipped ? thumbnailPath : "",
     storageSkipped: upload.storageSkipped,
     storageWarning: upload.storageWarning || "",
+    formats: upload.formats,
+    socialShorts: upload.socialShorts,
+    narration: narration.narrationApplied
+      ? { applied: true, voiceId: narration.voiceId, lineCount: narration.narrationLineCount }
+      : { applied: false, reason: narration.reason },
     scenesGenerated: clipResults.length,
     sceneClips: clipResults.map((c) => ({
       photoId: c.photoId,
@@ -457,7 +514,26 @@ async function downloadFile(url, destPath) {
    Supabase upload
    ================================================================= */
 
-async function uploadRunwayAssets({ manifest, jobId, finalMp4, thumbnailPath }) {
+async function uploadRunwayAssets({ manifest, jobId, variants, shorts, thumbnailPath }) {
+  return uploadDeliverables({
+    manifest,
+    jobId,
+    variants,
+    shorts,
+    thumbnailPath,
+    pathPrefix: "runway"
+  });
+}
+
+// Shared multi-format uploader — used by both Runway and Remotion pipelines.
+// Uploads:
+//   <owner>/<prefix>/<jobId>/master.mp4           (vertical, kept as the
+//                                                  primary deliverable)
+//   <owner>/<prefix>/<jobId>/square.mp4
+//   <owner>/<prefix>/<jobId>/wide.mp4
+//   <owner>/<prefix>/<jobId>/short-1.mp4..short-N.mp4
+//   <owner>/<prefix>/<jobId>/thumbnail.png
+export async function uploadDeliverables({ manifest, jobId, variants, shorts, thumbnailPath, pathPrefix }) {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const bucket = process.env.SUPABASE_GENERATED_VIDEOS_BUCKET || "generated-videos";
@@ -465,8 +541,9 @@ async function uploadRunwayAssets({ manifest, jobId, finalMp4, thumbnailPath }) 
   if (!supabaseUrl || !serviceRoleKey) {
     return {
       storageSkipped: true,
-      storageWarning: "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY required to upload Runway videos.",
-      mp4Url: "",
+      storageWarning: "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY required to upload generated videos.",
+      formats: {},
+      socialShorts: [],
       thumbnailUrl: ""
     };
   }
@@ -476,31 +553,81 @@ async function uploadRunwayAssets({ manifest, jobId, finalMp4, thumbnailPath }) 
   });
 
   const ownerId = slug(manifest.project?.userId || manifest.project?.id || "demo");
-  const basePath = `${ownerId}/runway/${jobId}`;
-  const storagePath = `${basePath}/estate-motion.mp4`;
+  const basePath = `${ownerId}/${pathPrefix}/${jobId}`;
+
+  const VARIANT_FILENAMES = {
+    vertical: "master.mp4",
+    square: "square.mp4",
+    wide: "wide.mp4"
+  };
+
+  // Upload each format variant (vertical / square / wide) sequentially so
+  // we don't pile RAM. Each MP4 is read off disk once and freed.
+  const uploadedFormats = {};
+  for (const [variantKey, info] of Object.entries(variants || {})) {
+    if (!info?.path) continue;
+    const filename = VARIANT_FILENAMES[variantKey] || `${variantKey}.mp4`;
+    const storagePath = `${basePath}/${filename}`;
+    const buffer = await fs.readFile(info.path);
+    const result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
+      contentType: "video/mp4",
+      upsert: true
+    });
+    if (result.error) throw new Error(`Supabase upload failed (${variantKey}): ${result.error.message}`);
+    const mp4Url = supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;
+    uploadedFormats[variantKey] = {
+      mp4Url,
+      storagePath,
+      dimensions: info.dimensions || null
+    };
+  }
+
+  // Upload social shorts.
+  const uploadedShorts = [];
+  for (const short of shorts || []) {
+    if (!short?.path) continue;
+    const storagePath = `${basePath}/short-${short.clipNumber}.mp4`;
+    const buffer = await fs.readFile(short.path);
+    const result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
+      contentType: "video/mp4",
+      upsert: true
+    });
+    if (result.error) throw new Error(`Supabase upload failed (short ${short.clipNumber}): ${result.error.message}`);
+    uploadedShorts.push({
+      clipNumber: short.clipNumber,
+      mp4Url: supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl,
+      storagePath,
+      durationSec: short.durationSec,
+      sourceSceneOrder: short.sourceSceneOrder,
+      roomType: short.roomType
+    });
+    // Free the local file immediately.
+    await fs.unlink(short.path).catch(() => {});
+  }
+
+  // Thumbnail.
   const thumbnailStoragePath = `${basePath}/thumbnail.png`;
-
-  const mp4Buffer = await fs.readFile(finalMp4);
   const thumbBuffer = await fs.readFile(thumbnailPath);
-
-  const videoUpload = await supabase.storage.from(bucket).upload(storagePath, mp4Buffer, {
-    contentType: "video/mp4",
-    upsert: true
-  });
-  if (videoUpload.error) throw new Error(`Supabase video upload failed: ${videoUpload.error.message}`);
-
   const thumbUpload = await supabase.storage.from(bucket).upload(thumbnailStoragePath, thumbBuffer, {
     contentType: "image/png",
     upsert: true
   });
   if (thumbUpload.error) throw new Error(`Supabase thumbnail upload failed: ${thumbUpload.error.message}`);
+  const thumbnailUrl = supabase.storage.from(bucket).getPublicUrl(thumbnailStoragePath).data.publicUrl;
+
+  // Free the derived format files (the master is owned by the caller and may
+  // still be needed for cleanup).
+  for (const [variantKey, info] of Object.entries(variants || {})) {
+    if (variantKey === "vertical") continue; // master stays — caller cleans up
+    if (info?.path) await fs.unlink(info.path).catch(() => {});
+  }
 
   return {
     storageSkipped: false,
-    storagePath,
-    thumbnailStoragePath,
-    mp4Url: supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl,
-    thumbnailUrl: supabase.storage.from(bucket).getPublicUrl(thumbnailStoragePath).data.publicUrl
+    formats: uploadedFormats,
+    socialShorts: uploadedShorts,
+    thumbnailUrl,
+    thumbnailStoragePath
   };
 }
 

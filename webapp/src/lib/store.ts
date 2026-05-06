@@ -8,6 +8,7 @@ import type {
   AgentBranding,
   EditPlan,
   ListingDetails,
+  Organization,
   Photo,
   RenderEngine,
   RenderJobStatus,
@@ -15,8 +16,9 @@ import type {
   UserProfile
 } from "./types";
 import { onAuthChange, getSession } from "./supabase";
+import { fetchOrganization } from "./api";
 
-export type Screen = "auth" | "dashboard" | "project";
+export type Screen = "auth" | "dashboard" | "project" | "brokerage";
 
 export interface ProjectSummary {
   id: string;
@@ -32,6 +34,10 @@ interface AppState {
   session: Session | null;
   authReady: boolean;
   profile: UserProfile | null;
+
+  // Brokerage / organization (null = solo agent)
+  organization: Organization | null;
+  organizationLoaded: boolean;
 
   // Routing
   screen: Screen;
@@ -59,6 +65,8 @@ interface AppState {
   init: () => Promise<void>;
   setSession: (s: Session | null) => void;
   setProfile: (p: UserProfile | null) => void;
+  setOrganization: (org: Organization | null) => void;
+  refreshOrganization: () => Promise<void>;
   goToScreen: (s: Screen) => void;
 
   newProject: () => void;
@@ -140,6 +148,8 @@ export const useStore = create<AppState>((set, get) => ({
   session: null,
   authReady: false,
   profile: null,
+  organization: null,
+  organizationLoaded: false,
   screen: "auth",
   projectList: [],
   ...emptyProject(),
@@ -154,16 +164,42 @@ export const useStore = create<AppState>((set, get) => ({
       authReady: true,
       screen: session ? "dashboard" : "auth"
     });
+    if (session) {
+      // Fire-and-forget — UI doesn't block on org lookup
+      get().refreshOrganization().catch(() => {});
+    }
     try {
       onAuthChange((s) => {
         const prev = get().session;
         set({ session: s });
-        if (!prev && s) set({ screen: "dashboard", error: "" });
-        if (prev && !s) set({ ...emptyProject(), screen: "auth", projectList: [], error: "" });
+        if (!prev && s) {
+          set({ screen: "dashboard", error: "" });
+          get().refreshOrganization().catch(() => {});
+        }
+        if (prev && !s) set({
+          ...emptyProject(),
+          organization: null,
+          organizationLoaded: false,
+          screen: "auth",
+          projectList: [],
+          error: ""
+        });
       });
     } catch {
       // Supabase not configured — auth state changes won't fire, but the
       // app still renders. The user will see an error when they try to sign in.
+    }
+  },
+
+  setOrganization: (org) => set({ organization: org, organizationLoaded: true }),
+  refreshOrganization: async () => {
+    try {
+      const org = await fetchOrganization();
+      set({ organization: org, organizationLoaded: true });
+    } catch {
+      // Failure to fetch org shouldn't break the app — solo-agent mode
+      // is the default fallback.
+      set({ organization: null, organizationLoaded: true });
     }
   },
 

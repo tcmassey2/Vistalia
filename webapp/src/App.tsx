@@ -3,6 +3,7 @@ import { useStore } from "./lib/store";
 import AuthScreen from "./screens/AuthScreen";
 import DashboardScreen from "./screens/DashboardScreen";
 import ProjectScreen from "./screens/ProjectScreen";
+import BrokerageScreen from "./screens/BrokerageScreen";
 import TopBar from "./components/TopBar";
 import Toast from "./components/Toast";
 
@@ -68,6 +69,7 @@ export default function App() {
         {screen === "auth" && <AuthScreen />}
         {screen === "dashboard" && <DashboardScreen />}
         {screen === "project" && <ProjectScreen />}
+        {screen === "brokerage" && <BrokerageScreen />}
       </main>
       <Toast />
     </ErrorBoundary>

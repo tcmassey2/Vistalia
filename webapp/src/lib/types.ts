@@ -77,6 +77,13 @@ export interface AgentBranding {
   phone: string;
   email: string;
   headshotUrl?: string;
+  // ElevenLabs voice clone ID. When set, every future render is narrated in
+  // the agent's actual voice. When unset, EstateMotion still narrates using
+  // a stock professional voice — so the agent always gets narration, and
+  // voice cloning becomes the perceptible upgrade.
+  voiceId?: string;
+  // Display name of the voice clone — typically the agent's first name.
+  voiceLabel?: string;
 }
 
 export interface SceneOverlay {
@@ -100,6 +107,11 @@ export interface EditPlanScene {
   transition: Transition;
   overlay: SceneOverlay;
   runwayPrompt?: string;
+  // Conversational 1-2 sentence narration for this scene. The Motion
+  // Director only writes a line when narration would add to the moment
+  // (intro / kitchen / outdoor / outro CTA). Silent scenes let the photo
+  // and music breathe.
+  narrationLine?: string;
 }
 
 export interface EditPlan {
@@ -132,13 +144,36 @@ export interface Project {
   editPlan: EditPlan | null;
 }
 
+export interface RenderFormatVariant {
+  mp4Url: string;
+  storagePath?: string;
+  dimensions?: { width: number; height: number } | null;
+}
+
+export interface SocialShortClip {
+  clipNumber: number;
+  mp4Url: string;
+  durationSec: number;
+  sourceSceneOrder?: number;
+  roomType?: string;
+}
+
 export interface RenderJobStatus {
   jobId: string;
   status: "queued" | "rendering" | "completed" | "failed";
   phase: string;
   progress: number;
-  mp4Url?: string;
+  mp4Url?: string; // primary deliverable (vertical 9:16)
   thumbnailUrl?: string;
+  // Multi-format atomic export — one render produces 9:16 + 1:1 + 16:9.
+  formats?: {
+    vertical?: RenderFormatVariant;
+    square?: RenderFormatVariant;
+    wide?: RenderFormatVariant;
+  };
+  // Three hero clips auto-cut from the master, ready for Instagram Reels /
+  // TikTok / Shorts. Each is ~10 seconds, vertical, with the brand watermark.
+  socialShorts?: SocialShortClip[];
   error?: string;
   engine?: RenderEngine;
 }
@@ -153,6 +188,58 @@ export interface UserProfile {
   available_engines: RenderEngine[];
   can_render: boolean;
   reason: string | null;
+}
+
+/* ============================================================
+   Organizations / Brokerage admin tier
+   ============================================================ */
+
+export type OrgRole = "owner" | "admin" | "agent";
+export type OrgTier = "team" | "brokerage" | "enterprise";
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  tier: OrgTier;
+  state: string | null;
+  licenseNumber: string | null;
+  logoUrl: string | null;
+  accentColor: string | null;
+  role: OrgRole;
+  joinedAt: string;
+  agentSeatCap: number;
+  agentSeatCount: number;
+}
+
+export interface OrgRosterMember {
+  userId: string;
+  email: string;
+  fullName: string;
+  role: OrgRole;
+  joinedAt: string;
+  rendersLast30Days: number;
+}
+
+export interface OrgAuditLogEntry {
+  id: string;
+  jobId: string;
+  engine: RenderEngine;
+  agentUserId: string;
+  agentEmail: string;
+  agentDisplayName: string;
+  listingAddress: string | null;
+  listingCity: string | null;
+  listingPrice: string | null;
+  projectTitle: string | null;
+  mp4Url: string;
+  thumbnailUrl: string;
+  socialShortCount: number;
+  formatsCount: number;
+  narrationApplied: boolean;
+  status: "queued" | "rendering" | "completed" | "failed";
+  errorMessage: string | null;
+  createdAt: string;
 }
 
 export interface AppEnv {

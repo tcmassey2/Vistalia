@@ -7,6 +7,9 @@ import type {
   EditPlan,
   ExportFormat,
   ListingDetails,
+  OrgAuditLogEntry,
+  OrgRosterMember,
+  Organization,
   Photo,
   RenderEngine,
   RenderJobStatus,
@@ -60,6 +63,10 @@ export interface CreateEditPlanArgs {
   selectedStyle: string;
   exportFormat: ExportFormat;
   engine: RenderEngine;
+  // Brand kit travels with the plan request so the Motion Director can
+  // write narration in the agent's voice (referencing their name/brokerage)
+  // and tailor the outro CTA.
+  brandKit?: AgentBranding;
 }
 
 export interface CreateEditPlanResult {
@@ -87,7 +94,8 @@ export async function createEditPlan(args: CreateEditPlanArgs): Promise<CreateEd
       listingDetails: args.listing,
       selectedStyle: args.selectedStyle,
       exportFormat: args.exportFormat,
-      engine: args.engine
+      engine: args.engine,
+      brandKit: args.brandKit || null
     })
   });
   if (!res.ok) {
@@ -127,10 +135,17 @@ export interface RenderManifest {
     publicUrl?: string;
     fileName?: string;
     duration: number;
+    // roomType + qualityScore travel with the scene so the worker's social
+    // shorts cutter can pick the highest-engagement frames.
+    roomType?: string;
+    qualityScore?: number;
     cameraMotion?: string;
     transition?: string;
     overlay?: { headline: string; subline: string };
     runwayPrompt?: string;
+    // Conversational voiceover line for this scene. Empty/missing = silent.
+    // The render-worker synthesizes via ElevenLabs and ducks music under it.
+    narrationLine?: string;
   }>;
   orderedPhotos: Photo[];
   introCard: { headline: string; subline: string };
@@ -141,6 +156,10 @@ export interface RenderManifest {
   // Brand kit drives the closing card on every video — agent headshot,
   // brokerage, contact line. Both engines (Remotion + Runway) consume this.
   brandKit: AgentBranding;
+  // Organization (brokerage) the agent belongs to. The render-worker uses
+  // it to attribute the audit-log row to the brokerage so admins can
+  // monitor everything produced under their license.
+  organizationId?: string | null;
 }
 
 export interface SubmitRenderResult {
@@ -180,4 +199,103 @@ export async function pollRender(jobId: string): Promise<RenderJobStatus> {
   const res = await fetch(`/api/render?jobId=${encodeURIComponent(jobId)}`);
   if (!res.ok) throw new Error(`Render status request failed: ${res.status}`);
   return res.json();
+}
+
+/* ============================================================
+   /api/lookup-property — public-records auto-fill (RentCast)
+   ============================================================ */
+
+export interface PropertyLookupResult {
+  status: "ok" | "not_found" | "failed";
+  source?: string;
+  message?: string;
+  property?: {
+    address: string;
+    city: string;
+    beds: string;
+    baths: string;
+    squareFeet: string;
+    extras: {
+      yearBuilt: string;
+      lotSize: string;
+      propertyType: string;
+      lastSalePrice: string;
+      lastSaleDate: string;
+      latitude: number | null;
+      longitude: number | null;
+      county: string;
+      apn: string;
+    };
+  };
+}
+
+export async function lookupProperty(address: string): Promise<PropertyLookupResult> {
+  const params = new URLSearchParams({ address });
+  const res = await fetch(`/api/lookup-property?${params}`);
+  // 503 = unconfigured (no RentCast key on server); surface a usable shape
+  // so the UI can show a graceful "not connected yet" instead of crashing.
+  if (res.status === 503) {
+    const payload = await res.json().catch(() => ({}));
+    return { status: "failed", message: payload.error || "Property lookup not configured." };
+  }
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Property lookup failed (${res.status}).`);
+  }
+  return res.json();
+}
+
+/* ============================================================
+   /api/organization — brokerage admin surface
+   ============================================================ */
+
+export async function fetchOrganization(): Promise<Organization | null> {
+  const headers = await authHeaders();
+  const res = await fetch("/api/organization", { headers });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`Organization fetch failed: ${res.status}`);
+  const payload = await res.json();
+  return payload.organization || null;
+}
+
+export async function createOrganization(args: {
+  name: string;
+  state?: string;
+  licenseNumber?: string;
+}): Promise<Organization> {
+  const headers = await authHeaders();
+  const res = await fetch("/api/organization", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(args)
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error || `Could not create organization (${res.status}).`);
+  if (!payload.organization) throw new Error("Organization not returned by API.");
+  return payload.organization;
+}
+
+export async function fetchOrgRoster(): Promise<OrgRosterMember[]> {
+  const headers = await authHeaders();
+  const res = await fetch("/api/organization?roster=1", { headers });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Roster fetch failed (${res.status}).`);
+  }
+  const payload = await res.json();
+  return payload.roster || [];
+}
+
+export async function fetchOrgAuditLog(args: { limit?: number; offset?: number } = {}): Promise<OrgAuditLogEntry[]> {
+  const headers = await authHeaders();
+  const params = new URLSearchParams({ audit: "1" });
+  if (args.limit) params.set("limit", String(args.limit));
+  if (args.offset) params.set("offset", String(args.offset));
+  const res = await fetch(`/api/organization?${params}`, { headers });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.error || `Audit log fetch failed (${res.status}).`);
+  }
+  const payload = await res.json();
+  return payload.auditLog || [];
 }
