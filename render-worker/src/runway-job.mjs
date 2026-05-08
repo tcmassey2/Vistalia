@@ -93,49 +93,80 @@ export async function renderRunwayJob(body, options = {}) {
   await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath);
 
   // Voice narration — synthesize per-scene narration via ElevenLabs and mix
-  // it into the master with music ducking. Skipped silently when no
-  // narration lines are present or ELEVENLABS_API_KEY isn't set.
+  // it into the master with music ducking. Wrapped in fail-soft try/catch
+  // with a 2-minute time budget: if ElevenLabs is slow / errored / the
+  // ffmpeg mix gets stuck, we fall back to the silent master and ship the
+  // render with music-only audio. The render completing trumps the
+  // narration. Bypassable entirely via manifest.skipNarration: true.
   options.onProgress?.({ phase: "Adding voice narration", progress: 80 });
-  const narration = await applyVoiceNarration({
-    masterMp4: finalMp4,
-    scenes: manifest.scenes,
-    brandKit: manifest.brandKit || {},
-    tempDir,
-    jobId,
-    onProgress: (info) => {
-      options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
+  let narration = { narrationApplied: false, reason: "skipped" };
+  if (manifest?.skipNarration) {
+    console.info("[runway] skipNarration=true on manifest — skipping voice step.");
+  } else {
+    const NARRATION_TIME_BUDGET_MS = 120 * 1000; // 2 minutes hard cap
+    try {
+      narration = await Promise.race([
+        applyVoiceNarration({
+          masterMp4: finalMp4,
+          scenes: manifest.scenes,
+          brandKit: manifest.brandKit || {},
+          tempDir,
+          jobId,
+          onProgress: (info) => {
+            options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
+          }
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Narration step exceeded 2-minute time budget — shipping music-only audio.")), NARRATION_TIME_BUDGET_MS)
+        )
+      ]);
+    } catch (err) {
+      console.warn(`[runway] narration step failed (${err.message}). Continuing with music-only audio.`);
+      narration = { narrationApplied: false, reason: err.message || "narration_failed" };
     }
-  });
+  }
   // If narration was applied, the mixed file replaces our master going
-  // forward. The original silent master gets cleaned up at the end.
+  // forward. Otherwise the original (silent or music-only) master is used.
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
 
   options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
-  // 4K upscale when the manifest requests it (Cinematic AI 4K tier sets
-  // exportFormat or runwayConfig.is4K). For other tiers we stay at 1080p
-  // which renders faster and keeps file sizes manageable.
   const wants4K = Boolean(
     manifest?.runwayConfig?.is4K ||
     manifest?.runwayConfig?.upscale4K ||
     manifest?.export4K ||
     String(manifest?.exportFormat || "").toLowerCase().includes("4k")
   );
-  const variants = await deriveAspectVariants({
-    masterMp4: masterForVariants,
-    tempDir,
-    jobId,
-    upscale4K: wants4K
-  });
+  let variants = {};
+  try {
+    variants = await deriveAspectVariants({
+      masterMp4: masterForVariants,
+      tempDir,
+      jobId,
+      upscale4K: wants4K
+    });
+  } catch (err) {
+    console.warn(`[runway] aspect variants failed entirely (${err.message}). Falling back to vertical-only.`);
+    variants = { vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } } };
+  }
+  if (!variants.vertical?.path) {
+    variants.vertical = { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } };
+  }
 
   options.onProgress?.({ phase: "Cutting social shorts", progress: 90 });
-  const shorts = await buildSocialShorts({
-    // Use the narrated master (if any) so social shorts also have voice.
-    masterMp4: masterForVariants,
-    scenes: manifest.scenes,
-    tempDir,
-    jobId,
-    count: 3
-  });
+  let shorts = [];
+  try {
+    shorts = await buildSocialShorts({
+      // Use the narrated master (if any) so social shorts also have voice.
+      masterMp4: masterForVariants,
+      scenes: manifest.scenes,
+      tempDir,
+      jobId,
+      count: 3
+    });
+  } catch (err) {
+    console.warn(`[runway] social shorts failed entirely (${err.message}). Continuing without shorts.`);
+    shorts = [];
+  }
 
   options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
   const upload = await uploadRunwayAssets({
@@ -416,17 +447,27 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
   // the photo clips so xfade can blend into it.
   const outroClip = await buildBrandOutroClip(brand, dimensions, tempDir);
 
-  // Step 3: stitch with xfade transitions instead of hard cuts. This
-  // single change is the biggest perceived-quality jump — agents stop
-  // saying "looks like a slideshow" and start saying "looks like a film."
-  // xfade requires a complex filter graph, so we build it programmatically.
+  // Step 3: stitch with xfade transitions, with a simple-concat fallback.
+  // xfade requires a long filter_complex graph that can fail at scale (24+
+  // inputs, certain GPU/codec combos). On failure we drop to plain concat —
+  // visually a slideshow rather than a film, but the render completes.
   const stitched = path.join(tempDir, "stitched.mp4");
-  await stitchWithCrossfades({
-    clips: normalizedClips,
-    outroClip,
-    output: stitched,
-    crossfadeDurationSec: 0.5
-  });
+  try {
+    await stitchWithCrossfades({
+      clips: normalizedClips,
+      outroClip,
+      output: stitched,
+      crossfadeDurationSec: 0.5
+    });
+  } catch (err) {
+    console.warn(`[runway] xfade stitch failed (${err.message}). Falling back to simple concat.`);
+    await stitchWithSimpleConcat({
+      clips: normalizedClips,
+      outroClip,
+      output: stitched,
+      tempDir
+    });
+  }
 
   // Step 4: optional audio mix from manifest.musicMood mapping. We honor a
   // RUNWAY_MUSIC_<MOOD>_URL env var pointing to a remote MP3. If no music
@@ -525,6 +566,31 @@ async function stitchWithCrossfades({ clips, outroClip, output, crossfadeDuratio
     "-r", "30",
     output
   ]);
+}
+
+// Reliability fallback for stitchWithCrossfades. Uses ffmpeg's concat
+// demuxer with -c copy — no re-encode, no filter_complex, no boundary
+// math. Visually less polished (hard cuts) but bulletproof.
+async function stitchWithSimpleConcat({ clips, outroClip, output, tempDir }) {
+  const allClips = outroClip
+    ? [...clips, { clipPath: outroClip }]
+    : clips;
+  if (allClips.length === 0) throw new Error("stitchWithSimpleConcat called with no clips.");
+  const concatList = path.join(tempDir, "concat-fallback.txt");
+  await fs.writeFile(
+    concatList,
+    allClips.map((c) => `file '${c.clipPath.replace(/'/g, "'\\''")}'`).join("\n")
+  );
+  await runFFmpeg([
+    "-y",
+    "-threads", "1",
+    "-f", "concat",
+    "-safe", "0",
+    "-i", concatList,
+    "-c", "copy",
+    output
+  ]);
+  await fs.unlink(concatList).catch(() => {});
 }
 
 /* =================================================================
@@ -758,59 +824,76 @@ export async function uploadDeliverables({ manifest, jobId, variants, shorts, th
     wide: "wide.mp4"
   };
 
-  // Upload each format variant (vertical / square / wide) sequentially so
-  // we don't pile RAM. Each MP4 is read off disk once and freed.
+  // Per-file upload helper with one retry — Supabase upload occasionally
+  // 502s on large files due to network blips; one retry resolves >95%
+  // of those without escalating to a job failure.
+  const uploadOneFile = async (storagePath, localPath, contentType, label) => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const buffer = await fs.readFile(localPath);
+        const result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
+          contentType,
+          upsert: true
+        });
+        if (result.error) throw new Error(result.error.message);
+        return supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;
+      } catch (err) {
+        if (attempt === 1) {
+          console.warn(`[upload] ${label} failed after retry: ${err.message}`);
+          return null;
+        }
+        console.warn(`[upload] ${label} attempt 1 failed (${err.message}), retrying...`);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+    return null;
+  };
+
+  // Upload format variants (vertical / square / wide) — per-variant isolation.
+  // If wide upload fails, vertical and square still ship. The vertical is
+  // the primary deliverable; if even that fails, the response will reflect it.
   const uploadedFormats = {};
   for (const [variantKey, info] of Object.entries(variants || {})) {
     if (!info?.path) continue;
     const filename = VARIANT_FILENAMES[variantKey] || `${variantKey}.mp4`;
     const storagePath = `${basePath}/${filename}`;
-    const buffer = await fs.readFile(info.path);
-    const result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
-      contentType: "video/mp4",
-      upsert: true
-    });
-    if (result.error) throw new Error(`Supabase upload failed (${variantKey}): ${result.error.message}`);
-    const mp4Url = supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;
-    uploadedFormats[variantKey] = {
-      mp4Url,
-      storagePath,
-      dimensions: info.dimensions || null
-    };
+    const mp4Url = await uploadOneFile(storagePath, info.path, "video/mp4", `${variantKey} variant`);
+    if (mp4Url) {
+      uploadedFormats[variantKey] = {
+        mp4Url,
+        storagePath,
+        dimensions: info.dimensions || null
+      };
+    }
   }
 
-  // Upload social shorts.
+  // Upload social shorts — per-short isolation. Worst case we ship 1 of 3
+  // rather than zero of three.
   const uploadedShorts = [];
   for (const short of shorts || []) {
     if (!short?.path) continue;
     const storagePath = `${basePath}/short-${short.clipNumber}.mp4`;
-    const buffer = await fs.readFile(short.path);
-    const result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
-      contentType: "video/mp4",
-      upsert: true
-    });
-    if (result.error) throw new Error(`Supabase upload failed (short ${short.clipNumber}): ${result.error.message}`);
-    uploadedShorts.push({
-      clipNumber: short.clipNumber,
-      mp4Url: supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl,
-      storagePath,
-      durationSec: short.durationSec,
-      sourceSceneOrder: short.sourceSceneOrder,
-      roomType: short.roomType
-    });
-    // Free the local file immediately.
+    const mp4Url = await uploadOneFile(storagePath, short.path, "video/mp4", `short ${short.clipNumber}`);
+    if (mp4Url) {
+      uploadedShorts.push({
+        clipNumber: short.clipNumber,
+        mp4Url,
+        storagePath,
+        durationSec: short.durationSec,
+        sourceSceneOrder: short.sourceSceneOrder,
+        roomType: short.roomType
+      });
+    }
+    // Free the local file regardless of upload outcome.
     await fs.unlink(short.path).catch(() => {});
   }
 
-  // Thumbnail.
+  // Thumbnail — non-fatal if it fails.
   const thumbnailStoragePath = `${basePath}/thumbnail.png`;
-  const thumbBuffer = await fs.readFile(thumbnailPath);
-  const thumbUpload = await supabase.storage.from(bucket).upload(thumbnailStoragePath, thumbBuffer, {
-    contentType: "image/png",
-    upsert: true
-  });
-  if (thumbUpload.error) throw new Error(`Supabase thumbnail upload failed: ${thumbUpload.error.message}`);
-  const thumbnailUrl = supabase.storage.from(bucket).getPublicUrl(thumbnailStoragePath).data.publicUrl;
+  const thumbnailUrl = await uploadOneFile(thumbnailStoragePath, thumbnailPath, "image/png", "thumbnail");
+  if (!thumbnailUrl) {
+    console.warn("[upload] thumbnail upload failed; agents will see a black poster image. Render still ships.");
+  }
 
   // Free the derived format files (the master is owned by the caller and may
   // still be needed for cleanup).

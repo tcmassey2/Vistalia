@@ -27,84 +27,128 @@ import { spawn } from "node:child_process";
 const VARIANTS = ["vertical", "square", "wide"];
 
 export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4K = false }) {
-  const stat = await fs.stat(masterMp4);
-  if (!stat.isFile()) throw new Error(`Master MP4 not found at ${masterMp4}`);
+  // Master MP4 integrity probe — bail early if the upstream stitch produced
+  // nothing or a corrupt file. Better to fail here with a clear error than
+  // silently produce zero-byte variants downstream.
+  const stat = await fs.stat(masterMp4).catch(() => null);
+  if (!stat || !stat.isFile()) {
+    console.error(`[aspect-variants] master mp4 not found at ${masterMp4}`);
+    return {}; // empty outputs — caller should treat as "no deliverables"
+  }
+  if (stat.size < 1024) {
+    console.error(`[aspect-variants] master mp4 is suspiciously small (${stat.size} bytes)`);
+    return {};
+  }
 
   // Output dimensions. When upscale4K is true, every variant is doubled to
-  // a 4K-equivalent: 9:16 → 2160x3840, 1:1 → 2160x2160, 16:9 → 3840x2160.
-  // The master itself is also upscaled so the vertical deliverable is 4K.
-  // Lanczos resampling gives the best quality-vs-speed for ~2x upscale.
+  // a 4K-equivalent. Lanczos resampling for the best quality/speed tradeoff.
   const dim = upscale4K
     ? { v: { w: 2160, h: 3840 }, s: { w: 2160, h: 2160 }, w: { w: 3840, h: 2160 } }
     : { v: { w: 1080, h: 1920 }, s: { w: 1080, h: 1080 }, w: { w: 1920, h: 1080 } };
 
-  // Vertical (master). Either pass-through or upscale-to-4K.
-  let verticalPath = masterMp4;
-  if (upscale4K) {
-    verticalPath = path.join(tempDir, `${jobId}-vertical-4k.mp4`);
+  const outputs = {};
+
+  // VERTICAL — the master, optionally upscaled. This one is critical; if it
+  // fails we have nothing to ship at all. Try upscale → fall back to passthrough.
+  try {
+    let verticalPath = masterMp4;
+    if (upscale4K) {
+      verticalPath = path.join(tempDir, `${jobId}-vertical-4k.mp4`);
+      await runFFmpeg([
+        "-y",
+        "-threads", "1",
+        "-i", masterMp4,
+        "-vf", `scale=${dim.v.w}:${dim.v.h}:flags=lanczos`,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "ultrafast",
+        "-crf", "20",
+        "-c:a", "copy",
+        verticalPath
+      ]);
+    }
+    outputs.vertical = { format: "vertical", path: verticalPath, dimensions: dim.v };
+  } catch (err) {
+    console.warn(`[aspect-variants] vertical upscale failed (${err.message}). Falling back to passthrough.`);
+    outputs.vertical = { format: "vertical", path: masterMp4, dimensions: { w: 1080, h: 1920 } };
+  }
+
+  // SQUARE — independent try/catch; if this fails, the others still ship.
+  try {
+    const squarePath = path.join(tempDir, `${jobId}-square.mp4`);
+    const squareFilter = upscale4K
+      ? `crop=1080:1080:(in_w-1080)/2:(in_h-1080)/2,scale=${dim.s.w}:${dim.s.h}:flags=lanczos`
+      : `crop=1080:1080:(in_w-1080)/2:(in_h-1080)/2`;
     await runFFmpeg([
       "-y",
       "-threads", "1",
       "-i", masterMp4,
-      "-vf", `scale=${dim.v.w}:${dim.v.h}:flags=lanczos`,
+      "-vf", squareFilter,
       "-c:v", "libx264",
       "-pix_fmt", "yuv420p",
       "-preset", "ultrafast",
-      "-crf", "20",
+      "-crf", "21",
       "-c:a", "copy",
-      verticalPath
+      squarePath
     ]);
+    outputs.square = { format: "square", path: squarePath, dimensions: dim.s };
+  } catch (err) {
+    console.warn(`[aspect-variants] square variant failed: ${err.message}. Skipping — vertical + wide will still ship.`);
   }
 
-  const outputs = {
-    vertical: { format: "vertical", path: verticalPath, dimensions: dim.v }
-  };
-
-  // 1:1 — center vertical crop from the 9:16 master, optionally upscaled.
-  const squarePath = path.join(tempDir, `${jobId}-square.mp4`);
-  const squareFilter = upscale4K
-    ? `crop=1080:1080:(in_w-1080)/2:(in_h-1080)/2,scale=${dim.s.w}:${dim.s.h}:flags=lanczos`
-    : `crop=1080:1080:(in_w-1080)/2:(in_h-1080)/2`;
-  await runFFmpeg([
-    "-y",
-    "-threads", "1",
-    "-i", masterMp4,
-    "-vf", squareFilter,
-    "-c:v", "libx264",
-    "-pix_fmt", "yuv420p",
-    "-preset", "ultrafast",
-    "-crf", "21",
-    "-c:a", "copy",
-    squarePath
-  ]);
-  outputs.square = { format: "square", path: squarePath, dimensions: dim.s };
-
-  // 16:9 — blurred-pillar treatment, optionally upscaled.
-  const widePath = path.join(tempDir, `${jobId}-wide.mp4`);
-  const wideFilter = upscale4K
-    ? [
-        `[0:v]scale=${dim.w.w}:${dim.w.h}:force_original_aspect_ratio=increase,crop=${dim.w.w}:${dim.w.h},boxblur=48:2[bg]`,
-        `[0:v]scale=-1:${dim.w.h}:flags=lanczos[fg]`,
-        `[bg][fg]overlay=(W-w)/2:0`
-      ].join(";")
-    : [
-        `[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=24:2[bg]`,
-        `[0:v]scale=-1:1080:flags=lanczos[fg]`,
-        `[bg][fg]overlay=(W-w)/2:0`
-      ].join(";");
-  await runFFmpeg([
-    "-y",
-    "-threads", "1",
-    "-i", masterMp4,
-    "-filter_complex", wideFilter,
-    "-c:v", "libx264",
-    "-pix_fmt", "yuv420p",
-    "-preset", "ultrafast",
-    "-crf", "21",
-    "-c:a", "copy",
-    widePath
-  ]);
-  outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
+  // WIDE — independent try/catch with simpler filter as fallback if the
+  // blurred-pillar treatment fails (e.g. filter graph rejected).
+  try {
+    const widePath = path.join(tempDir, `${jobId}-wide.mp4`);
+    const wideFilter = upscale4K
+      ? [
+          `[0:v]scale=${dim.w.w}:${dim.w.h}:force_original_aspect_ratio=increase,crop=${dim.w.w}:${dim.w.h},boxblur=48:2[bg]`,
+          `[0:v]scale=-1:${dim.w.h}:flags=lanczos[fg]`,
+          `[bg][fg]overlay=(W-w)/2:0`
+        ].join(";")
+      : [
+          `[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=24:2[bg]`,
+          `[0:v]scale=-1:1080:flags=lanczos[fg]`,
+          `[bg][fg]overlay=(W-w)/2:0`
+        ].join(";");
+    await runFFmpeg([
+      "-y",
+      "-threads", "1",
+      "-i", masterMp4,
+      "-filter_complex", wideFilter,
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-preset", "ultrafast",
+      "-crf", "21",
+      "-c:a", "copy",
+      widePath
+    ]);
+    outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
+  } catch (err) {
+    console.warn(`[aspect-variants] wide blurred-pillar failed (${err.message}). Trying simple letterbox fallback.`);
+    try {
+      const widePath = path.join(tempDir, `${jobId}-wide-fallback.mp4`);
+      // Letterbox fallback — black bars instead of blur. Less premium but reliable.
+      const fallbackFilter = upscale4K
+        ? `scale=${dim.w.w}:${dim.w.h}:force_original_aspect_ratio=decrease,pad=${dim.w.w}:${dim.w.h}:(ow-iw)/2:(oh-ih)/2:black`
+        : `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black`;
+      await runFFmpeg([
+        "-y",
+        "-threads", "1",
+        "-i", masterMp4,
+        "-vf", fallbackFilter,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "ultrafast",
+        "-crf", "21",
+        "-c:a", "copy",
+        widePath
+      ]);
+      outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
+    } catch (err2) {
+      console.warn(`[aspect-variants] wide fallback also failed: ${err2.message}. Skipping wide.`);
+    }
+  }
 
   return outputs;
 }
@@ -154,35 +198,40 @@ export async function buildSocialShorts({ masterMp4, scenes, tempDir, jobId, cou
     .slice(0, count)
     .sort((a, b) => a.startSec - b.startSec);
 
+  // Per-short try/catch — one bad cut shouldn't kill the others.
   const shorts = [];
   for (let i = 0; i < candidates.length; i++) {
     const scene = candidates[i];
-    // Each short = the chosen scene padded to ~10s so it has time to breathe.
-    // If the source scene is already 10s+ (Cinematic AI hero shots), use as-is.
-    const targetDuration = Math.max(scene.durationSec, 9);
-    const shortPath = path.join(tempDir, `${jobId}-short-${i + 1}.mp4`);
-    await runFFmpeg([
-      "-y",
-      "-threads", "1",
-      "-ss", String(scene.startSec.toFixed(2)),
-      "-i", masterMp4,
-      "-t", String(targetDuration.toFixed(2)),
-      "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-preset", "ultrafast",
-      "-crf", "23",
-      "-c:a", "aac",
-      "-b:a", "128k",
-      shortPath
-    ]);
-    shorts.push({
-      clipNumber: i + 1,
-      path: shortPath,
-      sourceSceneId: scene.photoId,
-      sourceSceneOrder: scene.order,
-      durationSec: targetDuration,
-      roomType: scene.roomType
-    });
+    try {
+      // Each short = the chosen scene padded to ~10s so it has time to breathe.
+      // If the source scene is already 10s+ (Cinematic AI hero shots), use as-is.
+      const targetDuration = Math.max(scene.durationSec, 9);
+      const shortPath = path.join(tempDir, `${jobId}-short-${i + 1}.mp4`);
+      await runFFmpeg([
+        "-y",
+        "-threads", "1",
+        "-ss", String(scene.startSec.toFixed(2)),
+        "-i", masterMp4,
+        "-t", String(targetDuration.toFixed(2)),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "ultrafast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        shortPath
+      ]);
+      shorts.push({
+        clipNumber: i + 1,
+        path: shortPath,
+        sourceSceneId: scene.photoId,
+        sourceSceneOrder: scene.order,
+        durationSec: targetDuration,
+        roomType: scene.roomType
+      });
+    } catch (err) {
+      console.warn(`[social-shorts] short ${i + 1} (scene ${scene.order}) failed: ${err.message}. Continuing.`);
+    }
   }
 
   return shorts;

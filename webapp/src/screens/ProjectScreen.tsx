@@ -115,11 +115,59 @@ export default function ProjectScreen() {
       <Section title="Render" subtitle="Pick your engine, hit Generate.">
         <div className="flex flex-col gap-5">
           <EngineToggle engine={renderEngine} onChange={setEngine} />
+          <NarrationToggle />
           <RenderControls />
           {renderJob && <RenderStatusPanel />}
         </div>
       </Section>
     </div>
+  );
+}
+
+function NarrationToggle() {
+  const enabled = useStore((s) => s.narrationEnabled);
+  const setEnabled = useStore((s) => s.setNarrationEnabled);
+  const branding = useStore((s) => s.branding);
+  const hasClonedVoice = Boolean(branding.voiceId);
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEnabled(!enabled)}
+      className={cn(
+        "card-press flex items-center gap-3 p-4 rounded-xl bg-surface border text-left transition-colors",
+        enabled ? "border-gold bg-surface-raised" : "border-edge hover:border-edge-strong"
+      )}
+    >
+      <div
+        className={cn(
+          "flex-shrink-0 w-10 h-6 rounded-full border transition-colors relative",
+          enabled ? "bg-gold border-gold" : "bg-surface-input border-edge-strong"
+        )}
+      >
+        <div
+          className={cn(
+            "absolute top-0.5 w-5 h-5 rounded-full bg-paper transition-all",
+            enabled ? "left-[18px]" : "left-0.5"
+          )}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold tracking-tightish flex items-center gap-2">
+          Narrate this video
+          {hasClonedVoice && enabled && (
+            <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold text-paper">YOUR VOICE</span>
+          )}
+        </div>
+        <div className="text-xs text-ink-muted mt-0.5">
+          {enabled
+            ? hasClonedVoice
+              ? `Will narrate in your cloned voice. Adds ~30s to render time.`
+              : `Will narrate using a stock professional voice. Clone your own in Branding for the upgrade.`
+            : `Skip narration — render finishes faster, ships with music only.`}
+        </div>
+      </div>
+    </button>
   );
 }
 
@@ -1455,6 +1503,7 @@ function RenderControls() {
   const organization = useStore((s) => s.organization);
   const selectedStyleId = useStore((s) => s.selectedStyleId);
   const renderEngine = useStore((s) => s.renderEngine);
+  const narrationEnabled = useStore((s) => s.narrationEnabled);
   const renderJob = useStore((s) => s.renderJob);
   const projectId = useStore((s) => s.projectId);
   const projectTitle = useStore((s) => s.projectTitle);
@@ -1554,7 +1603,8 @@ function RenderControls() {
         selectedStyle: styleLabel,
         runwayConfig: planResult.editPlan.runwayConfig,
         brandKit: branding,
-        organizationId: organization?.id || null
+        organizationId: organization?.id || null,
+        skipNarration: !narrationEnabled
       };
 
       // 3. Submit

@@ -160,6 +160,10 @@ export interface RenderManifest {
   // it to attribute the audit-log row to the brokerage so admins can
   // monitor everything produced under their license.
   organizationId?: string | null;
+  // When true, the worker skips ElevenLabs voice synthesis entirely and
+  // ships music-only audio. Useful when narration would slow renders down
+  // (e.g. live demo) or when ElevenLabs is having availability issues.
+  skipNarration?: boolean;
 }
 
 export interface SubmitRenderResult {

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
@@ -59,45 +60,93 @@ export async function renderEstateMotionJob({ manifest, requestedFormat = "verti
   });
 
   options.onProgress?.({ phase: "Finalizing MP4", progress: 78 });
-  await renderStill({
-    composition,
-    serveUrl: bundleLocation,
-    output: thumbnailPath,
-    frame: Math.min(45, Math.max(0, composition.durationInFrames - 1)),
-    inputProps,
-    timeoutInMilliseconds: 60000
-  });
-
-  options.onProgress?.({ phase: "Adding voice narration", progress: 80 });
-  const narration = await applyVoiceNarration({
-    masterMp4: mp4Path,
-    scenes: manifest.scenes,
-    brandKit: manifest.brandKit || {},
-    tempDir,
-    jobId,
-    onProgress: (info) => {
-      options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
+  // Thumbnail render via Remotion's renderStill, with ffmpeg-based frame
+  // extraction as fallback. The thumbnail is non-critical to the actual
+  // video — losing it just means agents see a black poster image, which
+  // is a degraded but acceptable outcome compared to a failed render.
+  try {
+    await renderStill({
+      composition,
+      serveUrl: bundleLocation,
+      output: thumbnailPath,
+      frame: Math.min(45, Math.max(0, composition.durationInFrames - 1)),
+      inputProps,
+      timeoutInMilliseconds: 60000
+    });
+  } catch (err) {
+    console.warn(`[remotion] renderStill failed (${err.message}). Falling back to ffmpeg frame extraction.`);
+    try {
+      await extractFrameWithFFmpeg(mp4Path, thumbnailPath, 1.5);
+    } catch (err2) {
+      console.warn(`[remotion] ffmpeg thumbnail extraction also failed: ${err2.message}. Render will ship without a poster.`);
     }
-  });
+  }
+
+  // Fail-soft voice narration with 2-minute time budget. If anything goes
+  // wrong (ElevenLabs slow / errored / ffmpeg mix stuck), the render still
+  // completes with music-only audio.
+  options.onProgress?.({ phase: "Adding voice narration", progress: 80 });
+  let narration = { narrationApplied: false, reason: "skipped" };
+  if (manifest?.skipNarration) {
+    console.info("[remotion] skipNarration=true on manifest — skipping voice step.");
+  } else {
+    const NARRATION_TIME_BUDGET_MS = 120 * 1000;
+    try {
+      narration = await Promise.race([
+        applyVoiceNarration({
+          masterMp4: mp4Path,
+          scenes: manifest.scenes,
+          brandKit: manifest.brandKit || {},
+          tempDir,
+          jobId,
+          onProgress: (info) => {
+            options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
+          }
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Narration step exceeded 2-minute time budget.")), NARRATION_TIME_BUDGET_MS)
+        )
+      ]);
+    } catch (err) {
+      console.warn(`[remotion] narration step failed (${err.message}). Continuing with music-only audio.`);
+      narration = { narrationApplied: false, reason: err.message || "narration_failed" };
+    }
+  }
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : mp4Path;
 
   options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
   const wants4K = Boolean(manifest?.export4K || String(manifest?.exportFormat || "").toLowerCase().includes("4k"));
-  const variants = await deriveAspectVariants({
-    masterMp4: masterForVariants,
-    tempDir,
-    jobId,
-    upscale4K: wants4K
-  });
+  let variants = {};
+  try {
+    variants = await deriveAspectVariants({
+      masterMp4: masterForVariants,
+      tempDir,
+      jobId,
+      upscale4K: wants4K
+    });
+  } catch (err) {
+    console.warn(`[remotion] aspect variants failed entirely (${err.message}). Falling back to vertical-only.`);
+    variants = { vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } } };
+  }
+  // Guarantee at least vertical exists — without it there's nothing to ship.
+  if (!variants.vertical?.path) {
+    variants.vertical = { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } };
+  }
 
   options.onProgress?.({ phase: "Cutting social shorts", progress: 90 });
-  const shorts = await buildSocialShorts({
-    masterMp4: masterForVariants,
-    scenes: manifest.scenes,
-    tempDir,
-    jobId,
-    count: 3
-  });
+  let shorts = [];
+  try {
+    shorts = await buildSocialShorts({
+      masterMp4: masterForVariants,
+      scenes: manifest.scenes,
+      tempDir,
+      jobId,
+      count: 3
+    });
+  } catch (err) {
+    console.warn(`[remotion] social shorts failed entirely (${err.message}). Continuing without shorts.`);
+    shorts = [];
+  }
 
   options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
   const upload = await uploadDeliverables({
@@ -187,4 +236,30 @@ function createJobId(manifest) {
 
 function slug(value) {
   return String(value || "render").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "render";
+}
+
+// Fallback thumbnail extraction — used when Remotion's renderStill fails.
+// Pulls a single frame from the rendered MP4 at the requested timestamp.
+function extractFrameWithFFmpeg(mp4Path, outputPath, timestampSec) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("ffmpeg", [
+      "-y",
+      "-threads", "1",
+      "-i", mp4Path,
+      "-ss", String(timestampSec),
+      "-vframes", "1",
+      "-q:v", "3",
+      outputPath
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 4096) stderr = stderr.slice(-4096);
+    });
+    proc.on("close", (code) => {
+      if (code === 0) return resolve();
+      reject(new Error(`ffmpeg thumbnail exit ${code}: ${stderr.slice(-300).replace(/\n/g, " | ")}`));
+    });
+    proc.on("error", (err) => reject(new Error(`ffmpeg spawn failed: ${err.message}`)));
+  });
 }

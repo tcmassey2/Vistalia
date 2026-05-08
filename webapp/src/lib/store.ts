@@ -53,6 +53,9 @@ interface AppState {
   branding: AgentBranding;
   selectedStyleId: StyleId;
   renderEngine: RenderEngine;
+  // Default OFF — narration adds 30-60s to render time and gates on
+  // ElevenLabs availability. Agents can opt in once they trust the basics.
+  narrationEnabled: boolean;
   editPlan: EditPlan | null;
   renderJob: RenderJobStatus | null;
 
@@ -81,6 +84,7 @@ interface AppState {
   updatePhoto: (id: string, patch: Partial<Photo>) => void;
   setStyle: (id: StyleId) => void;
   setEngine: (e: RenderEngine) => void;
+  setNarrationEnabled: (enabled: boolean) => void;
   setEditPlan: (plan: EditPlan | null) => void;
   setRenderJob: (job: RenderJobStatus | null) => void;
   setLoading: (msg: string) => void;
@@ -140,6 +144,7 @@ const emptyProject = () => ({
   branding: loadStoredBranding(),
   selectedStyleId: "cinematic-luxury" as StyleId,
   renderEngine: "remotion" as RenderEngine,
+  narrationEnabled: false,
   editPlan: null as EditPlan | null,
   renderJob: null as RenderJobStatus | null
 });
@@ -255,6 +260,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
   setStyle: (id) => set({ selectedStyleId: id, editPlan: null }),
   setEngine: (e) => set({ renderEngine: e, editPlan: null }),
+  setNarrationEnabled: (enabled) => set({ narrationEnabled: enabled, editPlan: null }),
   setEditPlan: (plan) => set({ editPlan: plan }),
   setRenderJob: (job) => set({ renderJob: job }),
   setLoading: (msg) => set({ loading: msg }),
