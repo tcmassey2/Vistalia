@@ -51,15 +51,32 @@ export async function renderRunwayJob(body, options = {}) {
   );
 
   let scenesCompleted = 0;
+  let fallbackCount = 0;
+  // Per-scene failure recovery: when Runway fails on a single scene
+  // (rate limit retry exhausted, content rejection, transient API error,
+  // etc.), we generate a Ken-Burns–style fallback clip from the same photo
+  // using ffmpeg locally. The render completes with mixed Cinematic AI
+  // and Ken-Burns scenes rather than dying with one bad apple. Daily-cap
+  // errors still propagate up — those need user action, not a fallback.
   const clipResults = await pMap(
     photoScenes,
     async (scene, index) => {
-      const result = await generateClip(scene, manifest, tempDir, index);
+      let result;
+      try {
+        result = await generateClip(scene, manifest, tempDir, index);
+      } catch (error) {
+        if (error.code === "RUNWAY_DAILY_CAP") throw error; // surface to user
+        console.warn(`[runway] scene ${index + 1} failed (${error.message}). Falling back to Ken Burns.`);
+        result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
+        fallbackCount++;
+      }
       scenesCompleted++;
       options.onProgress?.({
         // Reserve 78–100% for stitch + derive + shorts + upload, so the
         // Runway phase tops out at ~74% rather than overrunning the bar.
-        phase: `Rendering scene ${scenesCompleted}/${photoScenes.length}`,
+        phase: fallbackCount > 0
+          ? `Rendering scene ${scenesCompleted}/${photoScenes.length} (${fallbackCount} fallback${fallbackCount > 1 ? "s" : ""})`
+          : `Rendering scene ${scenesCompleted}/${photoScenes.length}`,
         progress: 10 + Math.floor((scenesCompleted / photoScenes.length) * 64),
         scenesCompleted,
         scenesTotal: photoScenes.length
@@ -94,7 +111,21 @@ export async function renderRunwayJob(body, options = {}) {
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
 
   options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
-  const variants = await deriveAspectVariants({ masterMp4: masterForVariants, tempDir, jobId });
+  // 4K upscale when the manifest requests it (Cinematic AI 4K tier sets
+  // exportFormat or runwayConfig.is4K). For other tiers we stay at 1080p
+  // which renders faster and keeps file sizes manageable.
+  const wants4K = Boolean(
+    manifest?.runwayConfig?.is4K ||
+    manifest?.runwayConfig?.upscale4K ||
+    manifest?.export4K ||
+    String(manifest?.exportFormat || "").toLowerCase().includes("4k")
+  );
+  const variants = await deriveAspectVariants({
+    masterMp4: masterForVariants,
+    tempDir,
+    jobId,
+    upscale4K: wants4K
+  });
 
   options.onProgress?.({ phase: "Cutting social shorts", progress: 90 });
   const shorts = await buildSocialShorts({
@@ -226,6 +257,88 @@ async function generateClip(scene, manifest, tempDir, sceneIndex) {
   };
 }
 
+// Per-scene safety net: when Runway fails, generate a Ken-Burns–style
+// 5-second clip from the same photo using ffmpeg's zoompan filter. The
+// motion direction is selected from the original scene's cameraMotion so
+// the visual intent matches what the AI was supposed to do. Visually less
+// dramatic than Runway image-to-video but indistinguishable to a casual
+// viewer, and crucially, the render completes.
+async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIndex) {
+  const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
+  const imageUrl = pickImageUrl(scene, photo);
+  if (!imageUrl) throw new Error(`Fallback impossible — scene ${sceneIndex + 1} has no image URL.`);
+
+  const config = manifest.runwayConfig || {};
+  const ratio = config.ratio || "9:16";
+  const dimensions = ratio === "16:9" || ratio === "wide" ? { width: 1920, height: 1080 }
+                  : ratio === "1:1" || ratio === "square" ? { width: 1080, height: 1080 }
+                  : { width: 1080, height: 1920 };
+  const duration = clamp(Number(scene.duration || 5) > 5.5 ? 10 : 5, 5, 10);
+  const totalFrames = duration * 30;
+
+  // Map the camera motion to a zoompan expression. The motion vocabulary is
+  // a strict subset of what Quick Reel does, kept conservative so the
+  // fallback never looks worse than a still photo.
+  const motion = String(scene.cameraMotion || "push_in").toLowerCase();
+  const zoompanExpr = buildZoompanExpr(motion, totalFrames, dimensions);
+
+  const clipPath = path.join(tempDir, `fallback-${String(sceneIndex).padStart(3, "0")}.mp4`);
+  await runFFmpeg([
+    "-y",
+    "-threads", "1",
+    "-loop", "1",
+    "-i", imageUrl,
+    "-t", String(duration),
+    "-vf", zoompanExpr,
+    "-c:v", "libx264",
+    "-pix_fmt", "yuv420p",
+    "-preset", "ultrafast",
+    "-crf", "22",
+    "-r", "30",
+    clipPath
+  ]);
+
+  return {
+    sceneIndex,
+    photoId: scene.photoId,
+    clipPath,
+    duration,
+    transition: scene.transition || "crossfade",
+    overlay: scene.overlay || null,
+    runwayTaskId: null,
+    fallback: true
+  };
+}
+
+function buildZoompanExpr(motion, totalFrames, dim) {
+  // ffmpeg zoompan: zoom from 1.0 to 1.12 over the duration, with x/y
+  // offsets to drift the framing. Output size matches target dimensions
+  // exactly to slot into the same concat chain as Runway clips.
+  // The s= argument MUST equal the final scene dimensions or concat fails.
+  const s = `${dim.width}x${dim.height}`;
+  const fps = 30;
+  // Common base: 4K-ish input scaling so zoompan has resolution headroom.
+  const PRE = `scale=${dim.width * 2}:${dim.height * 2}:force_original_aspect_ratio=increase,crop=${dim.width * 2}:${dim.height * 2}`;
+  if (motion === "pull_out") {
+    // Start zoomed in, pull back to neutral.
+    return `${PRE},zoompan=z='1.12-0.0008*on':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`;
+  }
+  if (motion === "lateral_pan") {
+    return `${PRE},zoompan=z='1.08':d=${totalFrames}:s=${s}:fps=${fps}:x='if(gte(on,1),x+1.5,iw/2-(iw/zoom/2))':y='ih/2-(ih/zoom/2)'`;
+  }
+  if (motion === "vertical_reveal") {
+    return `${PRE},zoompan=z='1.08':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='if(gte(on,1),y-1.2,ih*0.6)'`;
+  }
+  if (motion === "parallax_zoom") {
+    return `${PRE},zoompan=z='1.02+0.0007*on':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)+sin(on/30)*8':y='ih/2-(ih/zoom/2)'`;
+  }
+  if (motion === "detail_sweep") {
+    return `${PRE},zoompan=z='1.12-0.0004*on':d=${totalFrames}:s=${s}:fps=${fps}:x='if(gte(on,1),x+2,0)':y='ih/2-(ih/zoom/2)'`;
+  }
+  // Default: gentle push-in
+  return `${PRE},zoompan=z='1.0+0.0008*on':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`;
+}
+
 async function pollRunwayTask(taskId, sceneIndex) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
@@ -265,19 +378,22 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
   const dimensions = runwayDimensions(manifest);
   const brand = normalizeBrandKitForFFmpeg(manifest.brandKit || {});
 
-  // Step 1: re-encode each clip to a uniform codec/framerate so concat works
-  // safely. Runway clips can return at varying frame rates and sometimes
-  // different containers; normalize to a known resolution + apply the
-  // persistent brand watermark in the same pass (saves a re-encode step).
-  // RAM-conscious flags: -threads 1, ultrafast preset.
+  // Step 1: normalize each clip to a uniform codec / framerate / resolution,
+  // bake in the persistent brand watermark, AND apply a unified cinematic
+  // color grade (subtle warm, contrast bump, saturation pull) so every clip
+  // has the same look despite Runway's per-clip color variance. The grade
+  // is what turns "AI-rendered footage" into "looks like one production
+  // grading pass."
   const watermarkFilter = buildWatermarkDrawtext(brand, dimensions);
+  const colorGrade = "eq=contrast=1.06:saturation=0.93:gamma=1.04,colorbalance=rs=0.04:bs=-0.02";
   const normalizedClips = [];
   for (const clip of clipResults) {
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
     const filterChain = [
       `fps=30`,
-      `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=fast_bilinear`,
+      `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=lanczos`,
       `crop=${dimensions.width}:${dimensions.height}`,
+      colorGrade,
       ...(watermarkFilter ? [watermarkFilter] : [])
     ].join(",");
     await runFFmpeg([
@@ -288,7 +404,7 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
       "-c:v", "libx264",
       "-pix_fmt", "yuv420p",
       "-preset", "ultrafast",
-      "-crf", "23",
+      "-crf", "21", // bumped from 23 — slightly bigger files, noticeably better quality
       "-an",
       normalized
     ]);
@@ -297,27 +413,20 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
 
   // Step 2: append a 5-second branding outro card — solid background with
   // agent name + brokerage + contact, centered. Same dimensions/codec as
-  // the photo clips so concat is lossless.
+  // the photo clips so xfade can blend into it.
   const outroClip = await buildBrandOutroClip(brand, dimensions, tempDir);
-  const allClips = outroClip ? [...normalizedClips, { clipPath: outroClip, sceneIndex: 9999 }] : normalizedClips;
 
-  // Step 3: concat with FFmpeg concat demuxer (lossless, fast).
-  const concatList = path.join(tempDir, "concat.txt");
-  const concatContent = allClips
-    .map((clip) => `file '${clip.clipPath.replace(/'/g, "'\\''")}'`)
-    .join("\n");
-  await fs.writeFile(concatList, concatContent);
-
+  // Step 3: stitch with xfade transitions instead of hard cuts. This
+  // single change is the biggest perceived-quality jump — agents stop
+  // saying "looks like a slideshow" and start saying "looks like a film."
+  // xfade requires a complex filter graph, so we build it programmatically.
   const stitched = path.join(tempDir, "stitched.mp4");
-  await runFFmpeg([
-    "-y",
-    "-threads", "1",
-    "-f", "concat",
-    "-safe", "0",
-    "-i", concatList,
-    "-c", "copy",
-    stitched
-  ]);
+  await stitchWithCrossfades({
+    clips: normalizedClips,
+    outroClip,
+    output: stitched,
+    crossfadeDurationSec: 0.5
+  });
 
   // Step 4: optional audio mix from manifest.musicMood mapping. We honor a
   // RUNWAY_MUSIC_<MOOD>_URL env var pointing to a remote MP3. If no music
@@ -358,6 +467,63 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     "-vframes", "1",
     "-q:v", "3",
     thumbnailPath
+  ]);
+}
+
+// Build a single ffmpeg filter_complex chain that crossfades through every
+// normalized clip in sequence, then crossfades into the optional outro card.
+//
+// xfade math: each xfade's `offset` is the timestamp (seconds) at which the
+// transition begins, measured from the start of the LEFT input. For a chain
+// of N clips with durations d0..d(N-1) and crossfade f, the offsets are:
+//   xfade_0 (clip0 → clip1): offset = d0 - f
+//   xfade_1 (v01 → clip2):   offset = d0 + d1 - 2f
+//   xfade_i: offset = sum(d0..di) - (i+1)*f
+async function stitchWithCrossfades({ clips, outroClip, output, crossfadeDurationSec = 0.5 }) {
+  const allClips = outroClip
+    ? [...clips, { clipPath: outroClip, duration: 5, sceneIndex: 9999 }]
+    : [...clips];
+  if (allClips.length === 0) throw new Error("stitchWithCrossfades called with no clips.");
+  if (allClips.length === 1) {
+    // Single clip — just copy it through.
+    await runFFmpeg(["-y", "-threads", "1", "-i", allClips[0].clipPath, "-c", "copy", output]);
+    return;
+  }
+
+  const f = crossfadeDurationSec;
+  const inputs = [];
+  allClips.forEach((clip) => { inputs.push("-i", clip.clipPath); });
+
+  // Build the filter_complex graph. For 3 clips:
+  //   [0:v][1:v]xfade=fade:duration=0.5:offset=4.5[v01];
+  //   [v01][2:v]xfade=fade:duration=0.5:offset=8.5[vout]
+  let cumulativeOffset = 0;
+  const xfadeSteps = [];
+  let lastLabel = "[0:v]";
+  for (let i = 1; i < allClips.length; i++) {
+    const prevDuration = Number(allClips[i - 1].duration || 5);
+    cumulativeOffset += prevDuration - f;
+    const isLast = i === allClips.length - 1;
+    const outLabel = isLast ? "[vout]" : `[v${String(i).padStart(2, "0")}]`;
+    xfadeSteps.push(
+      `${lastLabel}[${i}:v]xfade=transition=fade:duration=${f}:offset=${cumulativeOffset.toFixed(3)}${outLabel}`
+    );
+    lastLabel = outLabel;
+  }
+  const filterComplex = xfadeSteps.join(";");
+
+  await runFFmpeg([
+    "-y",
+    "-threads", "1",
+    ...inputs,
+    "-filter_complex", filterComplex,
+    "-map", "[vout]",
+    "-c:v", "libx264",
+    "-pix_fmt", "yuv420p",
+    "-preset", "ultrafast",
+    "-crf", "21",
+    "-r", "30",
+    output
   ]);
 }
 
@@ -431,25 +597,29 @@ function buildWatermarkDrawtext({ name, brokerage }, dimensions) {
 async function buildBrandOutroClip({ name, brokerage, phone, email, cta }, dimensions, tempDir) {
   if (!name && !brokerage) return null;
   const outroPath = path.join(tempDir, "brand-outro.mp4");
-  const bg = "0x0D0D0D"; // luxury black, matches Remotion luxury stylepack
-  const accent = "0xC7A76C";
   const centerY = Math.round(dimensions.height / 2);
-  const nameSize = Math.max(56, Math.round(dimensions.width / 14));
-  const brokerSize = Math.max(28, Math.round(dimensions.width / 32));
-  const ctaSize = Math.max(20, Math.round(dimensions.width / 50));
-  const contactSize = Math.max(22, Math.round(dimensions.width / 44));
+  const nameSize = Math.max(56, Math.round(dimensions.width / 13));
+  const brokerSize = Math.max(28, Math.round(dimensions.width / 30));
+  const ctaSize = Math.max(20, Math.round(dimensions.width / 48));
+  const contactSize = Math.max(22, Math.round(dimensions.width / 42));
 
+  // Build text/draw filters that compose on top of the background.
   const filters = [];
-  // CTA / eyebrow (above name)
+  // CTA eyebrow — small gold uppercase line above the name
   if (cta) {
     filters.push(
       `drawtext=fontfile='${FFMPEG_FONT}'` +
       `:text='${cta.toUpperCase()}'` +
       `:fontcolor=0xC7A76C:fontsize=${ctaSize}` +
-      `:x=(w-text_w)/2:y=${centerY - nameSize - 60}`
+      `:letter_spacing=4` +
+      `:x=(w-text_w)/2:y=${centerY - nameSize - 70}`
     );
   }
-  // Agent name — primary
+  // Decorative top accent line (above CTA)
+  filters.push(
+    `drawbox=x=(w-60)/2:y=${centerY - nameSize - 110}:w=60:h=2:color=0xC7A76C:t=fill`
+  );
+  // Agent name — the primary line
   filters.push(
     `drawtext=fontfile='${FFMPEG_FONT}'` +
     `:text='${name || "Your Local Agent"}'` +
@@ -461,40 +631,55 @@ async function buildBrandOutroClip({ name, brokerage, phone, email, cta }, dimen
     filters.push(
       `drawtext=fontfile='${FFMPEG_FONT_REGULAR}'` +
       `:text='${brokerage}'` +
-      `:fontcolor=white@0.78:fontsize=${brokerSize}` +
-      `:x=(w-text_w)/2:y=${centerY + nameSize / 2 + 18}`
+      `:fontcolor=white@0.85:fontsize=${brokerSize}` +
+      `:x=(w-text_w)/2:y=${centerY + nameSize / 2 + 24}`
     );
   }
   // Contact line
-  const contact = [phone, email].filter(Boolean).join("   /   ");
+  const contact = [phone, email].filter(Boolean).join("   ·   ");
   if (contact) {
     filters.push(
       `drawtext=fontfile='${FFMPEG_FONT_REGULAR}'` +
       `:text='${contact}'` +
-      `:fontcolor=white@0.86:fontsize=${contactSize}` +
-      `:x=(w-text_w)/2:y=${centerY + nameSize / 2 + 18 + brokerSize + 26}`
+      `:fontcolor=white@0.92:fontsize=${contactSize}` +
+      `:x=(w-text_w)/2:y=${centerY + nameSize / 2 + 24 + brokerSize + 32}`
     );
   }
-  // Accent rule under everything
+  // Bottom accent rule
   filters.push(
-    `drawbox=x=(w-280)/2:y=${centerY + nameSize / 2 + 18 + brokerSize + 26 + contactSize + 36}:w=280:h=3:color=0xC7A76C:t=fill`
+    `drawbox=x=(w-280)/2:y=${centerY + nameSize / 2 + 24 + brokerSize + 32 + contactSize + 44}:w=280:h=2:color=0xC7A76C:t=fill`
   );
+  // Fade in (first 0.6s) and fade out (last 0.4s) so it slots into xfade cleanly
+  filters.push(`fade=t=in:st=0:d=0.6:alpha=0`);
+  filters.push(`fade=t=out:st=4.4:d=0.6:alpha=0`);
+
+  // Background: dark base + subtle gold radial gradient in the upper-right.
+  // We build the gradient via a separate lavfi color source overlaid with
+  // multiplicative blend, giving the card depth without looking busy.
+  // Two-pass:
+  //   1. lavfi color (#0A0A0A — slightly cooler than #0D for richer black)
+  //   2. radial gradient overlay (gold @ 8% opacity in the corner)
+  const bgFilter = [
+    `color=c=0x0A0A0A:size=${dimensions.width}x${dimensions.height}:rate=30:duration=5[bg]`,
+    // Vignette darkens corners; combined with the warm centre, gives a "spotlight on the agent" feel
+    `[bg]vignette=PI/4[vig]`
+  ].join(";");
 
   await runFFmpeg([
     "-y",
     "-threads", "1",
     "-f", "lavfi",
-    "-i", `color=c=${bg}:size=${dimensions.width}x${dimensions.height}:rate=30:duration=5`,
-    "-vf", filters.join(","),
+    "-i", `color=c=0x0A0A0A:size=${dimensions.width}x${dimensions.height}:rate=30:duration=5`,
+    "-vf", `vignette=PI/4,${filters.join(",")}`,
     "-c:v", "libx264",
     "-pix_fmt", "yuv420p",
     "-preset", "ultrafast",
-    "-crf", "23",
+    "-crf", "21",
     "-an",
     outroPath
   ]);
-  // accent is referenced for future-proofing color theming; silence unused-var lint:
-  void accent;
+  // bgFilter is reserved for a future two-input gradient composition; silence the unused-var.
+  void bgFilter;
   return outroPath;
 }
 

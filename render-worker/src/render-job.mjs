@@ -82,7 +82,13 @@ export async function renderEstateMotionJob({ manifest, requestedFormat = "verti
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : mp4Path;
 
   options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
-  const variants = await deriveAspectVariants({ masterMp4: masterForVariants, tempDir, jobId });
+  const wants4K = Boolean(manifest?.export4K || String(manifest?.exportFormat || "").toLowerCase().includes("4k"));
+  const variants = await deriveAspectVariants({
+    masterMp4: masterForVariants,
+    tempDir,
+    jobId,
+    upscale4K: wants4K
+  });
 
   options.onProgress?.({ phase: "Cutting social shorts", progress: 90 });
   const shorts = await buildSocialShorts({

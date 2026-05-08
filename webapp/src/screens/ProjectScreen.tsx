@@ -1286,9 +1286,9 @@ function VoiceCloneCard() {
           Start recording
         </button>
 
-        {/* File upload fallback */}
-        <div className="mt-5 pt-4 border-t border-edge-soft">
-          <label className="text-xs text-ink-muted hover:text-gold transition-colors cursor-pointer inline-flex items-center gap-1.5">
+        {/* Secondary actions: file upload + connection test */}
+        <div className="mt-5 pt-4 border-t border-edge-soft flex items-center justify-center gap-4 flex-wrap">
+          <label className="text-xs text-ink-muted hover:text-gold transition-colors cursor-pointer">
             <input
               ref={fileInputRef}
               type="file"
@@ -1296,11 +1296,58 @@ function VoiceCloneCard() {
               className="hidden"
               onChange={(e) => handleFileUpload(e.target.files)}
             />
-            Or upload an existing audio file
+            Or upload an audio file
           </label>
+          <span className="text-ink-dim">·</span>
+          <VoiceDiagnosticButton />
         </div>
       </div>
     </div>
+  );
+}
+
+// Hits /api/clone-voice?diagnose=1 and shows whether the ElevenLabs key
+// works, what tier the account is on, and whether voice cloning is
+// available — without burning a real upload. Critical for debugging
+// "audio upload broken" issues without needing Vercel function logs.
+function VoiceDiagnosticButton() {
+  const [running, setRunning] = useState(false);
+  const setError = useStore((s) => s.setError);
+  const setToast = useStore((s) => s.setToast);
+
+  const run = async () => {
+    setRunning(true);
+    try {
+      const res = await fetch("/api/clone-voice?diagnose=1");
+      const payload = await res.json().catch(() => ({}));
+      if (payload.ok && payload.canCloneVoice) {
+        setToast(`✓ Connected to ElevenLabs (${payload.tierDisplay}). Voice cloning is available.`);
+      } else if (payload.ok && !payload.canCloneVoice) {
+        setError(`Connected to ElevenLabs (${payload.tierDisplay}) — but voice cloning is NOT included on your plan. Upgrade to Creator ($22/mo) or higher at elevenlabs.io.`);
+      } else {
+        setError(payload.message || "Could not reach ElevenLabs. Check ELEVENLABS_API_KEY in Vercel env vars.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Diagnostic failed";
+      setError(msg);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={running}
+      className="text-xs text-ink-muted hover:text-gold transition-colors disabled:opacity-50 inline-flex items-center gap-1"
+    >
+      {running ? (
+        <><span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5 }} /> Testing…</>
+      ) : (
+        <>Test connection</>
+      )}
+    </button>
   );
 }
 

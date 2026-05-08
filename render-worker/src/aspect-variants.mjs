@@ -26,44 +26,72 @@ import { spawn } from "node:child_process";
 
 const VARIANTS = ["vertical", "square", "wide"];
 
-export async function deriveAspectVariants({ masterMp4, tempDir, jobId }) {
+export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4K = false }) {
   const stat = await fs.stat(masterMp4);
   if (!stat.isFile()) throw new Error(`Master MP4 not found at ${masterMp4}`);
 
+  // Output dimensions. When upscale4K is true, every variant is doubled to
+  // a 4K-equivalent: 9:16 → 2160x3840, 1:1 → 2160x2160, 16:9 → 3840x2160.
+  // The master itself is also upscaled so the vertical deliverable is 4K.
+  // Lanczos resampling gives the best quality-vs-speed for ~2x upscale.
+  const dim = upscale4K
+    ? { v: { w: 2160, h: 3840 }, s: { w: 2160, h: 2160 }, w: { w: 3840, h: 2160 } }
+    : { v: { w: 1080, h: 1920 }, s: { w: 1080, h: 1080 }, w: { w: 1920, h: 1080 } };
+
+  // Vertical (master). Either pass-through or upscale-to-4K.
+  let verticalPath = masterMp4;
+  if (upscale4K) {
+    verticalPath = path.join(tempDir, `${jobId}-vertical-4k.mp4`);
+    await runFFmpeg([
+      "-y",
+      "-threads", "1",
+      "-i", masterMp4,
+      "-vf", `scale=${dim.v.w}:${dim.v.h}:flags=lanczos`,
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-preset", "ultrafast",
+      "-crf", "20",
+      "-c:a", "copy",
+      verticalPath
+    ]);
+  }
+
   const outputs = {
-    vertical: { format: "vertical", path: masterMp4, dimensions: { width: 1080, height: 1920 } }
+    vertical: { format: "vertical", path: verticalPath, dimensions: dim.v }
   };
 
-  // 1:1 — center vertical crop. 1080 wide stays as is, take the middle 1080
-  // tall slice from the 1920-tall master (offset y = (1920-1080)/2 = 420).
+  // 1:1 — center vertical crop from the 9:16 master, optionally upscaled.
   const squarePath = path.join(tempDir, `${jobId}-square.mp4`);
+  const squareFilter = upscale4K
+    ? `crop=1080:1080:(in_w-1080)/2:(in_h-1080)/2,scale=${dim.s.w}:${dim.s.h}:flags=lanczos`
+    : `crop=1080:1080:(in_w-1080)/2:(in_h-1080)/2`;
   await runFFmpeg([
     "-y",
     "-threads", "1",
     "-i", masterMp4,
-    "-vf", "crop=1080:1080:(in_w-1080)/2:(in_h-1080)/2",
+    "-vf", squareFilter,
     "-c:v", "libx264",
     "-pix_fmt", "yuv420p",
     "-preset", "ultrafast",
-    "-crf", "23",
+    "-crf", "21",
     "-c:a", "copy",
     squarePath
   ]);
-  outputs.square = { format: "square", path: squarePath, dimensions: { width: 1080, height: 1080 } };
+  outputs.square = { format: "square", path: squarePath, dimensions: dim.s };
 
-  // 16:9 — blurred-pillar. The 9:16 master is centered on a 1920x1080 canvas
-  // whose background is a heavily-scaled-and-blurred copy of the same frame.
-  // Filter graph:
-  //   [0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=24:2[bg]
-  //   [0:v]scale=-1:1080[fg]
-  //   [bg][fg]overlay=(W-w)/2:0
-  // Audio passes through unchanged.
+  // 16:9 — blurred-pillar treatment, optionally upscaled.
   const widePath = path.join(tempDir, `${jobId}-wide.mp4`);
-  const wideFilter = [
-    "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=24:2[bg]",
-    "[0:v]scale=-1:1080[fg]",
-    "[bg][fg]overlay=(W-w)/2:0"
-  ].join(";");
+  const wideFilter = upscale4K
+    ? [
+        `[0:v]scale=${dim.w.w}:${dim.w.h}:force_original_aspect_ratio=increase,crop=${dim.w.w}:${dim.w.h},boxblur=48:2[bg]`,
+        `[0:v]scale=-1:${dim.w.h}:flags=lanczos[fg]`,
+        `[bg][fg]overlay=(W-w)/2:0`
+      ].join(";")
+    : [
+        `[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=24:2[bg]`,
+        `[0:v]scale=-1:1080:flags=lanczos[fg]`,
+        `[bg][fg]overlay=(W-w)/2:0`
+      ].join(";");
   await runFFmpeg([
     "-y",
     "-threads", "1",
@@ -72,11 +100,11 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId }) {
     "-c:v", "libx264",
     "-pix_fmt", "yuv420p",
     "-preset", "ultrafast",
-    "-crf", "23",
+    "-crf", "21",
     "-c:a", "copy",
     widePath
   ]);
-  outputs.wide = { format: "wide", path: widePath, dimensions: { width: 1920, height: 1080 } };
+  outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
 
   return outputs;
 }
