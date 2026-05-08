@@ -1648,7 +1648,274 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
 }
 .style-card-badges .style-card-pace { color: var(--gold-light); }
 
-/* Hide style-card-art if it ever leaks back in via cached HTML */
-.style-card-art { display: none; }
+/* ====================================================================
+   HERO PREVIEW SLOT — replaces the old hero-video-frame.
+   The agent's first impression of EstateMotion's quality. Designed to
+   look intentional whether or not /showcase/preview.mp4 exists yet:
+   when the file is missing, the placeholder shows; when the video loads,
+   it auto-promotes itself by toggling [data-state="playing"] on the wrapper.
+   ==================================================================== */
+.hero-preview {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  aspect-ratio: 9 / 16;
+  margin: 0 auto;
+  border-radius: 24px;
+  overflow: hidden;
+  background: linear-gradient(160deg, #0a0a0a 0%, #15110a 70%, #221a0d 100%);
+  box-shadow:
+    0 30px 90px -20px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(199, 167, 108, 0.18) inset,
+    0 0 40px -10px rgba(199, 167, 108, 0.25);
+  isolation: isolate;
+}
 
+.hero-preview-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 600ms ease-out;
+  z-index: 1;
+}
+.hero-preview[data-state="playing"] .hero-preview-video {
+  opacity: 1;
+}
+.hero-preview[data-state="playing"] .hero-preview-placeholder {
+  opacity: 0;
+}
 
+/* Decorative placeholder layers */
+.hero-preview-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  transition: opacity 600ms ease-out;
+  overflow: hidden;
+}
+
+.hero-preview-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(199, 167, 108, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(199, 167, 108, 0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+
+.hero-preview-aurora {
+  position: absolute;
+  inset: -20%;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(199, 167, 108, 0.22), transparent 45%),
+    radial-gradient(circle at 70% 70%, rgba(180, 130, 70, 0.16), transparent 50%);
+  animation: hero-preview-aurora 14s ease-in-out infinite alternate;
+}
+@keyframes hero-preview-aurora {
+  from { transform: translate(0, 0) scale(1); opacity: 0.8; }
+  to   { transform: translate(4%, -3%) scale(1.08); opacity: 1; }
+}
+
+.hero-preview-frame-corner {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid rgba(199, 167, 108, 0.55);
+}
+.hero-preview-frame-corner-tl { top: 16px; left: 16px; border-right: none; border-bottom: none; }
+.hero-preview-frame-corner-tr { top: 16px; right: 16px; border-left: none; border-bottom: none; }
+.hero-preview-frame-corner-bl { bottom: 16px; left: 16px; border-right: none; border-top: none; }
+.hero-preview-frame-corner-br { bottom: 16px; right: 16px; border-left: none; border-top: none; }
+
+.hero-preview-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 0 32px;
+  gap: 14px;
+}
+
+.hero-preview-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--gold-light, #d8b88a);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(199, 167, 108, 0.08);
+  border: 1px solid rgba(199, 167, 108, 0.25);
+}
+
+.hero-preview-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold, #c7a76c);
+  box-shadow: 0 0 12px var(--gold, #c7a76c);
+  animation: hero-preview-pulse 2s ease-in-out infinite;
+}
+@keyframes hero-preview-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.85); }
+}
+
+.hero-preview-title {
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: white;
+}
+
+.hero-preview-meta {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.02em;
+}
+
+.hero-preview-overlay {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 3;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(13, 13, 13, 0.0), rgba(13, 13, 13, 0.85));
+  pointer-events: none;
+}
+.hero-preview-listing {
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  margin-bottom: 4px;
+}
+.hero-preview-runtime {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(199, 167, 108, 0.85);
+}
+
+@media (max-width: 720px) {
+  .hero-preview { max-width: 320px; }
+  .hero-preview-title { font-size: 28px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-preview-aurora,
+  .hero-preview-dot { animation: none; }
+}
+
+/* ====================================================================
+   STYLE CARD ART PANELS — replaces the old per-card video previews.
+   Each style gets its own gradient palette + motion line so the cards
+   feel distinct and intentional without leaning on stock footage.
+   ==================================================================== */
+.style-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.style-card-art {
+  display: block; /* override the legacy hide-rule below */
+  position: relative;
+  aspect-ratio: 9 / 16;
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.style-card-art-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse at 50% 60%, black 35%, transparent 80%);
+}
+
+.style-card-art-glow {
+  position: absolute;
+  inset: -25%;
+  filter: blur(40px);
+}
+
+.style-card-art-line {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 28%;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, currentColor 50%, transparent);
+  opacity: 0.5;
+}
+
+.style-card:hover .style-card-art-glow { transform: scale(1.08); transition: transform 600ms ease; }
+
+/* Per-style palettes */
+.style-card-luxury .style-card-art {
+  background: linear-gradient(160deg, #0d0d0d 0%, #1a1408 60%, #2b1f0d 100%);
+  color: #c7a76c;
+}
+.style-card-luxury .style-card-art-glow {
+  background: radial-gradient(circle at 30% 20%, rgba(199, 167, 108, 0.4), transparent 55%);
+}
+
+.style-card-social .style-card-art {
+  background: linear-gradient(160deg, #0a0a14 0%, #1a1024 60%, #2c1640 100%);
+  color: #c79bff;
+}
+.style-card-social .style-card-art-glow {
+  background: radial-gradient(circle at 70% 30%, rgba(199, 155, 255, 0.45), transparent 50%);
+}
+
+.style-card-mls .style-card-art {
+  background: linear-gradient(160deg, #f8f5ef 0%, #ece6d9 70%, #d8cfb9 100%);
+  color: #5a4f3a;
+}
+.style-card-mls .style-card-art-grid {
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+}
+.style-card-mls .style-card-art-glow {
+  background: radial-gradient(circle at 50% 80%, rgba(120, 100, 70, 0.18), transparent 55%);
+}
+
+.style-card-investor .style-card-art {
+  background: linear-gradient(160deg, #0a1614 0%, #0e2520 60%, #143028 100%);
+  color: #6cd4b3;
+}
+.style-card-investor .style-card-art-glow {
+  background: radial-gradient(circle at 30% 70%, rgba(108, 212, 179, 0.35), transparent 55%);
+}
+
+.style-card-desc {
+  font-size: 12px;
+  color: var(--ink-muted, rgba(255, 255, 255, 0.55));
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .style-card:hover .style-card-art-glow { transform: none; }
+}

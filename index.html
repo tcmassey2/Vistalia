@@ -89,26 +89,41 @@
           </div>
         </div>
 
-        <div class="hero-visual" aria-hidden="true">
-          <div class="hero-glow"></div>
-          <!-- HERO SHOWCASE VIDEO — wide cinematic 16:10
-               Source: Pexels video by Logan Voss
-               https://www.pexels.com/video/aerial-view-of-scottsdale-mountains-at-sunrise-30910241/
-               Download: open the page, click "Free Download", choose "HD 1920×1080" (or 4K),
-               save the file as hero-reel.mp4 in /showcase/. -->
-          <div class="hero-video-frame">
-            <video class="hero-video"
+        <div class="hero-visual">
+          <div class="hero-glow" aria-hidden="true"></div>
+          <!-- HERO PREVIEW SLOT
+               Reserved for the real EstateMotion demo render. To go live:
+               drop a vertical 9:16 1080×1920 MP4 at /showcase/preview.mp4
+               and the <video> below will autoplay it. Until then, the
+               placeholder is the design — intentional, not "missing asset." -->
+          <div class="hero-preview" data-state="placeholder">
+            <video class="hero-preview-video"
                    autoplay muted loop playsinline preload="metadata"
-                   poster="/showcase/hero-poster.jpg">
-              <source data-showcase="hero" src="/showcase/hero-reel.mp4" type="video/mp4">
+                   poster="/showcase/preview-poster.jpg"
+                   onloadeddata="this.closest('.hero-preview').setAttribute('data-state','playing')">
+              <source src="/showcase/preview.mp4" type="video/mp4">
             </video>
-            <div class="hero-video-fallback">
-              <div class="hero-video-fallback-tag">SHOWCASE</div>
-              <p>Drop your hero reel at <code>/showcase/hero-reel.mp4</code></p>
+            <div class="hero-preview-placeholder" aria-hidden="true">
+              <div class="hero-preview-grid"></div>
+              <div class="hero-preview-aurora"></div>
+              <div class="hero-preview-frame-corner hero-preview-frame-corner-tl"></div>
+              <div class="hero-preview-frame-corner hero-preview-frame-corner-tr"></div>
+              <div class="hero-preview-frame-corner hero-preview-frame-corner-bl"></div>
+              <div class="hero-preview-frame-corner hero-preview-frame-corner-br"></div>
+              <div class="hero-preview-content">
+                <div class="hero-preview-eyebrow">
+                  <span class="hero-preview-dot"></span>
+                  Preview reel
+                </div>
+                <div class="hero-preview-title">Coming this week</div>
+                <div class="hero-preview-meta">
+                  Fresh render &middot; 9:16 &middot; Cinematic AI &middot; 4K
+                </div>
+              </div>
             </div>
-            <div class="hero-video-overlay">
-              <div class="hero-video-listing">9828 E Pinnacle Peak &middot; Scottsdale</div>
-              <div class="hero-video-runtime">0:54 &middot; 9:16 &middot; AI-DIRECTED</div>
+            <div class="hero-preview-overlay" aria-hidden="true">
+              <div class="hero-preview-listing">Sample listing &middot; Scottsdale, AZ</div>
+              <div class="hero-preview-runtime">0:54 &middot; 9:16 &middot; AI-DIRECTED</div>
             </div>
           </div>
         </div>
@@ -206,87 +221,72 @@
         </p>
       </div>
 
-      <!-- STYLE GALLERY VIDEO PREVIEWS
-           Each card autoplays a muted, looping sample video. Drop MP4s in /showcase/.
-           Source assignments (download from Pexels, save with these exact filenames):
-
-             style-luxury.mp4    → Aerial Scottsdale neighborhoods (Logan Voss)
-                                   pexels.com/video/aerial-view-of-scottsdale-s-serene-mountain-neighborhoods-34983649
-             style-social.mp4    → Aerial building with pool (Advancer Drones)
-                                   pexels.com/video/an-aerial-view-of-a-building-with-a-pool-19698409
-             style-mls.mp4       → Cardone Capital (Advancer Drones)
-                                   pexels.com/video/cardone-capital-19698410
-             style-investor.mp4  → ASU football stadium (Advancer Drones) [placeholder; swap later]
-                                   pexels.com/video/arizona-state-football-stadium-20072762
-
-           For each: click "Free Download" → choose HD 1920×1080 → rename → drop in /showcase/. -->
+      <!-- Style cards are CSS-only renderings until we ship per-style demo
+           reels. Each card has its own gradient + motion language so the
+           cards feel distinct without leaning on stock footage. -->
       <div class="styles-grid">
-        <div class="style-card">
-          <div class="style-card-video-wrap">
-            <video class="style-card-video"
-                   autoplay muted loop playsinline preload="metadata">
-              <source data-showcase="style-luxury" src="/showcase/style-luxury.mp4" type="video/mp4">
-            </video>
-            <div class="style-card-fallback"></div>
-            <div class="style-card-badges">
-              <span class="style-card-mark">EM-L1</span>
-              <span class="style-card-pace">SLOW &middot; 54s</span>
-            </div>
+        <div class="style-card style-card-luxury">
+          <div class="style-card-art" aria-hidden="true">
+            <div class="style-card-art-grid"></div>
+            <div class="style-card-art-glow"></div>
+            <div class="style-card-art-line"></div>
+          </div>
+          <div class="style-card-badges">
+            <span class="style-card-mark">EM-L1</span>
+            <span class="style-card-pace">SLOW &middot; 54s</span>
           </div>
           <div class="style-card-info">
             <div class="style-card-name">Cinematic Luxury</div>
             <div class="style-card-best">Premium &middot; $1M+</div>
+            <div class="style-card-desc">Slow camera moves, editorial tone, premium feel.</div>
           </div>
         </div>
-        <div class="style-card">
-          <div class="style-card-video-wrap">
-            <video class="style-card-video"
-                   autoplay muted loop playsinline preload="metadata">
-              <source data-showcase="style-social" src="/showcase/style-social.mp4" type="video/mp4">
-            </video>
-            <div class="style-card-fallback"></div>
-            <div class="style-card-badges">
-              <span class="style-card-mark">EM-S2</span>
-              <span class="style-card-pace">FAST &middot; 22s</span>
-            </div>
+        <div class="style-card style-card-social">
+          <div class="style-card-art" aria-hidden="true">
+            <div class="style-card-art-grid"></div>
+            <div class="style-card-art-glow"></div>
+            <div class="style-card-art-line"></div>
+          </div>
+          <div class="style-card-badges">
+            <span class="style-card-mark">EM-S2</span>
+            <span class="style-card-pace">FAST &middot; 22s</span>
           </div>
           <div class="style-card-info">
             <div class="style-card-name">Modern Social</div>
             <div class="style-card-best">Reels &middot; TikTok</div>
+            <div class="style-card-desc">Punchy pacing built for scroll-stop on Reels.</div>
           </div>
         </div>
-        <div class="style-card">
-          <div class="style-card-video-wrap">
-            <video class="style-card-video"
-                   autoplay muted loop playsinline preload="metadata">
-              <source data-showcase="style-mls" src="/showcase/style-mls.mp4" type="video/mp4">
-            </video>
-            <div class="style-card-fallback"></div>
-            <div class="style-card-badges">
-              <span class="style-card-mark">EM-M3</span>
-              <span class="style-card-pace">CLEAN &middot; 45s</span>
-            </div>
+        <div class="style-card style-card-mls">
+          <div class="style-card-art" aria-hidden="true">
+            <div class="style-card-art-grid"></div>
+            <div class="style-card-art-glow"></div>
+            <div class="style-card-art-line"></div>
+          </div>
+          <div class="style-card-badges">
+            <span class="style-card-mark">EM-M3</span>
+            <span class="style-card-pace">CLEAN &middot; 45s</span>
           </div>
           <div class="style-card-info">
             <div class="style-card-name">MLS Clean</div>
             <div class="style-card-best">Standard listings</div>
+            <div class="style-card-desc">Neutral, factual, broker-compliant.</div>
           </div>
         </div>
-        <div class="style-card">
-          <div class="style-card-video-wrap">
-            <video class="style-card-video"
-                   autoplay muted loop playsinline preload="metadata">
-              <source data-showcase="style-investor" src="/showcase/style-investor.mp4" type="video/mp4">
-            </video>
-            <div class="style-card-fallback"></div>
-            <div class="style-card-badges">
-              <span class="style-card-mark">EM-I4</span>
-              <span class="style-card-pace">DIRECT &middot; 38s</span>
-            </div>
+        <div class="style-card style-card-investor">
+          <div class="style-card-art" aria-hidden="true">
+            <div class="style-card-art-grid"></div>
+            <div class="style-card-art-glow"></div>
+            <div class="style-card-art-line"></div>
+          </div>
+          <div class="style-card-badges">
+            <span class="style-card-mark">EM-I4</span>
+            <span class="style-card-pace">DIRECT &middot; 38s</span>
           </div>
           <div class="style-card-info">
             <div class="style-card-name">Investor Tour</div>
             <div class="style-card-best">Wholesale &middot; deals</div>
+            <div class="style-card-desc">Direct walkthroughs for deal-flow agents.</div>
           </div>
         </div>
       </div>

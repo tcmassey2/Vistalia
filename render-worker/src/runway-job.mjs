@@ -16,6 +16,7 @@ import { createClient } from "@supabase/supabase-js";
 import { deriveAspectVariants, buildSocialShorts } from "./aspect-variants.mjs";
 import { applyVoiceNarration } from "./voice-mixer.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
+import { runFFmpeg, timed } from "./ffmpeg-runner.mjs";
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -327,7 +328,7 @@ async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIndex) {
     "-crf", "22",
     "-r", "30",
     clipPath
-  ]);
+  ], { timeoutMs: 90000, label: `runway:fallback-scene-${sceneIndex + 1}` });
 
   return {
     sceneIndex,
@@ -435,10 +436,10 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
       "-c:v", "libx264",
       "-pix_fmt", "yuv420p",
       "-preset", "ultrafast",
-      "-crf", "21", // bumped from 23 — slightly bigger files, noticeably better quality
+      "-crf", "21",
       "-an",
       normalized
-    ]);
+    ], { timeoutMs: 90000, label: `runway:normalize-${clip.sceneIndex}` });
     normalizedClips.push({ ...clip, clipPath: normalized });
   }
 
@@ -486,7 +487,7 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
       "-map", "0:v:0",
       "-map", "1:a:0",
       outputPath
-    ]);
+    ], { timeoutMs: 120000, label: "runway:music-mix" });
   } else {
     await fs.copyFile(stitched, outputPath);
   }
@@ -508,7 +509,7 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     "-vframes", "1",
     "-q:v", "3",
     thumbnailPath
-  ]);
+  ], { timeoutMs: 30000, label: "runway:thumbnail" });
 }
 
 // Build a single ffmpeg filter_complex chain that crossfades through every
@@ -527,7 +528,10 @@ async function stitchWithCrossfades({ clips, outroClip, output, crossfadeDuratio
   if (allClips.length === 0) throw new Error("stitchWithCrossfades called with no clips.");
   if (allClips.length === 1) {
     // Single clip — just copy it through.
-    await runFFmpeg(["-y", "-threads", "1", "-i", allClips[0].clipPath, "-c", "copy", output]);
+    await runFFmpeg(
+      ["-y", "-threads", "1", "-i", allClips[0].clipPath, "-c", "copy", output],
+      { timeoutMs: 30000, label: "runway:single-clip-copy" }
+    );
     return;
   }
 
@@ -553,6 +557,8 @@ async function stitchWithCrossfades({ clips, outroClip, output, crossfadeDuratio
   }
   const filterComplex = xfadeSteps.join(";");
 
+  // 8-minute timeout — xfade re-encodes through 24+ inputs sequentially,
+  // can take 3-5 min on Render Standard. 8 min gives 60% headroom.
   await runFFmpeg([
     "-y",
     "-threads", "1",
@@ -565,7 +571,7 @@ async function stitchWithCrossfades({ clips, outroClip, output, crossfadeDuratio
     "-crf", "21",
     "-r", "30",
     output
-  ]);
+  ], { timeoutMs: 8 * 60 * 1000, label: `runway:xfade-${allClips.length}clips` });
 }
 
 // Reliability fallback for stitchWithCrossfades. Uses ffmpeg's concat
@@ -581,6 +587,7 @@ async function stitchWithSimpleConcat({ clips, outroClip, output, tempDir }) {
     concatList,
     allClips.map((c) => `file '${c.clipPath.replace(/'/g, "'\\''")}'`).join("\n")
   );
+  // Simple concat is just a demuxer pass — no re-encode, very fast.
   await runFFmpeg([
     "-y",
     "-threads", "1",
@@ -589,7 +596,7 @@ async function stitchWithSimpleConcat({ clips, outroClip, output, tempDir }) {
     "-i", concatList,
     "-c", "copy",
     output
-  ]);
+  ], { timeoutMs: 60000, label: "runway:simple-concat" });
   await fs.unlink(concatList).catch(() => {});
 }
 
@@ -743,34 +750,25 @@ async function buildBrandOutroClip({ name, brokerage, phone, email, cta }, dimen
     "-crf", "21",
     "-an",
     outroPath
-  ]);
+  ], { timeoutMs: 60000, label: "runway:outro-card" });
   // bgFilter is reserved for a future two-input gradient composition; silence the unused-var.
   void bgFilter;
   return outroPath;
 }
 
-async function runFFmpeg(args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-      // Truncate to last 4KB to avoid runaway memory on long renders
-      if (stderr.length > 4096) stderr = stderr.slice(-4096);
-    });
-    proc.on("close", (code) => {
-      if (code === 0) return resolve();
-      reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-600).replace(/\n/g, " | ")}`));
-    });
-    proc.on("error", (err) => reject(new Error(`ffmpeg spawn failed: ${err.message}`)));
-  });
-}
-
 async function downloadFile(url, destPath) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Download failed (${response.status}) for ${url}`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  await fs.writeFile(destPath, buffer);
+  // 60-second timeout — Runway clip downloads should be fast (~5MB), but
+  // a hung CDN connection without a timeout would lock the whole pipeline.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Download failed (${response.status}) for ${url}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(destPath, buffer);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* =================================================================

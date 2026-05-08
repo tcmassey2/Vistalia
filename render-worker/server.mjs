@@ -113,9 +113,22 @@ function sendJson(response, statusCode, payload) {
 async function runRenderJob(jobId, body) {
   const engine = String(body?.manifest?.engine || "remotion").toLowerCase();
   updateJob(jobId, { status: "rendering", phase: "Rendering scenes", progress: 12, engine });
+  // Overall hard cap — if anything below this races slower than 18 minutes,
+  // we kill the job rather than let it hang forever. 18 minutes covers the
+  // legitimate worst case (24-clip Cinematic AI render with 4K upscale +
+  // narration on Render Standard) with ~50% headroom.
+  const OVERALL_TIMEOUT_MS = 18 * 60 * 1000;
+  const startedAt = Date.now();
   try {
-    const result = await dispatchRender(body, { jobId, onProgress: (patch) => updateJob(jobId, patch) });
+    const result = await Promise.race([
+      dispatchRender(body, { jobId, onProgress: (patch) => updateJob(jobId, patch) }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Render exceeded ${OVERALL_TIMEOUT_MS / 1000 / 60}-minute hard timeout.`)), OVERALL_TIMEOUT_MS)
+      )
+    ]);
     const publishedResult = publishLocalAssetUrls(result);
+    const elapsedMin = ((Date.now() - startedAt) / 1000 / 60).toFixed(1);
+    console.info(`[server] job ${jobId} completed in ${elapsedMin} min`);
     updateJob(jobId, {
       ...publishedResult,
       status: "completed",
@@ -124,6 +137,8 @@ async function runRenderJob(jobId, body) {
       jobId
     });
   } catch (error) {
+    const elapsedMin = ((Date.now() - startedAt) / 1000 / 60).toFixed(1);
+    console.error(`[server] job ${jobId} failed after ${elapsedMin} min: ${error.message}`);
     updateJob(jobId, {
       status: "failed",
       phase: "Render failed",

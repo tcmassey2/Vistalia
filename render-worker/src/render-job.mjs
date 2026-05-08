@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
@@ -239,27 +238,19 @@ function slug(value) {
 }
 
 // Fallback thumbnail extraction — used when Remotion's renderStill fails.
-// Pulls a single frame from the rendered MP4 at the requested timestamp.
-function extractFrameWithFFmpeg(mp4Path, outputPath, timestampSec) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("ffmpeg", [
-      "-y",
-      "-threads", "1",
-      "-i", mp4Path,
-      "-ss", String(timestampSec),
-      "-vframes", "1",
-      "-q:v", "3",
-      outputPath
-    ], { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-      if (stderr.length > 4096) stderr = stderr.slice(-4096);
-    });
-    proc.on("close", (code) => {
-      if (code === 0) return resolve();
-      reject(new Error(`ffmpeg thumbnail exit ${code}: ${stderr.slice(-300).replace(/\n/g, " | ")}`));
-    });
-    proc.on("error", (err) => reject(new Error(`ffmpeg spawn failed: ${err.message}`)));
-  });
+// Delegates to the shared timeout-aware ffmpeg runner so a hung thumbnail
+// extract can't lock up the render.
+async function extractFrameWithFFmpeg(mp4Path, outputPath, timestampSec) {
+  // Lazy import — render-job.mjs already imports this module at the top
+  // (or we can import directly).
+  const { runFFmpeg } = await import("./ffmpeg-runner.mjs");
+  return runFFmpeg([
+    "-y",
+    "-threads", "1",
+    "-i", mp4Path,
+    "-ss", String(timestampSec),
+    "-vframes", "1",
+    "-q:v", "3",
+    outputPath
+  ], { timeoutMs: 30000, label: "remotion:thumbnail-fallback" });
 }

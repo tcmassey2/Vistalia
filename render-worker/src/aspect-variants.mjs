@@ -22,7 +22,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { runFFmpeg } from "./ffmpeg-runner.mjs";
 
 const VARIANTS = ["vertical", "square", "wide"];
 
@@ -65,7 +65,7 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
         "-crf", "20",
         "-c:a", "copy",
         verticalPath
-      ]);
+      ], { timeoutMs: 4 * 60 * 1000, label: "variants:vertical-4k" });
     }
     outputs.vertical = { format: "vertical", path: verticalPath, dimensions: dim.v };
   } catch (err) {
@@ -90,7 +90,7 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
       "-crf", "21",
       "-c:a", "copy",
       squarePath
-    ]);
+    ], { timeoutMs: 3 * 60 * 1000, label: "variants:square" });
     outputs.square = { format: "square", path: squarePath, dimensions: dim.s };
   } catch (err) {
     console.warn(`[aspect-variants] square variant failed: ${err.message}. Skipping — vertical + wide will still ship.`);
@@ -122,7 +122,7 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
       "-crf", "21",
       "-c:a", "copy",
       widePath
-    ]);
+    ], { timeoutMs: 4 * 60 * 1000, label: "variants:wide-blurred" });
     outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
   } catch (err) {
     console.warn(`[aspect-variants] wide blurred-pillar failed (${err.message}). Trying simple letterbox fallback.`);
@@ -143,7 +143,7 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
         "-crf", "21",
         "-c:a", "copy",
         widePath
-      ]);
+      ], { timeoutMs: 3 * 60 * 1000, label: "variants:wide-letterbox" });
       outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
     } catch (err2) {
       console.warn(`[aspect-variants] wide fallback also failed: ${err2.message}. Skipping wide.`);
@@ -220,7 +220,7 @@ export async function buildSocialShorts({ masterMp4, scenes, tempDir, jobId, cou
         "-c:a", "aac",
         "-b:a", "128k",
         shortPath
-      ]);
+      ], { timeoutMs: 60000, label: `social-short-${i + 1}` });
       shorts.push({
         clipNumber: i + 1,
         path: shortPath,
@@ -237,20 +237,6 @@ export async function buildSocialShorts({ masterMp4, scenes, tempDir, jobId, cou
   return shorts;
 }
 
-function runFFmpeg(args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-      if (stderr.length > 4096) stderr = stderr.slice(-4096);
-    });
-    proc.on("close", (code) => {
-      if (code === 0) return resolve();
-      reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-600).replace(/\n/g, " | ")}`));
-    });
-    proc.on("error", (err) => reject(new Error(`ffmpeg spawn failed: ${err.message}`)));
-  });
-}
+// runFFmpeg is imported from ./ffmpeg-runner.mjs with proper timeout support.
 
 export const ASPECT_FORMATS = VARIANTS;

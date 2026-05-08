@@ -1,57 +1,37 @@
 # Showcase video assets
 
-The landing page expects MP4 files at the paths below. Until they're present,
-the page falls back to gold-gradient placeholders that look intentional rather
-than broken.
+The landing page is currently designed around a single hero preview slot,
+not a library of stock drone footage. To activate the hero video on the
+homepage:
 
-## Your current source assignments (Pexels, all CC0)
+## Drop in your demo render
 
-| Filename | Source | Pexels page | Slot |
-| --- | --- | --- | --- |
-| `hero-reel.mp4` | Logan Voss | [Aerial view of Scottsdale mountains at sunrise (30910241)](https://www.pexels.com/video/aerial-view-of-scottsdale-mountains-at-sunrise-30910241/) | Hero showcase (16:10 cinematic) |
-| `style-luxury.mp4` | Logan Voss | [Aerial Scottsdale serene mountain neighborhoods (34983649)](https://www.pexels.com/video/aerial-view-of-scottsdale-s-serene-mountain-neighborhoods-34983649/) | Style card: Cinematic Luxury |
-| `style-social.mp4` | Advancer Drones | [Aerial view of a building with a pool (19698409)](https://www.pexels.com/video/an-aerial-view-of-a-building-with-a-pool-19698409/) | Style card: Modern Social |
-| `style-mls.mp4` | Advancer Drones | [Cardone Capital (19698410)](https://www.pexels.com/video/cardone-capital-19698410/) | Style card: MLS Clean |
-| `style-investor.mp4` | Advancer Drones | [Arizona State football stadium (20072762)](https://www.pexels.com/video/arizona-state-football-stadium-20072762/) | Style card: Investor Tour *(placeholder — swap for an actual investment-property aerial when you find one)* |
-| `hero-poster.jpg` | (any) | First frame of `hero-reel.mp4` | Poster shown while hero video loads |
+1. Render a real listing through EstateMotion that you're proud of.
+2. Save the vertical 9:16 (1080×1920) MP4 here as **`preview.mp4`**.
+3. Optionally generate a poster image:
 
-## Download steps (per file)
+   ```bash
+   ffmpeg -i preview.mp4 -ss 00:00:01 -vframes 1 -q:v 3 preview-poster.jpg
+   ```
 
-1. Open the Pexels page from the table above
-2. Click **Free Download** (top right of the video player)
-3. Choose **HD 1920×1080** for fast load. (4K available; bigger files = slower page.)
-4. Save the file
-5. Rename to the exact filename in the table (e.g. `hero-reel.mp4`)
-6. Move it to `/Users/troymassey/Documents/EstateMotion/showcase/`
+4. `git add showcase/preview.mp4 showcase/preview-poster.jpg && git push`.
 
-When all six are in place:
+The homepage's hero slot has `<video src="/showcase/preview.mp4">` waiting
+for it. The placeholder content auto-hides as soon as the video element
+fires `loadeddata`. No code change needed — drop the file, push, done.
 
-```bash
-cd ~/Documents/EstateMotion
-git add showcase/
-git commit -m "Add Pexels showcase video assets"
-git push
-```
+## Why no stock footage anymore
 
-## Generating the hero poster (optional but recommended)
+Earlier versions of the landing page leaned on Pexels drone footage as
+filler so the page didn't feel empty. That's been removed. The current
+design treats the preview slot as a deliberate, intentional placeholder
+("Coming this week") so the homepage looks confident even before there's
+a real render to show — and the moment one exists, it slots straight in.
 
-A poster image shows while the hero video downloads. To generate one from the
-hero reel:
+## Style cards
 
-```bash
-brew install ffmpeg            # one-time, if not installed
-cd ~/Documents/EstateMotion/showcase
-ffmpeg -i hero-reel.mp4 -ss 00:00:01 -vframes 1 -q:v 3 hero-poster.jpg
-```
-
-That extracts a frame from 1 second in. Skip if you don't want to bother — the
-fallback gradient still looks polished.
-
-## Future swaps
-
-The two slot assignments most likely to need replacement:
-- **`style-investor.mp4`** — ASU stadium isn't a listing. Swap when you find an actual
-  investment-property aerial (multifamily, commercial, etc.).
-- **`hero-reel.mp4`** — once you have a real EstateMotion render that looks
-  great, replace this with that. The aerial Scottsdale shot is a placeholder
-  for "what the product helps agents make," not a render of the product itself.
+The four style cards (Cinematic Luxury, Modern Social, MLS Clean, Investor
+Tour) used to autoplay per-style stock videos too. They now use CSS-only
+gradient panels — distinct color palettes per style, no asset dependencies.
+If we ever want per-style demo reels, the slot is in `index.html` —
+swap each `.style-card-art` block for a `<video>` element.

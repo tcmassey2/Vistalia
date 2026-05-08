@@ -22,6 +22,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { runFFmpeg } from "./ffmpeg-runner.mjs";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 const DEFAULT_MODEL = process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2_5";
@@ -120,7 +121,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
     "-t", String(totalDurationSec),
     narrationTrackPath
   ];
-  await runFFmpeg(narrationArgs);
+  await runFFmpeg(narrationArgs, { timeoutMs: 90000, label: "voice:adelay-mix" });
 
   // ============================================================
   // STEP 3 — final mix: master video + (ducked music if any) + narration
@@ -155,7 +156,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
       "-b:a", "192k",
       "-shortest",
       mixedMp4
-    ]);
+    ], { timeoutMs: 90000, label: "voice:final-mix-with-music" });
   } else {
     // No music in master — narration becomes the only audio.
     await runFFmpeg([
@@ -170,7 +171,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
       "-map", "1:a:0",
       "-shortest",
       mixedMp4
-    ]);
+    ], { timeoutMs: 60000, label: "voice:final-mix-narration-only" });
   }
 
   // Cleanup temp files (best-effort).
@@ -237,22 +238,6 @@ async function detectAudioStream(filePath) {
     proc.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
     proc.on("close", () => resolve(Boolean(stdout.trim())));
     proc.on("error", () => resolve(false));
-  });
-}
-
-function runFFmpeg(args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-      if (stderr.length > 4096) stderr = stderr.slice(-4096);
-    });
-    proc.on("close", (code) => {
-      if (code === 0) return resolve();
-      reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-600).replace(/\n/g, " | ")}`));
-    });
-    proc.on("error", (err) => reject(new Error(`ffmpeg spawn failed: ${err.message}`)));
   });
 }
 
