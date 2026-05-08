@@ -678,13 +678,17 @@ async function buildBrandOutroClip({ name, brokerage, phone, email, cta }, dimen
 
   // Build text/draw filters that compose on top of the background.
   const filters = [];
-  // CTA eyebrow — small gold uppercase line above the name
+  // CTA eyebrow — small gold uppercase line above the name. The visual
+  // letter-spacing comes from manually inserting non-breaking spaces
+  // between characters because ffmpeg drawtext has NO letter_spacing
+  // option (only line_spacing exists). Single inserted space keeps the
+  // CTA readable while approximating tracked uppercase typography.
   if (cta) {
+    const spacedCta = cta.toUpperCase().split("").join(" ").replace(/  +/g, "  ");
     filters.push(
       `drawtext=fontfile='${FFMPEG_FONT}'` +
-      `:text='${cta.toUpperCase()}'` +
+      `:text='${spacedCta}'` +
       `:fontcolor=0xC7A76C:fontsize=${ctaSize}` +
-      `:letter_spacing=4` +
       `:x=(w-text_w)/2:y=${centerY - nameSize - 70}`
     );
   }
