@@ -38,7 +38,7 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.05.07-v8-mls-compliant-outro",
+      version: "2026.05.07-v9-prompt-trim-4k-opt-in",
       bootedAt: BOOTED_AT,
       uptimeSec: Math.round(process.uptime()),
       activeJobs: jobs.size,

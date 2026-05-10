@@ -96,45 +96,56 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
     console.warn(`[aspect-variants] square variant failed: ${err.message}. Skipping — vertical + wide will still ship.`);
   }
 
-  // WIDE — independent try/catch with simpler filter as fallback if the
-  // blurred-pillar treatment fails (e.g. filter graph rejected).
-  try {
-    const widePath = path.join(tempDir, `${jobId}-wide.mp4`);
-    const wideFilter = upscale4K
-      ? [
-          `[0:v]scale=${dim.w.w}:${dim.w.h}:force_original_aspect_ratio=increase,crop=${dim.w.w}:${dim.w.h},boxblur=48:2[bg]`,
-          `[0:v]scale=-1:${dim.w.h}:flags=lanczos[fg]`,
-          `[bg][fg]overlay=(W-w)/2:0`
-        ].join(";")
-      : [
-          `[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=24:2[bg]`,
-          `[0:v]scale=-1:1080:flags=lanczos[fg]`,
-          `[bg][fg]overlay=(W-w)/2:0`
-        ].join(";");
-    await runFFmpeg([
-      "-y",
-      "-threads", "1",
-      "-i", masterMp4,
-      "-filter_complex", wideFilter,
-      "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-preset", "ultrafast",
-      "-crf", "21",
-      "-c:a", "copy",
-      widePath
-    ], { timeoutMs: 4 * 60 * 1000, label: "variants:wide-blurred" });
-    outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
-  } catch (err) {
-    console.warn(`[aspect-variants] wide blurred-pillar failed (${err.message}). Trying simple letterbox fallback.`);
-    try {
-      const widePath = path.join(tempDir, `${jobId}-wide-fallback.mp4`);
-      // Letterbox fallback — black bars instead of blur. Less premium but reliable.
-      const fallbackFilter = upscale4K
-        ? `scale=${dim.w.w}:${dim.w.h}:force_original_aspect_ratio=decrease,pad=${dim.w.w}:${dim.w.h}:(ow-iw)/2:(oh-ih)/2:black`
-        : `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black`;
+  // WIDE — at 4K the blurred-pillar filter takes 4+ minutes and routinely
+  // hits timeout (boxblur scales linearly with pixel count, and 8.3M
+  // pixels at 4K vs 2.1M at 1080p = 4x slower). At 4K we go straight to
+  // letterbox (black bars). At 1080p the blurred-pillar still ships and
+  // looks premium. Letterbox fallback wraps both in case anything else fails.
+  const tryWide = async () => {
+    if (upscale4K) {
+      // Skip blur entirely at 4K — letterbox only.
+      const widePath = path.join(tempDir, `${jobId}-wide.mp4`);
+      const filter = `scale=${dim.w.w}:${dim.w.h}:force_original_aspect_ratio=decrease,pad=${dim.w.w}:${dim.w.h}:(ow-iw)/2:(oh-ih)/2:black`;
       await runFFmpeg([
-        "-y",
-        "-threads", "1",
+        "-y", "-threads", "1",
+        "-i", masterMp4,
+        "-vf", filter,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "ultrafast",
+        "-crf", "21",
+        "-c:a", "copy",
+        widePath
+      ], { timeoutMs: 5 * 60 * 1000, label: "variants:wide-4k-letterbox" });
+      outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
+      return;
+    }
+    // 1080p: blurred-pillar (premium look, manageable CPU).
+    try {
+      const widePath = path.join(tempDir, `${jobId}-wide.mp4`);
+      const wideFilter = [
+        `[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,boxblur=24:2[bg]`,
+        `[0:v]scale=-1:1080:flags=lanczos[fg]`,
+        `[bg][fg]overlay=(W-w)/2:0`
+      ].join(";");
+      await runFFmpeg([
+        "-y", "-threads", "1",
+        "-i", masterMp4,
+        "-filter_complex", wideFilter,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "ultrafast",
+        "-crf", "21",
+        "-c:a", "copy",
+        widePath
+      ], { timeoutMs: 3 * 60 * 1000, label: "variants:wide-blurred" });
+      outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
+    } catch (err) {
+      console.warn(`[aspect-variants] wide blurred-pillar failed (${err.message}). Trying letterbox fallback.`);
+      const widePath = path.join(tempDir, `${jobId}-wide-fallback.mp4`);
+      const fallbackFilter = `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black`;
+      await runFFmpeg([
+        "-y", "-threads", "1",
         "-i", masterMp4,
         "-vf", fallbackFilter,
         "-c:v", "libx264",
@@ -143,11 +154,14 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
         "-crf", "21",
         "-c:a", "copy",
         widePath
-      ], { timeoutMs: 3 * 60 * 1000, label: "variants:wide-letterbox" });
+      ], { timeoutMs: 2 * 60 * 1000, label: "variants:wide-letterbox" });
       outputs.wide = { format: "wide", path: widePath, dimensions: dim.w };
-    } catch (err2) {
-      console.warn(`[aspect-variants] wide fallback also failed: ${err2.message}. Skipping wide.`);
     }
+  };
+  try {
+    await tryWide();
+  } catch (err) {
+    console.warn(`[aspect-variants] wide variant failed entirely: ${err.message}. Skipping wide.`);
   }
 
   return outputs;

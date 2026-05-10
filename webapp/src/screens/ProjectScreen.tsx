@@ -1747,16 +1747,16 @@ function RenderControls() {
         runwayConfig: {
           ...(planResult.editPlan.runwayConfig || {}),
           // Opt-in crossfades — worker defaults to simple concat unless this is true.
-          useCrossfades: crossfadesEnabled,
-          // Default 4K — Render Pro 4GB has the headroom and Supabase Pro
-          // accommodates the larger files. Master + variants all upscaled
-          // to 4K-equivalent (2160×3840 vertical, 3840×2160 wide, 2160×2160 square).
-          is4K: true
+          useCrossfades: crossfadesEnabled
+          // 4K is opt-in. It nearly doubles render time (4K wide variant
+          // alone is the slowest single step in the pipeline). For demo
+          // renders, 1080p is the right tradeoff — it looks identical on
+          // any phone and most desktop viewing. We can wire a UI toggle
+          // for 4K later when there's a clear pricing reason.
         },
         brandKit: branding,
         organizationId: organization?.id || null,
-        skipNarration: !narrationEnabled,
-        export4K: true
+        skipNarration: !narrationEnabled
       };
 
       // 3. Submit

@@ -37,23 +37,17 @@ const RUNWAY_MOTION_PROMPTS = {
 };
 
 // Universal anti-hallucination constraint appended to every Runway prompt.
-// Critical for MLS-compliant marketing — agents can be sanctioned for
-// videos that misrepresent property features. Stronger explicit "no"
-// instructions work better than positive constraints with Runway's
-// prompt model. Last revision (v2) added explicit "no plants, no
-// landscaping, no vegetation" after Runway hallucinated a palm tree by
-// a pool that wasn't in the source photo.
+// MUST keep the full prompt under Runway's 1000-character limit on
+// `promptText`. Earlier verbose version rejected every scene with HTTP
+// 400. This compressed version preserves the same constraint coverage
+// (no new objects, no plants, no people, no weather changes) in ~400
+// chars so the motion + style + scene-description pieces fit too.
 const RUNWAY_CONSTRAINT_CLAUSE =
-  "STRICT MLS COMPLIANCE: This must be a faithful reproduction of the source image with subtle camera motion only. " +
-  "Preserve every architectural line, every texture, and every proportion exactly as in the source. " +
-  "DO NOT add or move any furniture, fixtures, decor, fabric, rugs, art, or appliances. " +
-  "DO NOT add any people, pets, or animals. No people may appear or move. " +
-  "DO NOT add any plants, palm trees, vegetation, landscaping, flowers, or greenery — if a plant is in the source, keep it static; if not, never add one. " +
-  "DO NOT add any vehicles, signage, or text. " +
-  "DO NOT change the time of day, weather, sky color, or season. " +
-  "DO NOT add reflections, water ripples, fire, smoke, or particles that aren't in the source. " +
-  "Lighting may shift extremely subtly but no dramatic relighting. " +
-  "Photorealistic, professional real estate cinematography. Faithful to the listing.";
+  "STRICT FIDELITY: photorealistic, faithful to source. Apply ONLY the described camera motion. " +
+  "DO NOT add, remove, or move any objects, furniture, plants, vegetation, people, animals, vehicles, signage, or text. " +
+  "DO NOT add water ripples, fire, smoke, fog, or particles. " +
+  "Preserve original lighting, time of day, weather, and sky exactly. " +
+  "Real estate documentary style, MLS compliant.";
 
 const RUNWAY_STYLE_PROMPTS = {
   "Cinematic Luxury":
