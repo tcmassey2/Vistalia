@@ -419,7 +419,12 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
   const watermarkFilter = buildWatermarkDrawtext(brand, dimensions);
   const colorGrade = "eq=contrast=1.06:saturation=0.93:gamma=1.04,colorbalance=rs=0.04:bs=-0.02";
   const normalizedClips = [];
-  for (const clip of clipResults) {
+  // Per-clip granular progress so the bar visibly moves through this step
+  // instead of sitting at 76%. We split the 76→80 range across the clips.
+  const NORMALIZE_PROGRESS_START = 76;
+  const NORMALIZE_PROGRESS_RANGE = 4;
+  for (let i = 0; i < clipResults.length; i++) {
+    const clip = clipResults[i];
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
     const filterChain = [
       `fps=30`,
@@ -441,27 +446,54 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
       normalized
     ], { timeoutMs: 90000, label: `runway:normalize-${clip.sceneIndex}` });
     normalizedClips.push({ ...clip, clipPath: normalized });
+    options.onProgress?.({
+      phase: `Polishing scene ${i + 1}/${clipResults.length}`,
+      progress: NORMALIZE_PROGRESS_START + Math.floor(((i + 1) / clipResults.length) * NORMALIZE_PROGRESS_RANGE)
+    });
   }
 
-  // Step 2: append a 5-second branding outro card — solid background with
-  // agent name + brokerage + contact, centered. Same dimensions/codec as
-  // the photo clips so xfade can blend into it.
+  // Step 2: outro card.
+  options.onProgress?.({ phase: "Building outro card", progress: 80 });
   const outroClip = await buildBrandOutroClip(brand, dimensions, tempDir);
 
-  // Step 3: stitch with xfade transitions, with a simple-concat fallback.
-  // xfade requires a long filter_complex graph that can fail at scale (24+
-  // inputs, certain GPU/codec combos). On failure we drop to plain concat —
-  // visually a slideshow rather than a film, but the render completes.
+  // Step 3: stitch.
+  // ============================================================================
+  // CRITICAL DESIGN DECISION: simple concat is the DEFAULT, not the fallback.
+  // ============================================================================
+  // The previous default (xfade with 0.5s crossfades) was a single ffmpeg
+  // call that re-encoded all 24+ clips through a long filter_complex graph.
+  // On Render Standard's 2GB plan that ate 3-8 minutes of CPU and routinely
+  // OOM-killed the worker mid-stitch. The user sees this as "stuck at 80%".
+  //
+  // Simple concat with -c copy is a 1-2 second demuxer pass — no re-encode,
+  // no filter graph, no RAM pressure. Hard cuts between scenes instead of
+  // crossfades, but the render reliably ships.
+  //
+  // xfade is now opt-in via manifest.runwayConfig.useCrossfades. We can
+  // re-enable it as the default once the worker has more RAM (Render
+  // Standard Plus, 4GB) or once we batch the stitch into smaller groups.
+  // ============================================================================
   const stitched = path.join(tempDir, "stitched.mp4");
-  try {
-    await stitchWithCrossfades({
-      clips: normalizedClips,
-      outroClip,
-      output: stitched,
-      crossfadeDurationSec: 0.5
-    });
-  } catch (err) {
-    console.warn(`[runway] xfade stitch failed (${err.message}). Falling back to simple concat.`);
+  options.onProgress?.({ phase: "Stitching final video", progress: 81 });
+  const useCrossfades = Boolean(manifest?.runwayConfig?.useCrossfades);
+  if (useCrossfades) {
+    try {
+      await stitchWithCrossfades({
+        clips: normalizedClips,
+        outroClip,
+        output: stitched,
+        crossfadeDurationSec: 0.5
+      });
+    } catch (err) {
+      console.warn(`[runway] xfade stitch failed (${err.message}). Falling back to simple concat.`);
+      await stitchWithSimpleConcat({
+        clips: normalizedClips,
+        outroClip,
+        output: stitched,
+        tempDir
+      });
+    }
+  } else {
     await stitchWithSimpleConcat({
       clips: normalizedClips,
       outroClip,
