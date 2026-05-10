@@ -1684,17 +1684,24 @@ function RenderControls() {
 
   const pollUntilDone = async (jobId: string) => {
     const startTime = Date.now();
-    const maxMs = 12 * 60 * 1000; // 12 min hard cap
+    const maxMs = 18 * 60 * 1000; // matches worker's overall job timeout
     let prevProgress = 0;
     let prevPhase = "";
+    let lastProgressMovedAt = Date.now();
     let consecutiveErrors = 0;
-    const maxConsecutiveErrors = 5; // worker may briefly restart — tolerate it
+    const maxConsecutiveErrors = 5;
 
-    // KEY FIX #3: poll IMMEDIATELY on the first iteration instead of waiting
-    // 4 seconds. The worker has already started by the time we get here,
-    // so there's real progress to display right now.
+    // Heartbeat-stuck threshold. If the WORKER's reported progress doesn't
+    // advance for this long, we surface a clear "appears stuck" state with
+    // retry options — instead of letting the user stare at a frozen bar
+    // for the full 18-minute job timeout. 90s is the right tradeoff: a
+    // single Runway scene can take ~60s legitimately, so 90s catches real
+    // hangs without false positives on slow-but-legitimate steps.
+    const STUCK_THRESHOLD_MS = 90 * 1000;
+    let stuckFlagged = false;
+
     let firstIteration = true;
-    const POLL_INTERVAL_MS = 3000; // was 4000 — tighter feedback loop
+    const POLL_INTERVAL_MS = 3000;
 
     while (Date.now() - startTime < maxMs) {
       if (!firstIteration) {
@@ -1705,9 +1712,13 @@ function RenderControls() {
         const status = await pollRender(jobId);
         consecutiveErrors = 0;
 
-        // Progress monotonicity — never let the bar go backward.
         const incomingProgress = Number(status.progress || 0);
         const safeProgress = Math.max(prevProgress, incomingProgress);
+        if (safeProgress > prevProgress) {
+          // Real movement — reset the stuck timer.
+          lastProgressMovedAt = Date.now();
+          stuckFlagged = false;
+        }
         prevProgress = safeProgress;
         const safePhase = status.phase || prevPhase;
         prevPhase = safePhase;
@@ -1720,6 +1731,18 @@ function RenderControls() {
         });
 
         if (status.status === "completed" || status.status === "failed") return;
+
+        // Stuck detection — fire ONCE when threshold first crossed.
+        const stuckMs = Date.now() - lastProgressMovedAt;
+        if (!stuckFlagged && stuckMs > STUCK_THRESHOLD_MS) {
+          stuckFlagged = true;
+          const stuckSec = Math.round(stuckMs / 1000);
+          setError(
+            `Render appears stuck at ${Math.round(safeProgress)}% (no progress for ${stuckSec}s). The worker may have crashed or hit a slow step. Check Render.com logs, or hit Generate again to retry.`
+          );
+          // Don't return — keep polling. If the worker recovers we'll
+          // clear the error on the next progress update.
+        }
       } catch (err) {
         consecutiveErrors++;
         if (consecutiveErrors >= maxConsecutiveErrors) {
@@ -1727,10 +1750,9 @@ function RenderControls() {
           setError(`Lost contact with the render worker: ${msg}`);
           return;
         }
-        // Otherwise keep polling — worker may be briefly restarting
       }
     }
-    setError("Render timed out after 12 minutes.");
+    setError("Render exceeded the 18-minute hard timeout. The worker may have crashed silently — check Render.com logs.");
   };
 
   return (

@@ -17,6 +17,7 @@ const port = Number(process.env.PORT || 8787);
 const maxBodyBytes = 25 * 1024 * 1024;
 const jobs = new Map();
 const jobAssets = new Map();
+const BOOTED_AT = new Date().toISOString();
 
 const server = http.createServer(async (request, response) => {
   setCorsHeaders(response);
@@ -29,6 +30,25 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "GET" && request.url === "/health") {
     sendJson(response, 200, { ok: true, service: "EstateMotion Remotion worker" });
+    return;
+  }
+
+  // /version — diagnostic endpoint so the frontend (and humans) can verify
+  // which build of the worker is actually deployed. Bumps with each
+  // hardening pass so we can confirm the latest fix is live.
+  if (request.method === "GET" && request.url === "/version") {
+    sendJson(response, 200, {
+      version: "2026.05.07-bulletproof-v3",
+      bootedAt: BOOTED_AT,
+      uptimeSec: Math.round(process.uptime()),
+      activeJobs: jobs.size,
+      capabilities: {
+        ffmpegTimeouts: true,
+        overallJobTimeout: "18min",
+        narrationFailSoft: true,
+        runwayFallbacks: ["ken_burns", "simple_concat", "letterbox_wide"]
+      }
+    });
     return;
   }
 
