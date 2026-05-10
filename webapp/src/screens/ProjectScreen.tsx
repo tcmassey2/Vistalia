@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefObject } from "react";
 import { useStore } from "../lib/store";
-import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot } from "../lib/supabase";
+import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot, uploadBrokerageLogo } from "../lib/supabase";
 import { createEditPlan, submitRender, pollRender, lookupProperty, type RenderManifest } from "../lib/api";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
@@ -651,7 +651,9 @@ function BrandKitArea({ userId }: { userId: string }) {
   const setToast = useStore((s) => s.setToast);
 
   const [uploading, setUploading] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const logoInput = useRef<HTMLInputElement>(null);
 
   const handleHeadshot = async (files: FileList | null) => {
     const file = files?.[0];
@@ -675,6 +677,28 @@ function BrandKitArea({ userId }: { userId: string }) {
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  const handleLogo = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    if (!userId) { setError("Sign in expired. Refresh the page."); return; }
+    if (!file.type.startsWith("image/")) {
+      setError("Brokerage logo must be an image (PNG with transparent background works best).");
+      return;
+    }
+    setUploadingLogo(true);
+    try {
+      const { url } = await uploadBrokerageLogo(file, userId);
+      setBranding({ brokerageLogoUrl: url });
+      setToast("Brokerage logo saved");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Logo upload failed";
+      setError(msg);
+    } finally {
+      setUploadingLogo(false);
+      if (logoInput.current) logoInput.current.value = "";
     }
   };
 
@@ -756,6 +780,81 @@ function BrandKitArea({ userId }: { userId: string }) {
               placeholder="agent@example.com"
               type="email"
             />
+          </div>
+        </div>
+      </div>
+
+      {/* Brokerage logo + license — both required for MLS-compliant
+          marketing in most states. These appear on the closing card and
+          drive the "MLS compliant" differentiator. */}
+      <div className="pt-5 border-t border-edge-soft">
+        <div className="flex items-baseline justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold tracking-tightish flex items-center gap-2">
+              Brokerage compliance
+              <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold/20 text-gold-light border border-gold/30">MLS-READY</span>
+            </h3>
+            <p className="text-xs text-ink-muted mt-0.5">
+              Logo + license number appear on the closing card and on every Equal Housing footer.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-5 items-start">
+          {/* Logo uploader */}
+          <div className="flex flex-col items-center gap-2">
+            <label
+              className={cn(
+                "card-press relative w-32 h-20 rounded-lg overflow-hidden border-2 border-dashed cursor-pointer grid place-items-center bg-surface-input transition-colors",
+                uploadingLogo
+                  ? "border-gold"
+                  : branding.brokerageLogoUrl
+                  ? "border-edge-strong hover:border-gold"
+                  : "border-edge-strong hover:border-gold hover:bg-gold/5"
+              )}
+            >
+              <input
+                ref={logoInput}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handleLogo(e.target.files)}
+                disabled={uploadingLogo}
+              />
+              {branding.brokerageLogoUrl ? (
+                <img
+                  src={branding.brokerageLogoUrl}
+                  alt="Brokerage logo"
+                  className="max-w-[90%] max-h-[80%] object-contain"
+                />
+              ) : uploadingLogo ? (
+                <span className="spinner" />
+              ) : (
+                <div className="text-[10px] text-ink-muted text-center px-2 leading-tight">
+                  Add<br />brokerage<br />logo
+                </div>
+              )}
+            </label>
+            {branding.brokerageLogoUrl && (
+              <button
+                type="button"
+                onClick={() => setBranding({ brokerageLogoUrl: "" })}
+                className="text-[11px] text-ink-muted hover:text-red-300 transition-colors"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          {/* License number */}
+          <div className="flex flex-col gap-3">
+            <Input
+              label="License number"
+              value={branding.licenseNumber || ""}
+              onChange={(v) => setBranding({ licenseNumber: v })}
+              placeholder="DRE# 01234567 · TREC# 0123456 · AZ SA-123456"
+            />
+            <p className="text-[11px] text-ink-muted leading-relaxed">
+              Stamped on every video for state advertising compliance. PNG with transparent background recommended for the logo.
+            </p>
           </div>
         </div>
       </div>
@@ -1648,11 +1747,16 @@ function RenderControls() {
         runwayConfig: {
           ...(planResult.editPlan.runwayConfig || {}),
           // Opt-in crossfades — worker defaults to simple concat unless this is true.
-          useCrossfades: crossfadesEnabled
+          useCrossfades: crossfadesEnabled,
+          // Default 4K — Render Pro 4GB has the headroom and Supabase Pro
+          // accommodates the larger files. Master + variants all upscaled
+          // to 4K-equivalent (2160×3840 vertical, 3840×2160 wide, 2160×2160 square).
+          is4K: true
         },
         brandKit: branding,
         organizationId: organization?.id || null,
-        skipNarration: !narrationEnabled
+        skipNarration: !narrationEnabled,
+        export4K: true
       };
 
       // 3. Submit

@@ -1,20 +1,53 @@
+import { useEffect, useState } from "react";
 import { useStore } from "../lib/store";
+import { fetchLibrary } from "../lib/api";
 import { buildSamplePhotos, SAMPLE_LISTING, SAMPLE_PROJECT_TITLE } from "../lib/samples";
+import type { LibraryEntry } from "../lib/types";
 
 export default function DashboardScreen() {
-  const projects = useStore((s) => s.projectList);
   const newProject = useStore((s) => s.newProject);
   const session = useStore((s) => s.session);
   const setListing = useStore((s) => s.setListing);
   const addPhotos = useStore((s) => s.addPhotos);
   const setProjectTitle = useStore((s) => s.setProjectTitle);
 
+  // Library — past renders, fetched from the audit log on mount.
+  const [library, setLibrary] = useState<LibraryEntry[] | null>(null);
+  const [libraryNote, setLibraryNote] = useState<string>("");
+  const [libraryError, setLibraryError] = useState<string>("");
+  const [libraryLoading, setLibraryLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const result = await fetchLibrary({ limit: 50 });
+        if (!alive) return;
+        if (result.status === "failed") {
+          setLibraryError(result.error || "Couldn't load your library.");
+          setLibrary([]);
+        } else {
+          setLibrary(result.library);
+          if (result.note) setLibraryNote(result.note);
+        }
+      } catch (err) {
+        if (!alive) return;
+        const msg = err instanceof Error ? err.message : "Couldn't load your library.";
+        setLibraryError(msg);
+        setLibrary([]);
+      } finally {
+        if (alive) setLibraryLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const firstName = (session?.user?.email || "there").split("@")[0];
 
   const startWithSample = () => {
     newProject();
-    // After newProject() the editor is open with a fresh blank project.
-    // Inject the sample data.
     setListing(SAMPLE_LISTING);
     setProjectTitle(SAMPLE_PROJECT_TITLE);
     addPhotos(buildSamplePhotos());
@@ -48,7 +81,30 @@ export default function DashboardScreen() {
         </div>
       </div>
 
-      {projects.length === 0 ? (
+      {/* Loading state */}
+      {libraryLoading && (
+        <div className="border border-edge rounded-2xl bg-surface px-8 py-16 text-center">
+          <span className="spinner mx-auto" />
+          <p className="text-sm text-ink-muted mt-3">Loading your library…</p>
+        </div>
+      )}
+
+      {/* Error */}
+      {!libraryLoading && libraryError && (
+        <div className="border border-red-500/30 bg-red-500/10 rounded-2xl px-6 py-5 text-sm text-red-300">
+          {libraryError}
+        </div>
+      )}
+
+      {/* Migration hint — when audit table is missing */}
+      {!libraryLoading && libraryNote && (
+        <div className="border border-amber-500/30 bg-amber-500/10 rounded-2xl px-6 py-5 text-sm text-amber-200 mb-6">
+          <strong className="text-amber-100">Library setup needed:</strong> {libraryNote}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!libraryLoading && !libraryError && library && library.length === 0 && !libraryNote && (
         <div className="border border-edge rounded-2xl bg-surface px-8 py-16 text-center">
           <div className="mx-auto w-12 h-12 rounded-full bg-gold/10 grid place-items-center mb-5">
             <svg viewBox="0 0 24 24" className="w-6 h-6 text-gold" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -61,24 +117,21 @@ export default function DashboardScreen() {
             Upload a listing's photos. EstateMotion directs the cuts, motion, and pacing — and hands you a cinematic walkthrough in about three minutes.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <button
-              onClick={newProject}
-              className="btn-primary-em h-11 px-5 rounded-lg"
-            >
+            <button onClick={newProject} className="btn-primary-em h-11 px-5 rounded-lg">
               Create your first video
             </button>
-            <button
-              onClick={startWithSample}
-              className="btn-secondary-em h-11 px-5 rounded-lg"
-            >
+            <button onClick={startWithSample} className="btn-secondary-em h-11 px-5 rounded-lg">
               Try sample listing
             </button>
           </div>
         </div>
-      ) : (
+      )}
+
+      {/* Library grid */}
+      {!libraryLoading && library && library.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((p) => (
-            <ProjectCard key={p.id} {...p} />
+          {library.map((entry) => (
+            <LibraryCard key={entry.id} entry={entry} />
           ))}
         </div>
       )}
@@ -86,41 +139,54 @@ export default function DashboardScreen() {
   );
 }
 
-function ProjectCard({
-  id,
-  title,
-  thumbnailUrl,
-  status,
-  createdAt
-}: {
-  id: string;
-  title: string;
-  thumbnailUrl: string;
-  status: "draft" | "rendering" | "complete";
-  createdAt: string;
-}) {
-  const openProject = useStore((s) => s.openProject);
+function LibraryCard({ entry }: { entry: LibraryEntry }) {
+  const date = new Date(entry.createdAt);
+  const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const engineLabel = entry.engine === "runway" ? "Cinematic AI" : "Quick Reel";
+  const heading = entry.listingAddress || entry.projectTitle || "Untitled listing";
+
   return (
-    <button
-      onClick={() => openProject(id)}
-      className="card-press group text-left bg-surface border border-edge hover:border-edge-strong rounded-xl overflow-hidden"
+    <a
+      href={entry.mp4Url || "#"}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="card-press group block bg-surface border border-edge hover:border-gold rounded-xl overflow-hidden transition-colors"
     >
       <div className="aspect-video bg-surface-input relative overflow-hidden">
-        {thumbnailUrl ? (
-          <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
+        {entry.thumbnailUrl ? (
+          <img
+            src={entry.thumbnailUrl}
+            alt=""
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
         ) : (
           <div className="absolute inset-0 grid place-items-center text-ink-dim text-xs">
             No preview
           </div>
         )}
         <span className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md bg-paper/85 text-[10px] font-mono uppercase tracking-wider text-ink-soft border border-edge">
-          {status}
+          {engineLabel}
         </span>
+        {entry.narrationApplied && (
+          <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-gold/90 text-paper text-[10px] font-bold tracking-wider">
+            NARRATED
+          </span>
+        )}
       </div>
       <div className="p-4">
-        <h3 className="font-medium tracking-tightish truncate">{title}</h3>
-        <p className="text-xs text-ink-muted mt-1">{new Date(createdAt).toLocaleDateString()}</p>
+        <h3 className="font-medium tracking-tightish truncate">{heading}</h3>
+        <p className="text-xs text-ink-muted mt-1 flex items-center gap-2">
+          <span>{dateLabel}</span>
+          <span className="text-ink-dim">·</span>
+          <span>{entry.formatsCount} format{entry.formatsCount === 1 ? "" : "s"}</span>
+          {entry.socialShortCount > 0 && (
+            <>
+              <span className="text-ink-dim">·</span>
+              <span>{entry.socialShortCount} short{entry.socialShortCount === 1 ? "" : "s"}</span>
+            </>
+          )}
+        </p>
       </div>
-    </button>
+    </a>
   );
 }

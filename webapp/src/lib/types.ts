@@ -77,6 +77,14 @@ export interface AgentBranding {
   phone: string;
   email: string;
   headshotUrl?: string;
+  // Brokerage logo (PNG/SVG with transparent bg works best). Composited
+  // onto the outro card next to the agent's headshot. Optional but
+  // strongly recommended for MLS-compliant marketing.
+  brokerageLogoUrl?: string;
+  // State-issued real estate license number. Displayed on the outro card
+  // for MLS / state advertising compliance. E.g. "DRE# 01234567" (CA),
+  // "TREC# 0123456" (TX), "AZ SA-123456" (AZ).
+  licenseNumber?: string;
   // ElevenLabs voice clone ID. When set, every future render is narrated in
   // the agent's actual voice. When unset, EstateMotion still narrates using
   // a stock professional voice — so the agent always gets narration, and
@@ -219,6 +227,24 @@ export interface OrgRosterMember {
   role: OrgRole;
   joinedAt: string;
   rendersLast30Days: number;
+}
+
+// One past render in the agent's library — surfaced on the dashboard.
+// Backed by the render_audit_log table on the server side.
+export interface LibraryEntry {
+  id: string;
+  jobId: string;
+  engine: RenderEngine;
+  listingAddress: string;
+  listingCity: string;
+  listingPrice: string;
+  projectTitle: string;
+  mp4Url: string;
+  thumbnailUrl: string;
+  socialShortCount: number;
+  formatsCount: number;
+  narrationApplied: boolean;
+  createdAt: string;
 }
 
 export interface OrgAuditLogEntry {

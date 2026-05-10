@@ -38,6 +38,7 @@ const requiredFiles = [
   "api/synthesize-narration.js",
   "api/organization.js",
   "api/lookup-property.js",
+  "api/library.js",
   "api/usage.js",
   "api/create-checkout-session.js",
   "api/stripe-webhook.js",

@@ -110,11 +110,28 @@ export async function uploadAgentHeadshot(
   file: File,
   userId: string
 ): Promise<{ url: string; storagePath: string }> {
+  return uploadBrandAsset(file, userId, "headshot");
+}
+
+export async function uploadBrokerageLogo(
+  file: File,
+  userId: string
+): Promise<{ url: string; storagePath: string }> {
+  return uploadBrandAsset(file, userId, "logo");
+}
+
+// Shared helper for brand-kit image uploads (headshot + logo). Both go to
+// the listing-photos bucket under a stable per-asset path so re-uploads
+// replace the prior one.
+async function uploadBrandAsset(
+  file: File,
+  userId: string,
+  kind: "headshot" | "logo"
+): Promise<{ url: string; storagePath: string }> {
   const e = env();
   const bucket = e.LISTING_PHOTOS_BUCKET || "listing-photos";
   const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
-  // Stable path so a re-uploaded headshot replaces the prior one.
-  const storagePath = `${userId}/brand-kit/headshot-${Date.now()}-${safeFileName}`;
+  const storagePath = `${userId}/brand-kit/${kind}-${Date.now()}-${safeFileName}`;
 
   const { error } = await supabase()
     .storage
@@ -126,7 +143,7 @@ export async function uploadAgentHeadshot(
     });
 
   if (error) {
-    throw new Error(`Headshot upload failed: ${error.message}`);
+    throw new Error(`${kind === "headshot" ? "Headshot" : "Logo"} upload failed: ${error.message}`);
   }
 
   const url = supabase().storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;

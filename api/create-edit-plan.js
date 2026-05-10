@@ -37,12 +37,23 @@ const RUNWAY_MOTION_PROMPTS = {
 };
 
 // Universal anti-hallucination constraint appended to every Runway prompt.
-// Tested constraint phrasing: explicit "no" instructions work better than
-// positive constraints with Runway's prompt model.
+// Critical for MLS-compliant marketing — agents can be sanctioned for
+// videos that misrepresent property features. Stronger explicit "no"
+// instructions work better than positive constraints with Runway's
+// prompt model. Last revision (v2) added explicit "no plants, no
+// landscaping, no vegetation" after Runway hallucinated a palm tree by
+// a pool that wasn't in the source photo.
 const RUNWAY_CONSTRAINT_CLAUSE =
-  "Preserve all architectural lines, textures, and proportions exactly as in the source image. " +
-  "No movement of furniture, fixtures, decor, or fabric. No new objects appear. No people appear or move. " +
-  "Lighting may shift subtly but no dramatic relighting. Photorealistic, professional real estate cinematography.";
+  "STRICT MLS COMPLIANCE: This must be a faithful reproduction of the source image with subtle camera motion only. " +
+  "Preserve every architectural line, every texture, and every proportion exactly as in the source. " +
+  "DO NOT add or move any furniture, fixtures, decor, fabric, rugs, art, or appliances. " +
+  "DO NOT add any people, pets, or animals. No people may appear or move. " +
+  "DO NOT add any plants, palm trees, vegetation, landscaping, flowers, or greenery — if a plant is in the source, keep it static; if not, never add one. " +
+  "DO NOT add any vehicles, signage, or text. " +
+  "DO NOT change the time of day, weather, sky color, or season. " +
+  "DO NOT add reflections, water ripples, fire, smoke, or particles that aren't in the source. " +
+  "Lighting may shift extremely subtly but no dramatic relighting. " +
+  "Photorealistic, professional real estate cinematography. Faithful to the listing.";
 
 const RUNWAY_STYLE_PROMPTS = {
   "Cinematic Luxury":

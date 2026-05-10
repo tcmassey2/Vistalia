@@ -6,6 +6,7 @@ import type {
   AgentBranding,
   EditPlan,
   ExportFormat,
+  LibraryEntry,
   ListingDetails,
   OrgAuditLogEntry,
   OrgRosterMember,
@@ -172,6 +173,10 @@ export interface RenderManifest {
   // ships music-only audio. Useful when narration would slow renders down
   // (e.g. live demo) or when ElevenLabs is having availability issues.
   skipNarration?: boolean;
+  // When true, the worker upscales the master + every aspect variant to
+  // 4K-equivalent resolution (2160×3840 vertical, etc). Defaults to true
+  // now that we're on Render Pro 4GB / Supabase Pro 5GB-per-file.
+  export4K?: boolean;
 }
 
 export interface SubmitRenderResult {
@@ -210,6 +215,34 @@ export async function submitRender(manifest: RenderManifest): Promise<SubmitRend
 export async function pollRender(jobId: string): Promise<RenderJobStatus> {
   const res = await fetch(`/api/render?jobId=${encodeURIComponent(jobId)}`);
   if (!res.ok) throw new Error(`Render status request failed: ${res.status}`);
+  return res.json();
+}
+
+/* ============================================================
+   /api/library — past renders for the signed-in agent
+   ============================================================ */
+
+export interface LibraryResponse {
+  status: "ok" | "failed";
+  library: LibraryEntry[];
+  note?: string;
+  error?: string;
+}
+
+export async function fetchLibrary(args: { limit?: number; offset?: number } = {}): Promise<LibraryResponse> {
+  const headers = await authHeaders();
+  const params = new URLSearchParams();
+  if (args.limit) params.set("limit", String(args.limit));
+  if (args.offset) params.set("offset", String(args.offset));
+  const qs = params.toString();
+  const res = await fetch(`/api/library${qs ? `?${qs}` : ""}`, { headers });
+  if (res.status === 401) {
+    return { status: "failed", library: [], error: "Sign in expired." };
+  }
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    return { status: "failed", library: [], error: payload.error || `Library fetch failed (${res.status}).` };
+  }
   return res.json();
 }
 

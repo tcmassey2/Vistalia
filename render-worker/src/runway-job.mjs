@@ -464,9 +464,24 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     });
   }
 
-  // Step 2: outro card.
+  // Step 2: prepare brand assets (headshot circle + brokerage logo) for the
+  // outro card. These ffmpeg calls are tiny — fractions of a second each.
+  // The outro is the final-impression real-estate card; this is where the
+  // composited headshot + logo + license + Equal Housing footer earns the
+  // "MLS-compliant" claim.
   options.onProgress?.({ phase: "Building outro card", progress: 80 });
-  const outroClip = await buildBrandOutroClip(brand, dimensions, tempDir);
+  const headshotSize = Math.round(dimensions.width * 0.32);
+  const logoMaxHeight = Math.round(dimensions.height * 0.07);
+  const [headshotCirclePath, logoAssetPath] = await Promise.all([
+    buildHeadshotCircle(brand.headshotUrl, headshotSize, tempDir),
+    buildLogoAsset(brand.brokerageLogoUrl, logoMaxHeight, tempDir)
+  ]);
+  const outroClip = await buildBrandOutroClip(brand, dimensions, tempDir, {
+    headshotCirclePath,
+    logoAssetPath,
+    headshotSize,
+    logoMaxHeight
+  });
 
   // Step 3: stitch.
   // ============================================================================
@@ -657,8 +672,67 @@ function normalizeBrandKitForFFmpeg(brandKit = {}) {
     brokerage: ffEscape(brandKit.brokerage || ""),
     phone: ffEscape(brandKit.phone || ""),
     email: ffEscape(brandKit.email || ""),
-    cta: ffEscape(brandKit.ctaText || "Schedule a private tour")
+    licenseNumber: ffEscape(brandKit.licenseNumber || ""),
+    cta: ffEscape(brandKit.ctaText || "Schedule a private tour"),
+    // Raw URLs preserved (not ff-escaped) for ffmpeg image inputs.
+    headshotUrl: brandKit.headshotUrl || "",
+    brokerageLogoUrl: brandKit.brokerageLogoUrl || ""
   };
+}
+
+// Pre-render the agent's headshot as a circular alpha-masked PNG for use
+// in ffmpeg overlay calls (watermark + outro). Generated once per render
+// at the chosen pixel size, then reused across compositions. Returns null
+// if no headshot URL is configured.
+async function buildHeadshotCircle(headshotUrl, sizePx, tempDir) {
+  if (!headshotUrl) return null;
+  try {
+    const sourcePath = path.join(tempDir, "headshot-source.jpg");
+    await downloadFile(headshotUrl, sourcePath);
+    const circlePath = path.join(tempDir, `headshot-circle-${sizePx}.png`);
+    const radius = sizePx / 2;
+    const radiusInner = radius - 1;
+    // geq=...a='if(gt(distance,radius),0,255)' produces a hard-edged
+    // circular alpha mask. Combined with format=yuva420p so we have an
+    // alpha channel to mask against.
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", sourcePath,
+      "-vf",
+      `scale=${sizePx}:${sizePx}:force_original_aspect_ratio=increase,crop=${sizePx}:${sizePx},format=yuva420p,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(gt(pow(X-${radius},2)+pow(Y-${radius},2),pow(${radiusInner},2)),0,255)'`,
+      "-frames:v", "1",
+      circlePath
+    ], { timeoutMs: 30000, label: "runway:headshot-circle" });
+    await fs.unlink(sourcePath).catch(() => {});
+    return circlePath;
+  } catch (err) {
+    console.warn(`[runway] headshot circle failed (${err.message}). Outro will fall back to text-only.`);
+    return null;
+  }
+}
+
+// Pre-render the brokerage logo scaled to fit a target height (preserving
+// aspect ratio and transparent background). Returns null on failure.
+async function buildLogoAsset(logoUrl, maxHeightPx, tempDir) {
+  if (!logoUrl) return null;
+  try {
+    const sourcePath = path.join(tempDir, "logo-source");
+    await downloadFile(logoUrl, sourcePath);
+    const outPath = path.join(tempDir, `logo-${maxHeightPx}.png`);
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", sourcePath,
+      // Scale to fit the height, preserve aspect, keep alpha if present.
+      "-vf", `scale=-1:${maxHeightPx}:flags=lanczos,format=rgba`,
+      "-frames:v", "1",
+      outPath
+    ], { timeoutMs: 30000, label: "runway:logo-asset" });
+    await fs.unlink(sourcePath).catch(() => {});
+    return outPath;
+  } catch (err) {
+    console.warn(`[runway] logo asset prep failed (${err.message}). Outro will skip logo.`);
+    return null;
+  }
 }
 
 // drawtext expects backslash-escaped colons, single quotes, and percent signs.
@@ -711,96 +785,158 @@ function buildWatermarkDrawtext({ name, brokerage }, dimensions) {
 // large + centered, brokerage below, contact line below. No headshot in v1
 // (circular masks via geq are slow on the worker; Quick Reel renders the
 // headshot circle the proper way via Remotion).
-async function buildBrandOutroClip({ name, brokerage, phone, email, cta }, dimensions, tempDir) {
+// Brand outro card, fully composited.
+// Layers from back to front:
+//   1. dark vignette background
+//   2. circular headshot at top-center (if available)
+//   3. brokerage logo to the right of the headshot (if available)
+//   4. CTA eyebrow → agent name → brokerage → license → contact
+//   5. Equal Housing footer + EstateMotion attribution
+// All optional pieces gracefully omit when not provided.
+async function buildBrandOutroClip(
+  { name, brokerage, phone, email, licenseNumber, cta },
+  dimensions,
+  tempDir,
+  assets = {}
+) {
   if (!name && !brokerage) return null;
   const outroPath = path.join(tempDir, "brand-outro.mp4");
-  const centerY = Math.round(dimensions.height / 2);
-  const nameSize = Math.max(56, Math.round(dimensions.width / 13));
-  const brokerSize = Math.max(28, Math.round(dimensions.width / 30));
-  const ctaSize = Math.max(20, Math.round(dimensions.width / 48));
-  const contactSize = Math.max(22, Math.round(dimensions.width / 42));
+  const { headshotCirclePath, logoAssetPath, headshotSize = 0, logoMaxHeight = 0 } = assets;
 
-  // Build text/draw filters that compose on top of the background.
-  const filters = [];
-  // CTA eyebrow — small gold uppercase line above the name. The visual
-  // letter-spacing comes from manually inserting non-breaking spaces
-  // between characters because ffmpeg drawtext has NO letter_spacing
-  // option (only line_spacing exists). Single inserted space keeps the
-  // CTA readable while approximating tracked uppercase typography.
+  // Layout — compute Y positions sequentially so the card adapts to which
+  // optional pieces are present.
+  const W = dimensions.width;
+  const H = dimensions.height;
+  const padTop = Math.round(H * 0.12);
+  const headshotY = headshotCirclePath ? padTop : 0;
+  const logoY = padTop + Math.round(headshotSize * 0.5) - Math.round(logoMaxHeight / 2);
+  const headerBlockBottom = headshotCirclePath
+    ? padTop + headshotSize
+    : padTop;
+  const ctaY = headerBlockBottom + Math.round(H * 0.04);
+  const ctaSize = Math.max(20, Math.round(W / 48));
+  const nameSize = Math.max(56, Math.round(W / 13));
+  const brokerSize = Math.max(28, Math.round(W / 32));
+  const licenseSize = Math.max(20, Math.round(W / 50));
+  const contactSize = Math.max(22, Math.round(W / 44));
+  const footerSize = Math.max(16, Math.round(W / 60));
+
+  const nameY = ctaY + ctaSize + Math.round(H * 0.025);
+  const brokerY = nameY + nameSize + Math.round(H * 0.02);
+  const licenseY = brokerY + brokerSize + Math.round(H * 0.012);
+  const contactY = licenseY + licenseSize + Math.round(H * 0.022);
+  const accentRuleY = contactY + contactSize + Math.round(H * 0.018);
+  const footerY = H - Math.round(H * 0.06);
+
+  // Inputs: lavfi background + optional headshot + optional logo. Indices
+  // in the filter graph: [0:v] = bg, [1:v] = headshot (if present),
+  // [2:v] = logo (if both present), or [1:v] = logo (if only logo).
+  const inputs = [
+    "-f", "lavfi",
+    "-i", `color=c=0x0A0A0A:size=${W}x${H}:rate=30:duration=5`
+  ];
+  let nextInputIndex = 1;
+  let headshotInputIdx = -1;
+  let logoInputIdx = -1;
+  if (headshotCirclePath) {
+    inputs.push("-i", headshotCirclePath);
+    headshotInputIdx = nextInputIndex++;
+  }
+  if (logoAssetPath) {
+    inputs.push("-i", logoAssetPath);
+    logoInputIdx = nextInputIndex++;
+  }
+
+  // Build the filter graph step by step. Each step labels its output for
+  // the next step to consume.
+  const graphSteps = [];
+  let lastLabel = "0:v";
+  graphSteps.push(`[${lastLabel}]vignette=PI/4[bg0]`);
+  lastLabel = "bg0";
+
+  if (headshotInputIdx >= 0) {
+    const headshotX = logoAssetPath
+      ? Math.round(W / 2 - headshotSize - 30)
+      : Math.round((W - headshotSize) / 2);
+    graphSteps.push(`[${lastLabel}][${headshotInputIdx}:v]overlay=${headshotX}:${headshotY}[withhead]`);
+    lastLabel = "withhead";
+  }
+  if (logoInputIdx >= 0) {
+    const logoX = headshotCirclePath
+      ? Math.round(W / 2 + 30)
+      : Math.round((W - logoMaxHeight * 3) / 2); // centered when no headshot
+    graphSteps.push(`[${lastLabel}][${logoInputIdx}:v]overlay=${logoX}:${logoY}[withlogo]`);
+    lastLabel = "withlogo";
+  }
+
+  // Text overlays — chained as drawtext filters.
+  const drawtextChain = [];
+  // CTA eyebrow (gold uppercase, manually spaced for tracking)
   if (cta) {
     const spacedCta = cta.toUpperCase().split("").join(" ").replace(/  +/g, "  ");
-    filters.push(
-      `drawtext=fontfile='${FFMPEG_FONT}'` +
-      `:text='${spacedCta}'` +
-      `:fontcolor=0xC7A76C:fontsize=${ctaSize}` +
-      `:x=(w-text_w)/2:y=${centerY - nameSize - 70}`
+    drawtextChain.push(
+      `drawtext=fontfile='${FFMPEG_FONT}':text='${spacedCta}':fontcolor=0xC7A76C:fontsize=${ctaSize}:x=(w-text_w)/2:y=${ctaY}`
     );
   }
-  // Decorative top accent line (above CTA)
-  filters.push(
-    `drawbox=x=(w-60)/2:y=${centerY - nameSize - 110}:w=60:h=2:color=0xC7A76C:t=fill`
-  );
   // Agent name — the primary line
-  filters.push(
-    `drawtext=fontfile='${FFMPEG_FONT}'` +
-    `:text='${name || "Your Local Agent"}'` +
-    `:fontcolor=white:fontsize=${nameSize}` +
-    `:x=(w-text_w)/2:y=${centerY - nameSize / 2}`
+  drawtextChain.push(
+    `drawtext=fontfile='${FFMPEG_FONT}':text='${name || "Your Local Agent"}':fontcolor=white:fontsize=${nameSize}:x=(w-text_w)/2:y=${nameY}`
   );
   // Brokerage
   if (brokerage) {
-    filters.push(
-      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}'` +
-      `:text='${brokerage}'` +
-      `:fontcolor=white@0.85:fontsize=${brokerSize}` +
-      `:x=(w-text_w)/2:y=${centerY + nameSize / 2 + 24}`
+    drawtextChain.push(
+      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}':text='${brokerage}':fontcolor=white@0.85:fontsize=${brokerSize}:x=(w-text_w)/2:y=${brokerY}`
+    );
+  }
+  // License number — the MLS-compliance signal
+  if (licenseNumber) {
+    drawtextChain.push(
+      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}':text='${licenseNumber}':fontcolor=0xC7A76C:fontsize=${licenseSize}:x=(w-text_w)/2:y=${licenseY}`
     );
   }
   // Contact line
   const contact = [phone, email].filter(Boolean).join("   ·   ");
   if (contact) {
-    filters.push(
-      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}'` +
-      `:text='${contact}'` +
-      `:fontcolor=white@0.92:fontsize=${contactSize}` +
-      `:x=(w-text_w)/2:y=${centerY + nameSize / 2 + 24 + brokerSize + 32}`
+    drawtextChain.push(
+      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}':text='${contact}':fontcolor=white@0.92:fontsize=${contactSize}:x=(w-text_w)/2:y=${contactY}`
     );
   }
   // Bottom accent rule
-  filters.push(
-    `drawbox=x=(w-280)/2:y=${centerY + nameSize / 2 + 24 + brokerSize + 32 + contactSize + 44}:w=280:h=2:color=0xC7A76C:t=fill`
+  drawtextChain.push(
+    `drawbox=x=(w-280)/2:y=${accentRuleY}:w=280:h=2:color=0xC7A76C:t=fill`
   );
-  // Fade in (first 0.6s) and fade out (last 0.4s) so it slots into xfade cleanly
-  filters.push(`fade=t=in:st=0:d=0.6:alpha=0`);
-  filters.push(`fade=t=out:st=4.4:d=0.6:alpha=0`);
+  // Equal Housing + EstateMotion attribution footer (MLS compliance)
+  const footerText = ffEscape("Equal Housing Opportunity  ·  Made with EstateMotion");
+  drawtextChain.push(
+    `drawtext=fontfile='${FFMPEG_FONT_REGULAR}':text='${footerText}':fontcolor=white@0.55:fontsize=${footerSize}:x=(w-text_w)/2:y=${footerY}`
+  );
+  // Fade in / out so xfade can blend cleanly
+  drawtextChain.push(`fade=t=in:st=0:d=0.6:alpha=0`);
+  drawtextChain.push(`fade=t=out:st=4.4:d=0.6:alpha=0`);
 
-  // Background: dark base + subtle gold radial gradient in the upper-right.
-  // We build the gradient via a separate lavfi color source overlaid with
-  // multiplicative blend, giving the card depth without looking busy.
-  // Two-pass:
-  //   1. lavfi color (#0A0A0A — slightly cooler than #0D for richer black)
-  //   2. radial gradient overlay (gold @ 8% opacity in the corner)
-  const bgFilter = [
-    `color=c=0x0A0A0A:size=${dimensions.width}x${dimensions.height}:rate=30:duration=5[bg]`,
-    // Vignette darkens corners; combined with the warm centre, gives a "spotlight on the agent" feel
-    `[bg]vignette=PI/4[vig]`
-  ].join(";");
+  graphSteps.push(`[${lastLabel}]${drawtextChain.join(",")}[vout]`);
+  const filterComplex = graphSteps.join(";");
 
   await runFFmpeg([
     "-y",
     "-threads", "1",
-    "-f", "lavfi",
-    "-i", `color=c=0x0A0A0A:size=${dimensions.width}x${dimensions.height}:rate=30:duration=5`,
-    "-vf", `vignette=PI/4,${filters.join(",")}`,
+    ...inputs,
+    "-filter_complex", filterComplex,
+    "-map", "[vout]",
     "-c:v", "libx264",
     "-pix_fmt", "yuv420p",
     "-preset", "ultrafast",
     "-crf", "21",
+    "-r", "30",
+    "-t", "5",
     "-an",
     outroPath
   ], { timeoutMs: 60000, label: "runway:outro-card" });
-  // bgFilter is reserved for a future two-input gradient composition; silence the unused-var.
-  void bgFilter;
+
+  // Free the asset PNGs now that the outro is on disk.
+  if (headshotCirclePath) await fs.unlink(headshotCirclePath).catch(() => {});
+  if (logoAssetPath) await fs.unlink(logoAssetPath).catch(() => {});
+
   return outroPath;
 }
 
