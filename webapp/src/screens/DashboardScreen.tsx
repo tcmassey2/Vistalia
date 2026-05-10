@@ -3,6 +3,7 @@ import { useStore } from "../lib/store";
 import { fetchLibrary } from "../lib/api";
 import { buildSamplePhotos, SAMPLE_LISTING, SAMPLE_PROJECT_TITLE } from "../lib/samples";
 import type { LibraryEntry } from "../lib/types";
+import LibraryDetailModal from "./LibraryDetailModal";
 
 export default function DashboardScreen() {
   const newProject = useStore((s) => s.newProject);
@@ -16,6 +17,8 @@ export default function DashboardScreen() {
   const [libraryNote, setLibraryNote] = useState<string>("");
   const [libraryError, setLibraryError] = useState<string>("");
   const [libraryLoading, setLibraryLoading] = useState(true);
+  // Selected entry for the detail modal — null means closed.
+  const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -131,26 +134,37 @@ export default function DashboardScreen() {
       {!libraryLoading && library && library.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {library.map((entry) => (
-            <LibraryCard key={entry.id} entry={entry} />
+            <LibraryCard
+              key={entry.id}
+              entry={entry}
+              onOpen={() => setSelectedEntry(entry)}
+            />
           ))}
         </div>
+      )}
+
+      {/* Detail modal — shows the full bundle when a card is clicked */}
+      {selectedEntry && (
+        <LibraryDetailModal
+          entry={selectedEntry}
+          onClose={() => setSelectedEntry(null)}
+        />
       )}
     </div>
   );
 }
 
-function LibraryCard({ entry }: { entry: LibraryEntry }) {
+function LibraryCard({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => void }) {
   const date = new Date(entry.createdAt);
   const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   const engineLabel = entry.engine === "runway" ? "Cinematic AI" : "Quick Reel";
   const heading = entry.listingAddress || entry.projectTitle || "Untitled listing";
 
   return (
-    <a
-      href={entry.mp4Url || "#"}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="card-press group block bg-surface border border-edge hover:border-gold rounded-xl overflow-hidden transition-colors"
+    <button
+      type="button"
+      onClick={onOpen}
+      className="card-press group block bg-surface border border-edge hover:border-gold rounded-xl overflow-hidden transition-colors text-left w-full"
     >
       <div className="aspect-video bg-surface-input relative overflow-hidden">
         {entry.thumbnailUrl ? (
@@ -172,6 +186,10 @@ function LibraryCard({ entry }: { entry: LibraryEntry }) {
             NARRATED
           </span>
         )}
+        {/* Bundle hint pill — bottom right */}
+        <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-paper/85 text-[10px] font-medium text-ink-soft border border-edge">
+          {entry.formatsCount + entry.socialShortCount} files
+        </span>
       </div>
       <div className="p-4">
         <h3 className="font-medium tracking-tightish truncate">{heading}</h3>
@@ -187,6 +205,6 @@ function LibraryCard({ entry }: { entry: LibraryEntry }) {
           )}
         </p>
       </div>
-    </a>
+    </button>
   );
 }

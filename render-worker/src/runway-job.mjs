@@ -9,6 +9,7 @@
 // MAX_SCENES caps a single job at $7.50 to prevent runaway billing.
 
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -1162,12 +1163,47 @@ function ratioForRunway(ratio) {
   return "768:1280"; // 9:16 default
 }
 
+// Music selection — checks the bundled local files first, then falls back
+// to env-var URLs, then nothing. Bundled files live at
+// /render-worker/music/{slug}.mp3. See render-worker/music/README.md for
+// the curated track recommendations and how to drop them in.
 function pickMusicUrl(manifest) {
-  const mood = String(manifest.musicMood || "").toLowerCase();
-  if (mood.includes("luxury")) return process.env.RUNWAY_MUSIC_LUXURY_URL || process.env.MUSIC_LUXURY_URL || "";
-  if (mood.includes("social") || mood.includes("upbeat")) return process.env.RUNWAY_MUSIC_VIRAL_URL || process.env.MUSIC_VIRAL_URL || "";
-  if (mood.includes("ambient") || mood.includes("mls")) return process.env.RUNWAY_MUSIC_MLS_URL || process.env.MUSIC_MLS_CLEAN_URL || "";
-  if (mood.includes("investor") || mood.includes("minimal")) return process.env.RUNWAY_MUSIC_INVESTOR_URL || process.env.MUSIC_INVESTOR_URL || "";
+  const mood = String(manifest.musicMood || manifest.selectedStyle || "").toLowerCase();
+
+  // Determine which style "slot" this mood belongs to.
+  let slot;
+  if (mood.includes("social") || mood.includes("upbeat") || mood.includes("modern") || mood.includes("viral")) {
+    slot = "social";
+  } else if (mood.includes("mls") || mood.includes("ambient") || mood.includes("clean")) {
+    slot = "mls";
+  } else if (mood.includes("investor") || mood.includes("minimal")) {
+    slot = "investor";
+  } else {
+    slot = "luxury"; // default for "Cinematic Luxury" or unrecognized
+  }
+
+  // 1. Check for a bundled local file. Worker repo ships with these in
+  //    /render-worker/music/{slot}.mp3. ffmpeg accepts file:// or absolute paths.
+  const localCandidates = [
+    path.join(path.dirname(new URL(import.meta.url).pathname), "..", "music", `${slot}.mp3`),
+    path.join(path.dirname(new URL(import.meta.url).pathname), "..", "music", `${slot}.m4a`)
+  ];
+  for (const localPath of localCandidates) {
+    if (existsSync(localPath)) return localPath;
+  }
+
+  // 2. Fall back to env-var-configured URLs (legacy path).
+  const envSlotMap = {
+    luxury: ["RUNWAY_MUSIC_LUXURY_URL", "MUSIC_LUXURY_URL"],
+    social: ["RUNWAY_MUSIC_VIRAL_URL", "MUSIC_VIRAL_URL"],
+    mls: ["RUNWAY_MUSIC_MLS_URL", "MUSIC_MLS_CLEAN_URL"],
+    investor: ["RUNWAY_MUSIC_INVESTOR_URL", "MUSIC_INVESTOR_URL"]
+  };
+  for (const envName of envSlotMap[slot] || []) {
+    if (process.env[envName]) return process.env[envName];
+  }
+
+  // 3. Last-resort default URL.
   return process.env.RUNWAY_MUSIC_DEFAULT_URL || "";
 }
 

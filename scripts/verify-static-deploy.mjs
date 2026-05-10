@@ -23,6 +23,7 @@ const requiredFiles = [
   "webapp/src/screens/DashboardScreen.tsx",
   "webapp/src/screens/ProjectScreen.tsx",
   "webapp/src/screens/BrokerageScreen.tsx",
+  "webapp/src/screens/LibraryDetailModal.tsx",
   "webapp/vite.config.ts",
   "webapp/tsconfig.json",
   "webapp/tailwind.config.js",

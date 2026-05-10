@@ -44,7 +44,8 @@ const RUNWAY_MOTION_PROMPTS = {
 // chars so the motion + style + scene-description pieces fit too.
 const RUNWAY_CONSTRAINT_CLAUSE =
   "STRICT FIDELITY: photorealistic, faithful to source. Apply ONLY the described camera motion. " +
-  "DO NOT add, remove, or move any objects, furniture, plants, vegetation, people, animals, vehicles, signage, or text. " +
+  "DO NOT add, remove, duplicate, or move any objects, furniture, fixtures, ceiling fans, lights, plants, vegetation, people, animals, vehicles, signage, or text. " +
+  "Preserve the EXACT count of every object visible in the source frame. " +
   "DO NOT add water ripples, fire, smoke, fog, or particles. " +
   "Preserve original lighting, time of day, weather, and sky exactly. " +
   "Real estate documentary style, MLS compliant.";
