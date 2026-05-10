@@ -152,7 +152,15 @@ export interface RenderManifest {
   outroCard: { headline: string; subline: string };
   musicMood: string;
   selectedStyle: string;
-  runwayConfig?: { model: string; ratio: string; duration: number } | null;
+  runwayConfig?: {
+    model?: string;
+    ratio?: string;
+    duration?: number;
+    // Opt-in crossfade transitions between scenes. Default OFF — xfade
+    // re-encodes the entire video and OOMs Render Standard 2GB. Enable
+    // only when worker is on Pro 4GB+ for the smoother look.
+    useCrossfades?: boolean;
+  } | null;
   // Brand kit drives the closing card on every video — agent headshot,
   // brokerage, contact line. Both engines (Remotion + Runway) consume this.
   brandKit: AgentBranding;

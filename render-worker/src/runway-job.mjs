@@ -170,24 +170,36 @@ export async function renderRunwayJob(body, options = {}) {
   }
 
   options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
+  // Per-file upload progress so the bar moves through 94 → 99 as each
+  // file actually finishes uploading. Without this, the bar sits at ~99%
+  // (soft-creep maxed out) for 30-90 seconds during multi-file Supabase
+  // uploads — and the user reasonably interprets that as "stuck at 100%".
   const upload = await uploadRunwayAssets({
     manifest,
     jobId,
     variants,
     shorts,
-    thumbnailPath
+    thumbnailPath,
+    onProgress: (info) => {
+      options.onProgress?.({
+        phase: info.phase || `Uploading ${info.fileLabel || "deliverables"}`,
+        progress: 94 + Math.floor((info.fraction || 0) * 5)
+      });
+    }
   });
 
-  // Audit log — never throws.
-  await writeRenderAudit({
+  options.onProgress?.({ phase: "Ready to download", progress: 100 });
+
+  // Audit log — TRULY fire-and-forget (no await). A slow Supabase REST
+  // call here must never block the render from being marked complete.
+  // The helper has its own try/catch so this can't throw on the floor.
+  writeRenderAudit({
     manifest,
     jobId,
     engine: "runway",
     upload,
     narration
-  });
-
-  options.onProgress?.({ phase: "Ready to download", progress: 100 });
+  }).catch(() => {});
 
   return {
     status: "complete",
@@ -811,14 +823,15 @@ async function downloadFile(url, destPath) {
    Supabase upload
    ================================================================= */
 
-async function uploadRunwayAssets({ manifest, jobId, variants, shorts, thumbnailPath }) {
+async function uploadRunwayAssets({ manifest, jobId, variants, shorts, thumbnailPath, onProgress }) {
   return uploadDeliverables({
     manifest,
     jobId,
     variants,
     shorts,
     thumbnailPath,
-    pathPrefix: "runway"
+    pathPrefix: "runway",
+    onProgress
   });
 }
 
@@ -830,7 +843,7 @@ async function uploadRunwayAssets({ manifest, jobId, variants, shorts, thumbnail
 //   <owner>/<prefix>/<jobId>/wide.mp4
 //   <owner>/<prefix>/<jobId>/short-1.mp4..short-N.mp4
 //   <owner>/<prefix>/<jobId>/thumbnail.png
-export async function uploadDeliverables({ manifest, jobId, variants, shorts, thumbnailPath, pathPrefix }) {
+export async function uploadDeliverables({ manifest, jobId, variants, shorts, thumbnailPath, pathPrefix, onProgress }) {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const bucket = process.env.SUPABASE_GENERATED_VIDEOS_BUCKET || "generated-videos";
@@ -883,12 +896,26 @@ export async function uploadDeliverables({ manifest, jobId, variants, shorts, th
     return null;
   };
 
+  // Compute total file count up front so we can emit accurate per-file
+  // progress (94 → 99 distributed across all uploads).
+  const variantEntries = Object.entries(variants || {}).filter(([, info]) => info?.path);
+  const shortsToUpload = (shorts || []).filter((s) => s?.path);
+  const totalFiles = variantEntries.length + shortsToUpload.length + 1; // +1 thumbnail
+  let filesDone = 0;
+  const tickProgress = (label) => {
+    filesDone += 1;
+    onProgress?.({
+      phase: `Uploaded ${filesDone}/${totalFiles} — ${label}`,
+      fileLabel: label,
+      fraction: filesDone / totalFiles
+    });
+  };
+
   // Upload format variants (vertical / square / wide) — per-variant isolation.
   // If wide upload fails, vertical and square still ship. The vertical is
   // the primary deliverable; if even that fails, the response will reflect it.
   const uploadedFormats = {};
-  for (const [variantKey, info] of Object.entries(variants || {})) {
-    if (!info?.path) continue;
+  for (const [variantKey, info] of variantEntries) {
     const filename = VARIANT_FILENAMES[variantKey] || `${variantKey}.mp4`;
     const storagePath = `${basePath}/${filename}`;
     const mp4Url = await uploadOneFile(storagePath, info.path, "video/mp4", `${variantKey} variant`);
@@ -899,13 +926,13 @@ export async function uploadDeliverables({ manifest, jobId, variants, shorts, th
         dimensions: info.dimensions || null
       };
     }
+    tickProgress(`${variantKey} variant`);
   }
 
   // Upload social shorts — per-short isolation. Worst case we ship 1 of 3
   // rather than zero of three.
   const uploadedShorts = [];
-  for (const short of shorts || []) {
-    if (!short?.path) continue;
+  for (const short of shortsToUpload) {
     const storagePath = `${basePath}/short-${short.clipNumber}.mp4`;
     const mp4Url = await uploadOneFile(storagePath, short.path, "video/mp4", `short ${short.clipNumber}`);
     if (mp4Url) {
@@ -920,6 +947,7 @@ export async function uploadDeliverables({ manifest, jobId, variants, shorts, th
     }
     // Free the local file regardless of upload outcome.
     await fs.unlink(short.path).catch(() => {});
+    tickProgress(`hero short ${short.clipNumber}`);
   }
 
   // Thumbnail — non-fatal if it fails.
@@ -928,6 +956,7 @@ export async function uploadDeliverables({ manifest, jobId, variants, shorts, th
   if (!thumbnailUrl) {
     console.warn("[upload] thumbnail upload failed; agents will see a black poster image. Render still ships.");
   }
+  tickProgress("thumbnail");
 
   // Free the derived format files (the master is owned by the caller and may
   // still be needed for cleanup).

@@ -56,6 +56,9 @@ interface AppState {
   // Default OFF — narration adds 30-60s to render time and gates on
   // ElevenLabs availability. Agents can opt in once they trust the basics.
   narrationEnabled: boolean;
+  // Default OFF — xfade crossfades require ~3-8 min of CPU on a 24-clip
+  // render and OOM-killed Render Standard 2GB. Safe to enable on Pro 4GB+.
+  crossfadesEnabled: boolean;
   editPlan: EditPlan | null;
   renderJob: RenderJobStatus | null;
 
@@ -85,6 +88,7 @@ interface AppState {
   setStyle: (id: StyleId) => void;
   setEngine: (e: RenderEngine) => void;
   setNarrationEnabled: (enabled: boolean) => void;
+  setCrossfadesEnabled: (enabled: boolean) => void;
   setEditPlan: (plan: EditPlan | null) => void;
   setRenderJob: (job: RenderJobStatus | null) => void;
   setLoading: (msg: string) => void;
@@ -145,6 +149,7 @@ const emptyProject = () => ({
   selectedStyleId: "cinematic-luxury" as StyleId,
   renderEngine: "remotion" as RenderEngine,
   narrationEnabled: false,
+  crossfadesEnabled: false,
   editPlan: null as EditPlan | null,
   renderJob: null as RenderJobStatus | null
 });
@@ -261,6 +266,7 @@ export const useStore = create<AppState>((set, get) => ({
   setStyle: (id) => set({ selectedStyleId: id, editPlan: null }),
   setEngine: (e) => set({ renderEngine: e, editPlan: null }),
   setNarrationEnabled: (enabled) => set({ narrationEnabled: enabled, editPlan: null }),
+  setCrossfadesEnabled: (enabled) => set({ crossfadesEnabled: enabled }),
   setEditPlan: (plan) => set({ editPlan: plan }),
   setRenderJob: (job) => set({ renderJob: job }),
   setLoading: (msg) => set({ loading: msg }),

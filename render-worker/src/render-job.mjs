@@ -148,23 +148,31 @@ export async function renderEstateMotionJob({ manifest, requestedFormat = "verti
   }
 
   options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
+  // Per-file upload progress so the bar advances 94 → 99 as each file
+  // finishes. Without this the bar sits at ~99% for the entire upload.
   const upload = await uploadDeliverables({
     manifest,
     jobId,
     variants,
     shorts,
     thumbnailPath,
-    pathPrefix: "generated"
+    pathPrefix: "generated",
+    onProgress: (info) => {
+      options.onProgress?.({
+        phase: info.phase || `Uploading ${info.fileLabel || "deliverables"}`,
+        progress: 94 + Math.floor((info.fraction || 0) * 5)
+      });
+    }
   });
 
-  // Audit log — never throws, never blocks.
-  await writeRenderAudit({
+  // Audit log — TRULY fire-and-forget (no await). Cannot block completion.
+  writeRenderAudit({
     manifest,
     jobId,
     engine: "remotion",
     upload,
     narration
-  });
+  }).catch(() => {});
 
   return {
     status: "complete",
