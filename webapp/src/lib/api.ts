@@ -161,6 +161,15 @@ export interface RenderManifest {
     // re-encodes the entire video and OOMs Render Standard 2GB. Enable
     // only when worker is on Pro 4GB+ for the smoother look.
     useCrossfades?: boolean;
+    // Upscale every variant to 4K-equivalent resolution. Defaults to true
+    // now that we're on Render Pro 4GB+ and Supabase Pro can store the
+    // larger files. Worker reads either this OR the top-level export4K.
+    is4K?: boolean;
+    // Legacy spelling — accepted for backward compat.
+    upscale4K?: boolean;
+    // Random seed if you want deterministic Runway output (rarely useful).
+    seed?: number | null;
+    motionStrength?: number;
   } | null;
   // Brand kit drives the closing card on every video — agent headshot,
   // brokerage, contact line. Both engines (Remotion + Runway) consume this.
