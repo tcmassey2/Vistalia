@@ -247,8 +247,18 @@ export async function submitRender(manifest: RenderManifest): Promise<SubmitRend
   return payload;
 }
 
+// Typed error so callers can distinguish a "worker has no record of this job"
+// (404 — worker restarted between submit and poll) from other failures.
+export class RenderJobMissingError extends Error {
+  constructor(jobId: string) {
+    super(`Render worker has no record of job ${jobId} — it likely restarted (deploy or OOM).`);
+    this.name = "RenderJobMissingError";
+  }
+}
+
 export async function pollRender(jobId: string): Promise<RenderJobStatus> {
   const res = await fetch(`/api/render?jobId=${encodeURIComponent(jobId)}`);
+  if (res.status === 404) throw new RenderJobMissingError(jobId);
   if (!res.ok) throw new Error(`Render status request failed: ${res.status}`);
   return res.json();
 }

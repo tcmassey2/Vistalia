@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefObject } from "react";
 import { useStore } from "../lib/store";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot, uploadBrokerageLogo } from "../lib/supabase";
-import { createEditPlan, submitRender, pollRender, lookupProperty, type RenderManifest } from "../lib/api";
+import { createEditPlan, submitRender, pollRender, lookupProperty, fetchLibrary, RenderJobMissingError, type RenderManifest } from "../lib/api";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
 
@@ -2108,6 +2108,37 @@ function RenderControls() {
           // clear the error on the next progress update.
         }
       } catch (err) {
+        // SPECIAL CASE: the worker restarted while we were rendering. That
+        // wipes its in-memory jobs Map → status returns 404. The render may
+        // have actually FINISHED uploading to Supabase before the restart,
+        // so check the library before declaring failure.
+        if (err instanceof RenderJobMissingError) {
+          const recovered = await tryRecoverFromLibrary(startTime);
+          if (recovered) {
+            // Map the library entry into renderJob state — UI will show the
+            // completed-render panel exactly as if the poll finished.
+            setRenderJob({
+              jobId,
+              status: "completed",
+              phase: "Ready to download",
+              progress: 100,
+              mp4Url: recovered.mp4Url,
+              thumbnailUrl: recovered.thumbnailUrl,
+              engine: renderEngine
+            });
+            setToast(`Render finished — recovered from a worker restart.`);
+            return;
+          }
+          // Couldn't recover. Surface a CLEAR restart-aware message instead
+          // of the cryptic "Lost contact" — the user just needs to click
+          // Generate again. Their photos + brand kit + safety settings are
+          // all still in state.
+          setError(
+            `The render worker restarted before your video finished. Click Generate to retry — your photos, branding, and settings are still here.`
+          );
+          setRenderJob(null);
+          return;
+        }
         consecutiveErrors++;
         if (consecutiveErrors >= maxConsecutiveErrors) {
           const msg = err instanceof Error ? err.message : "Status check failed.";
@@ -2117,6 +2148,32 @@ function RenderControls() {
       }
     }
     setError("Render exceeded the 18-minute hard timeout. The worker may have crashed silently — check Render.com logs.");
+  };
+
+  // After a 404 from the status endpoint, look at the library for a
+  // freshly-completed entry that matches this user's render window. If
+  // we find one created after the current poll loop started, the render
+  // actually succeeded before the worker restart — we just lost the jobId.
+  const tryRecoverFromLibrary = async (
+    pollStartedAtMs: number
+  ): Promise<{ mp4Url: string; thumbnailUrl: string } | null> => {
+    try {
+      const lib = await fetchLibrary({ limit: 5 });
+      if (lib.status !== "ok" || !lib.library.length) return null;
+      // Newest-first response. Accept any entry created within the last
+      // 30 minutes that has a master URL (covers the case where the worker
+      // restarted moments after the upload finished).
+      const RECOVERY_WINDOW_MS = 30 * 60 * 1000;
+      const cutoff = pollStartedAtMs - RECOVERY_WINDOW_MS;
+      const match = lib.library.find((entry) => {
+        const t = new Date(entry.createdAt).getTime();
+        return Number.isFinite(t) && t >= cutoff && Boolean(entry.mp4Url);
+      });
+      if (!match) return null;
+      return { mp4Url: match.mp4Url, thumbnailUrl: match.thumbnailUrl };
+    } catch {
+      return null;
+    }
   };
 
   return (
