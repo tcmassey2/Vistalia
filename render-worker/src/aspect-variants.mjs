@@ -61,8 +61,11 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
         "-vf", `scale=${dim.v.w}:${dim.v.h}:flags=lanczos`,
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-preset", "veryfast",
+        "-preset", "superfast",
         "-crf", "20",
+        // v19 OOM cap — same x264 params as the master encode in runway-job.
+        "-x264-params", "rc-lookahead=10:ref=2:bframes=2:keyint=60:scenecut=0",
+        "-bufsize", "2M",
         "-c:a", "copy",
         verticalPath
       ], { timeoutMs: 4 * 60 * 1000, label: "variants:vertical-4k" });
@@ -112,8 +115,11 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
         "-vf", filter,
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-preset", "veryfast",
+        "-preset", "superfast",
         "-crf", "20",
+        // v19 OOM cap — same x264 params as the master encode in runway-job.
+        "-x264-params", "rc-lookahead=10:ref=2:bframes=2:keyint=60:scenecut=0",
+        "-bufsize", "2M",
         "-c:a", "copy",
         widePath
       ], { timeoutMs: 5 * 60 * 1000, label: "variants:wide-4k-letterbox" });
@@ -134,8 +140,11 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
         "-filter_complex", wideFilter,
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-preset", "veryfast",
+        "-preset", "superfast",
         "-crf", "20",
+        // v19 OOM cap — same x264 params as the master encode in runway-job.
+        "-x264-params", "rc-lookahead=10:ref=2:bframes=2:keyint=60:scenecut=0",
+        "-bufsize", "2M",
         "-c:a", "copy",
         widePath
       ], { timeoutMs: 3 * 60 * 1000, label: "variants:wide-blurred" });
@@ -150,8 +159,11 @@ export async function deriveAspectVariants({ masterMp4, tempDir, jobId, upscale4
         "-vf", fallbackFilter,
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-preset", "veryfast",
+        "-preset", "superfast",
         "-crf", "20",
+        // v19 OOM cap — same x264 params as the master encode in runway-job.
+        "-x264-params", "rc-lookahead=10:ref=2:bframes=2:keyint=60:scenecut=0",
+        "-bufsize", "2M",
         "-c:a", "copy",
         widePath
       ], { timeoutMs: 2 * 60 * 1000, label: "variants:wide-letterbox" });
@@ -229,7 +241,7 @@ export async function buildSocialShorts({ masterMp4, scenes, tempDir, jobId, cou
         "-t", String(targetDuration.toFixed(2)),
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-preset", "veryfast",
+        "-preset", "superfast",
         // v18 social shorts — sharper for the Reels/TikTok preview where
         // clarity is judged in a single thumbnail glance.
         "-crf", "20",

@@ -39,7 +39,7 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.05.12-v18-clarity-bump",
+      version: "2026.05.12-v19-oom-safe-corner-headshot",
       bootedAt: BOOTED_AT,
       uptimeSec: Math.round(process.uptime()),
       activeJobs: jobs.size,
@@ -52,11 +52,15 @@ const server = http.createServer(async (request, response) => {
         perSceneRegenerate: true,
         hallucinationGuard: ["off", "balanced", "strict"],
         hallucinationGuardDefault: "balanced",
+        cornerHeadshot: true,
+        aiCuration: true,
         encode: {
-          preset: "veryfast",
+          preset: "superfast",
           crfMaster: 19,
           crfDerived: 20,
-          unsharp: true
+          unsharp: true,
+          x264Params: "rc-lookahead=10:ref=2:bframes=2:keyint=60:scenecut=0",
+          bufsize: "2M"
         }
       },
       endpoints: [

@@ -282,6 +282,53 @@ export async function fetchLibrary(args: { limit?: number; offset?: number } = {
 }
 
 /* ============================================================
+   /api/curate-photos — AI picks the best 24 in tour order
+   ============================================================ */
+
+export interface CuratedPhotoPick {
+  photoId: string;
+  order: number;
+  roomType: string;
+  score: number;
+  reason: string;
+}
+
+export interface CuratedPhotoReject {
+  photoId: string;
+  reason: string;
+}
+
+export interface CurateResponse {
+  status: "ok" | "skipped" | "fallback" | "failed";
+  reason?: string;
+  curated: CuratedPhotoPick[];
+  rejected: CuratedPhotoReject[];
+  inputCount?: number;
+  keptCount?: number;
+}
+
+export async function curatePhotos(args: {
+  photos: Array<{ id: string; durableUrl: string; fileName: string }>;
+}): Promise<CurateResponse> {
+  const headers = await authHeaders();
+  const res = await fetch("/api/curate-photos", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ photos: args.photos })
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    return {
+      status: "failed",
+      reason: payload?.error || `Curate failed (${res.status}).`,
+      curated: [],
+      rejected: []
+    };
+  }
+  return res.json();
+}
+
+/* ============================================================
    /api/regenerate-scene — surgical single-scene re-render
    ============================================================ */
 

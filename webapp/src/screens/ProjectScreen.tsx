@@ -488,17 +488,22 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
   const addPhotos = useStore((s) => s.addPhotos);
   const removePhoto = useStore((s) => s.removePhoto);
   const reorderPhotos = useStore((s) => s.reorderPhotos);
+  const curatePhotosWithAI = useStore((s) => s.curatePhotosWithAI);
   const setError = useStore((s) => s.setError);
   const setToast = useStore((s) => s.setToast);
 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
   const [isDragOver, setIsDragOver] = useState(false);
+  const [curating, setCurating] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  // Cap matches MAX_PLAN_SCENES on the server side. Photos beyond this
-  // would be silently dropped by the Motion Director, so we surface it.
-  const MAX_PHOTOS = 24;
+  // Upload up to 60 photos — the AI curator picks the best 24 in tour order.
+  // The render-side cap is 24 scenes (MAX_PLAN_SCENES on the server), so the
+  // user uploads everything they have, hits "Auto-arrange with AI", and the
+  // result drops to 24 in a strong walkthrough sequence.
+  const MAX_PHOTOS = 60;
+  const RENDER_LIMIT = 24;
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || !files.length) return;
@@ -578,6 +583,33 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
     if (next < 0 || next >= ids.length) return;
     [ids[idx], ids[next]] = [ids[next], ids[idx]];
     reorderPhotos(ids);
+  };
+
+  const handleCurate = async () => {
+    if (curating || photos.length === 0) return;
+    setCurating(true);
+    setError("");
+    try {
+      const result = await curatePhotosWithAI();
+      if (result.status === "ok") {
+        setToast(
+          result.removedCount > 0
+            ? `AI picked ${result.keptCount} best photos · removed ${result.removedCount}.`
+            : `AI re-arranged ${result.keptCount} photos in tour order.`
+        );
+      } else if (result.status === "fallback") {
+        setToast(result.reason || "AI fell back to upload order.");
+      } else if (result.status === "skipped") {
+        setToast(result.reason || "Not enough photos to curate.");
+      } else {
+        setError(result.reason || "AI curation failed.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "AI curation failed.";
+      setError(msg);
+    } finally {
+      setCurating(false);
+    }
   };
 
   const photoCountLabel = `${photos.length} of ${MAX_PHOTOS}`;
@@ -664,23 +696,55 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
         </div>
       </label>
 
-      {/* Readiness bar — visual progress toward the recommended 8-photo
-          minimum, plus a status label that flips from "Need N more" to
-          "Ready to render" once the threshold is crossed. */}
+      {/* Readiness bar + AI curation CTA */}
       {photos.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-mono uppercase tracking-wider text-ink-muted">
-              {photoCountLabel} photos
-            </span>
-            <span className={cn(
-              "font-semibold tracking-tightish",
-              photos.length >= 8 ? "text-gold" : "text-ink-muted"
-            )}>
-              {photos.length >= 8
-                ? "Ready to render"
-                : `${8 - photos.length} more for a full tour`}
-            </span>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px]">
+            <div className="flex items-center gap-3">
+              <span className="font-mono uppercase tracking-wider text-ink-muted">
+                {photoCountLabel} photos
+              </span>
+              <span className={cn(
+                "font-semibold tracking-tightish",
+                photos.length >= 8 ? "text-gold" : "text-ink-muted"
+              )}>
+                {photos.length >= 8
+                  ? photos.length > RENDER_LIMIT
+                    ? `Render uses up to ${RENDER_LIMIT} — let AI pick the best`
+                    : "Ready to render"
+                  : `${8 - photos.length} more for a full tour`}
+              </span>
+            </div>
+            {/* AI auto-arrange — appears as soon as the user has at least
+                a few photos. Becomes especially valuable above the 24
+                render limit because it CURATES (drops weaker shots). */}
+            {photos.length >= 8 && (
+              <button
+                type="button"
+                onClick={handleCurate}
+                disabled={curating}
+                className={cn(
+                  "card-press h-9 px-4 rounded-lg text-xs font-semibold tracking-tightish transition-colors inline-flex items-center gap-2 self-start sm:self-auto",
+                  photos.length > RENDER_LIMIT
+                    ? "bg-gold text-paper hover:bg-gold-light"
+                    : "bg-surface-input text-ink hover:text-gold border border-edge hover:border-gold",
+                  curating && "opacity-70 cursor-wait"
+                )}
+                title="Send every uploaded photo to OpenAI Vision. The AI keeps the strongest 24 in walkthrough order."
+              >
+                {curating ? (
+                  <>
+                    <span className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                    AI is reviewing your photos…
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm leading-none">✦</span>
+                    {photos.length > RENDER_LIMIT ? `Pick best ${RENDER_LIMIT} with AI` : "Auto-arrange with AI"}
+                  </>
+                )}
+              </button>
+            )}
           </div>
           <div className="h-1 bg-edge rounded-full overflow-hidden">
             <div
@@ -689,12 +753,15 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
                 photos.length >= 8 ? "bg-gold" : "bg-gold/55"
               )}
               style={{
+                // Cap visual progress at 100% — once we're at 8+, the bar is
+                // full regardless of upload count.
                 width: `${Math.min(100, (photos.length / 8) * 100)}%`
               }}
             />
           </div>
-          <p className="text-[11px] text-ink-dim">
-            Photo 1 is your <span className="text-gold-light font-semibold">hero shot</span> — the AI opens the video on it. Drag the corner controls to reorder.
+          <p className="text-[11px] text-ink-dim leading-relaxed">
+            Photo 1 is your <span className="text-gold-light font-semibold">hero shot</span> — the AI opens the video on it.
+            Drag the corner controls to reorder, or hand the whole set to AI for a curated walkthrough.
           </p>
         </div>
       )}

@@ -28,29 +28,34 @@ const MAX_SCENES = 30;
 const NON_PHOTO_TYPES = new Set(["intro", "outro", "stat", "card", "title", "stats"]);
 
 /* =================================================================
-   Encode quality knobs — v18 (production clarity)
+   Encode quality knobs — v19 (clarity + memory safety)
    =================================================================
-   Tuned for visible clarity gains over the v17 defaults. The v17 chain
-   used preset=ultrafast + crf=21, which left noticeable softness on
-   detail-heavy frames (cabinetry edges, exterior textures, fine type
-   on the outro card). Bumping to preset=veryfast + crf=19 takes ~2×
-   longer per clip but the master is dramatically sharper.
+   v18 jumped from preset=ultrafast → veryfast + crf=21 → 19 for visibly
+   sharper renders. On Render Standard's 2GB ceiling that pushed peak
+   ffmpeg memory past the OOM-killer threshold (x264's veryfast preset
+   keeps ~3-5 reference frames + a 25-frame lookahead window in flight,
+   easily 150-250 MB per encoder). v19 dials back to `superfast` (still
+   sharper than v17's ultrafast but ~40% less encoder RAM) AND adds
+   explicit x264 buffer caps so even worst-case CPUs can't blow the
+   memory ceiling.
 
-   ENCODE_PRESET — h264 preset. One step better than ultrafast.
-   ENCODE_CRF_MASTER — primary scene CRF. Lower = sharper.
-   ENCODE_CRF_DERIVED — variants/shorts CRF. One notch softer since
-                        the source is already encoded once.
-   COLOR_GRADE — eq + colorbalance for a unified cinematic look.
-                 Slightly warmer (0xC7A76C gold accents pop), slightly
-                 sharper contrast curve, gentle saturation pull.
-   UNSHARP — micro-sharpen applied after the grade. Real-estate
-             footage benefits from edge clarity (counters, trim,
-             window mullions). Conservative amount so it doesn't
-             ring on smooth gradients (sky, walls).
+   Stays at crf=19 — that's where the visible sharpness gain came from,
+   and CRF doesn't materially change memory footprint.
+
+   X264_PARAMS — explicit limits on the parameters that drive encoder
+                 memory: ref frames, lookahead window, b-frame chain
+                 depth, GOP size. Without these x264 picks profile-
+                 default values that can be 4-8× larger than we need
+                 for short cinematic clips.
+   BUFSIZE_MB — bitrate buffer cap. ffmpeg defaults to unbounded which
+                under high-detail-frame stress can grow indefinitely.
+   COLOR_GRADE — unchanged from v18.
 */
-const ENCODE_PRESET = "veryfast";
+const ENCODE_PRESET = "superfast";
 const ENCODE_CRF_MASTER = "19";
 const ENCODE_CRF_DERIVED = "20";
+const X264_PARAMS = "rc-lookahead=10:ref=2:bframes=2:keyint=60:scenecut=0";
+const BUFSIZE = "2M";
 const COLOR_GRADE =
   "eq=contrast=1.08:saturation=0.95:gamma=1.03,colorbalance=rs=0.05:bs=-0.025,unsharp=5:5:0.6:3:3:0.3";
 
@@ -437,6 +442,8 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
     "-pix_fmt", "yuv420p",
     "-preset", ENCODE_PRESET,
     "-crf", ENCODE_CRF_MASTER,
+    "-x264-params", X264_PARAMS,
+    "-bufsize", BUFSIZE,
     "-r", "30",
     clipPath
   ], { timeoutMs: 120000, label: `runway:fallback-scene-${sceneIndex + 1}` });
@@ -553,10 +560,13 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       "-pix_fmt", "yuv420p",
       "-preset", ENCODE_PRESET,
       "-crf", ENCODE_CRF_MASTER,
+      // v19 memory caps — keep x264 from running away with RAM on
+      // Render Standard's 2GB ceiling.
+      "-x264-params", X264_PARAMS,
+      "-bufsize", BUFSIZE,
       "-an",
-      // 180s timeout (up from 90s) — veryfast + crf=19 is ~2× slower than
-      // the previous ultrafast/crf=21 baseline. Still well within the
-      // overall 18-min job ceiling.
+      // 180s timeout — superfast + crf=19 is ~1.4× slower than
+      // ultrafast/crf=21. Still well within the overall 18-min job ceiling.
       normalized
     ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
     normalizedClips.push({ ...clip, clipPath: normalized });
@@ -631,6 +641,57 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     });
   }
 
+  // v19: Persistent corner headshot — agent's brand mark in the upper-right
+  // corner of every photo scene. Time-gated to disappear during the outro
+  // card (which already has a big centered headshot — adding the corner
+  // one would create awkward dual-headshot composition).
+  // Single ffmpeg pass over the stitched master is much cheaper than baking
+  // the overlay into each normalized clip (24× ffmpeg calls would do).
+  let postBrandStitched = stitched;
+  if (brand.headshotUrl) {
+    try {
+      const cornerSize = Math.round(dimensions.width * 0.12); // ~12% of width
+      const cornerHeadshotPath = await buildHeadshotCircle(brand.headshotUrl, cornerSize, tempDir);
+      if (cornerHeadshotPath) {
+        // Total seconds of photo scenes (excludes outro). Each normalized clip
+        // carries its own duration; outroClip adds 5s onto the end of the stitch.
+        const scenesDurationSec = normalizedClips.reduce(
+          (sum, c) => sum + Number(c.duration || 5),
+          0
+        );
+        const branded = path.join(tempDir, "stitched-branded.mp4");
+        // Upper-right corner with a 24px inset. enable='lt(t,scenesEnd)' makes
+        // the overlay appear ONLY during the photo scenes — the outro is left
+        // clean so its own centered headshot stays the visual focus.
+        const overlayX = dimensions.width - cornerSize - 24;
+        const overlayY = 24;
+        const filter =
+          `[0:v][1:v]overlay=${overlayX}:${overlayY}:` +
+          `enable='lt(t\\,${scenesDurationSec.toFixed(2)})'`;
+        await runFFmpeg([
+          "-y",
+          "-threads", "1",
+          "-i", stitched,
+          "-i", cornerHeadshotPath,
+          "-filter_complex", filter,
+          "-c:v", "libx264",
+          "-pix_fmt", "yuv420p",
+          "-preset", ENCODE_PRESET,
+          "-crf", ENCODE_CRF_MASTER,
+          "-x264-params", X264_PARAMS,
+          "-bufsize", BUFSIZE,
+          "-c:a", "copy",
+          branded
+        ], { timeoutMs: 4 * 60 * 1000, label: "runway:corner-headshot" });
+        postBrandStitched = branded;
+        await fs.unlink(cornerHeadshotPath).catch(() => {});
+      }
+    } catch (err) {
+      console.warn(`[runway] corner headshot overlay failed (${err.message}). Shipping master without corner mark.`);
+      // postBrandStitched stays = stitched. Render continues without the corner headshot.
+    }
+  }
+
   // Step 4: optional audio mix from manifest.musicMood mapping. We honor a
   // RUNWAY_MUSIC_<MOOD>_URL env var pointing to a remote MP3. If no music
   // configured, the final video has no audio (acceptable for v1).
@@ -639,7 +700,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     await runFFmpeg([
       "-y",
       "-threads", "1",
-      "-i", stitched,
+      "-i", postBrandStitched,
       "-i", musicUrl,
       "-c:v", "copy",
       "-c:a", "aac",
@@ -650,12 +711,14 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       outputPath
     ], { timeoutMs: 120000, label: "runway:music-mix" });
   } else {
-    await fs.copyFile(stitched, outputPath);
+    await fs.copyFile(postBrandStitched, outputPath);
   }
 
-  // Free the stitched intermediate immediately (already concatenated to outputPath).
+  // Free intermediates. If the corner-headshot pass produced a branded file
+  // separate from the raw stitch, both are now consumed by outputPath.
   if (outroClip) await fs.unlink(outroClip).catch(() => {});
   await fs.unlink(stitched).catch(() => {});
+  if (postBrandStitched !== stitched) await fs.unlink(postBrandStitched).catch(() => {});
 
   // NOTE: We do NOT delete the per-scene normalized clips here anymore.
   // The caller needs them for the per-scene regenerate flow — each clip
@@ -734,6 +797,8 @@ async function stitchWithCrossfades({ clips, outroClip, output, crossfadeDuratio
     "-pix_fmt", "yuv420p",
     "-preset", ENCODE_PRESET,
     "-crf", ENCODE_CRF_MASTER,
+    "-x264-params", X264_PARAMS,
+    "-bufsize", BUFSIZE,
     "-r", "30",
     output
   ], { timeoutMs: 8 * 60 * 1000, label: `runway:xfade-${allClips.length}clips` });
@@ -1033,6 +1098,8 @@ async function buildBrandOutroClip(
     "-pix_fmt", "yuv420p",
     "-preset", ENCODE_PRESET,
     "-crf", ENCODE_CRF_MASTER,
+    "-x264-params", X264_PARAMS,
+    "-bufsize", BUFSIZE,
     "-r", "30",
     "-t", "5",
     "-an",
