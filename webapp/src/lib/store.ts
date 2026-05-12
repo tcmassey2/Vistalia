@@ -59,6 +59,10 @@ interface AppState {
   // Default OFF — xfade crossfades require ~3-8 min of CPU on a 24-clip
   // render and OOM-killed Render Standard 2GB. Safe to enable on Pro 4GB+.
   crossfadesEnabled: boolean;
+  // Default OFF — compliance mode skips Runway and uses Ken Burns motion
+  // for every scene. Zero hallucination but no AI motion. Right choice
+  // for MLS-required listings where faithfulness > flair.
+  complianceMode: boolean;
   editPlan: EditPlan | null;
   renderJob: RenderJobStatus | null;
 
@@ -89,6 +93,7 @@ interface AppState {
   setEngine: (e: RenderEngine) => void;
   setNarrationEnabled: (enabled: boolean) => void;
   setCrossfadesEnabled: (enabled: boolean) => void;
+  setComplianceMode: (enabled: boolean) => void;
   setEditPlan: (plan: EditPlan | null) => void;
   setRenderJob: (job: RenderJobStatus | null) => void;
   setLoading: (msg: string) => void;
@@ -150,6 +155,7 @@ const emptyProject = () => ({
   renderEngine: "remotion" as RenderEngine,
   narrationEnabled: false,
   crossfadesEnabled: false,
+  complianceMode: false,
   editPlan: null as EditPlan | null,
   renderJob: null as RenderJobStatus | null
 });
@@ -267,6 +273,7 @@ export const useStore = create<AppState>((set, get) => ({
   setEngine: (e) => set({ renderEngine: e, editPlan: null }),
   setNarrationEnabled: (enabled) => set({ narrationEnabled: enabled, editPlan: null }),
   setCrossfadesEnabled: (enabled) => set({ crossfadesEnabled: enabled }),
+  setComplianceMode: (enabled) => set({ complianceMode: enabled, editPlan: null }),
   setEditPlan: (plan) => set({ editPlan: plan }),
   setRenderJob: (job) => set({ renderJob: job }),
   setLoading: (msg) => set({ loading: msg }),

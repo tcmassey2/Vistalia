@@ -186,6 +186,11 @@ export interface RenderManifest {
   // 4K-equivalent resolution (2160×3840 vertical, etc). Defaults to true
   // now that we're on Render Pro 4GB / Supabase Pro 5GB-per-file.
   export4K?: boolean;
+  // Compliance Mode — bypass Runway entirely, use Ken Burns motion for
+  // every scene. Zero hallucination risk, faster renders, no Runway
+  // credits burned. Trade-off: less "AI motion" feel. Right default for
+  // listings that need MLS-grade faithfulness above all.
+  complianceMode?: boolean;
 }
 
 export interface SubmitRenderResult {

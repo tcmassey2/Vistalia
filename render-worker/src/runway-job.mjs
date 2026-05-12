@@ -52,33 +52,50 @@ export async function renderRunwayJob(body, options = {}) {
     photoScenes.length
   );
 
+  // Compliance Mode: when the manifest opts in, every scene uses the
+  // Ken Burns fallback (ffmpeg-driven photo motion) instead of calling
+  // Runway. Zero hallucination risk — guaranteed faithful to source —
+  // and no Runway credits burned. Tradeoff is a less "AI motion" feel,
+  // but for MLS-required listings the fidelity guarantee is the win.
+  const complianceMode = Boolean(manifest?.complianceMode);
+  if (complianceMode) {
+    console.info(`[runway] complianceMode=true — bypassing Runway, using Ken Burns for all ${photoScenes.length} scenes.`);
+  }
+
   let scenesCompleted = 0;
   let fallbackCount = 0;
-  // Per-scene failure recovery: when Runway fails on a single scene
-  // (rate limit retry exhausted, content rejection, transient API error,
-  // etc.), we generate a Ken-Burns–style fallback clip from the same photo
-  // using ffmpeg locally. The render completes with mixed Cinematic AI
-  // and Ken-Burns scenes rather than dying with one bad apple. Daily-cap
+  // Per-scene failure recovery: when Runway fails on a single scene we
+  // generate a Ken-Burns–style fallback clip from the same photo using
+  // ffmpeg locally. The render completes with mixed Cinematic AI and
+  // Ken-Burns scenes rather than dying with one bad apple. Daily-cap
   // errors still propagate up — those need user action, not a fallback.
   const clipResults = await pMap(
     photoScenes,
     async (scene, index) => {
       let result;
-      try {
-        result = await generateClip(scene, manifest, tempDir, index);
-      } catch (error) {
-        if (error.code === "RUNWAY_DAILY_CAP") throw error; // surface to user
-        console.warn(`[runway] scene ${index + 1} failed (${error.message}). Falling back to Ken Burns.`);
+      if (complianceMode) {
+        // Skip Runway entirely — guaranteed shape preservation.
         result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
-        fallbackCount++;
+      } else {
+        try {
+          result = await generateClip(scene, manifest, tempDir, index);
+        } catch (error) {
+          if (error.code === "RUNWAY_DAILY_CAP") throw error; // surface to user
+          console.warn(`[runway] scene ${index + 1} failed (${error.message}). Falling back to Ken Burns.`);
+          result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
+          fallbackCount++;
+        }
       }
       scenesCompleted++;
+      const phaseText = complianceMode
+        ? `MLS-safe render: scene ${scenesCompleted}/${photoScenes.length}`
+        : fallbackCount > 0
+          ? `Rendering scene ${scenesCompleted}/${photoScenes.length} (${fallbackCount} fallback${fallbackCount > 1 ? "s" : ""})`
+          : `Rendering scene ${scenesCompleted}/${photoScenes.length}`;
       options.onProgress?.({
         // Reserve 78–100% for stitch + derive + shorts + upload, so the
         // Runway phase tops out at ~74% rather than overrunning the bar.
-        phase: fallbackCount > 0
-          ? `Rendering scene ${scenesCompleted}/${photoScenes.length} (${fallbackCount} fallback${fallbackCount > 1 ? "s" : ""})`
-          : `Rendering scene ${scenesCompleted}/${photoScenes.length}`,
+        phase: phaseText,
         progress: 10 + Math.floor((scenesCompleted / photoScenes.length) * 64),
         scenesCompleted,
         scenesTotal: photoScenes.length

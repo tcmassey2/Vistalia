@@ -117,6 +117,7 @@ export default function ProjectScreen() {
           <EngineToggle engine={renderEngine} onChange={setEngine} />
           <NarrationToggle />
           <CrossfadeToggle />
+          <ComplianceModeToggle />
           <RenderControls />
           {renderJob && <RenderStatusPanel />}
         </div>
@@ -208,6 +209,48 @@ function CrossfadeToggle() {
           {enabled
             ? `0.5s crossfades between every scene. Adds ~3-5 min to render and needs the Render Pro 4GB worker — turn off if your renders hang.`
             : `Hard cuts between scenes. Fast and reliable on any worker plan. Recommended unless you're on Render Pro+.`}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function ComplianceModeToggle() {
+  const enabled = useStore((s) => s.complianceMode);
+  const setEnabled = useStore((s) => s.setComplianceMode);
+  return (
+    <button
+      type="button"
+      onClick={() => setEnabled(!enabled)}
+      className={cn(
+        "card-press flex items-center gap-3 p-4 rounded-xl bg-surface border text-left transition-colors",
+        enabled ? "border-gold bg-surface-raised" : "border-edge hover:border-edge-strong"
+      )}
+    >
+      <div
+        className={cn(
+          "flex-shrink-0 w-10 h-6 rounded-full border transition-colors relative",
+          enabled ? "bg-gold border-gold" : "bg-surface-input border-edge-strong"
+        )}
+      >
+        <div
+          className={cn(
+            "absolute top-0.5 w-5 h-5 rounded-full bg-paper transition-all",
+            enabled ? "left-[18px]" : "left-0.5"
+          )}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold tracking-tightish flex items-center gap-2">
+          Compliance Mode
+          {enabled && (
+            <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold text-paper">MLS-SAFE</span>
+          )}
+        </div>
+        <div className="text-xs text-ink-muted mt-0.5">
+          {enabled
+            ? `Bypasses Cinematic AI entirely. Every scene uses photo motion (Ken Burns) — guaranteed faithful to the source, zero hallucination risk, no Runway credits used. Faster renders.`
+            : `AI motion enabled. Cinematic but occasionally morphs object shapes. Switch on for MLS-required listings where faithfulness > flair.`}
         </div>
       </div>
     </button>
@@ -1647,6 +1690,7 @@ function RenderControls() {
   const renderEngine = useStore((s) => s.renderEngine);
   const narrationEnabled = useStore((s) => s.narrationEnabled);
   const crossfadesEnabled = useStore((s) => s.crossfadesEnabled);
+  const complianceMode = useStore((s) => s.complianceMode);
   const renderJob = useStore((s) => s.renderJob);
   const projectId = useStore((s) => s.projectId);
   const projectTitle = useStore((s) => s.projectTitle);
@@ -1756,7 +1800,8 @@ function RenderControls() {
         },
         brandKit: branding,
         organizationId: organization?.id || null,
-        skipNarration: !narrationEnabled
+        skipNarration: !narrationEnabled,
+        complianceMode
       };
 
       // 3. Submit
