@@ -20,31 +20,45 @@ export default function DashboardScreen() {
   // Selected entry for the detail modal — null means closed.
   const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
 
+  // Refresh the library list. Used on mount AND after a per-scene regen
+  // completes — the modal calls back via onUpdated so the new master URL
+  // (and updated scenes array) shows up everywhere immediately.
+  const reloadLibrary = async () => {
+    try {
+      const result = await fetchLibrary({ limit: 50 });
+      if (result.status === "failed") {
+        setLibraryError(result.error || "Couldn't load your library.");
+        setLibrary([]);
+      } else {
+        setLibrary(result.library);
+        if (result.note) setLibraryNote(result.note);
+        // If the modal is currently open, swap its entry to the freshly-loaded
+        // version so the user sees the new master video without reopening.
+        setSelectedEntry((current) => {
+          if (!current) return current;
+          const updated = result.library.find((e) => e.jobId === current.jobId);
+          return updated || current;
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Couldn't load your library.";
+      setLibraryError(msg);
+      setLibrary([]);
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
   useEffect(() => {
     let alive = true;
     (async () => {
-      try {
-        const result = await fetchLibrary({ limit: 50 });
-        if (!alive) return;
-        if (result.status === "failed") {
-          setLibraryError(result.error || "Couldn't load your library.");
-          setLibrary([]);
-        } else {
-          setLibrary(result.library);
-          if (result.note) setLibraryNote(result.note);
-        }
-      } catch (err) {
-        if (!alive) return;
-        const msg = err instanceof Error ? err.message : "Couldn't load your library.";
-        setLibraryError(msg);
-        setLibrary([]);
-      } finally {
-        if (alive) setLibraryLoading(false);
-      }
+      await reloadLibrary();
+      if (!alive) return;
     })();
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const firstName = (session?.user?.email || "there").split("@")[0];
@@ -148,6 +162,7 @@ export default function DashboardScreen() {
         <LibraryDetailModal
           entry={selectedEntry}
           onClose={() => setSelectedEntry(null)}
+          onUpdated={reloadLibrary}
         />
       )}
     </div>

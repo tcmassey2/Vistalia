@@ -52,14 +52,24 @@ export async function renderRunwayJob(body, options = {}) {
     photoScenes.length
   );
 
-  // Compliance Mode: when the manifest opts in, every scene uses the
-  // Ken Burns fallback (ffmpeg-driven photo motion) instead of calling
-  // Runway. Zero hallucination risk — guaranteed faithful to source —
-  // and no Runway credits burned. Tradeoff is a less "AI motion" feel,
-  // but for MLS-required listings the fidelity guarantee is the win.
+  // Compliance Mode: every scene uses Ken Burns instead of Runway.
+  // Zero hallucination risk, no Runway credits used.
   const complianceMode = Boolean(manifest?.complianceMode);
   if (complianceMode) {
     console.info(`[runway] complianceMode=true — bypassing Runway, using Ken Burns for all ${photoScenes.length} scenes.`);
+  }
+
+  // Protect high-risk rooms (kitchens + bathrooms) — these are Gen-4
+  // Turbo's worst-case for hallucination because of the parallel-edge
+  // surfaces (cabinet doors, appliance panels, tile grids). When opted in,
+  // route ONLY these room types through Ken Burns and let everything else
+  // run through real Runway AI motion. Surgical, doesn't sacrifice the
+  // cinematic feel on the 80% of scenes that work fine.
+  const protectHighRiskRooms = Boolean(manifest?.protectHighRiskRooms);
+  const HIGH_RISK_ROOMS = new Set(["kitchen", "bathroom"]);
+  if (protectHighRiskRooms && !complianceMode) {
+    const protectedCount = photoScenes.filter((s) => HIGH_RISK_ROOMS.has(s.roomType)).length;
+    console.info(`[runway] protectHighRiskRooms=true — ${protectedCount}/${photoScenes.length} scenes (kitchens/bathrooms) will use Ken Burns; the rest use Runway.`);
   }
 
   let scenesCompleted = 0;
@@ -73,8 +83,11 @@ export async function renderRunwayJob(body, options = {}) {
     photoScenes,
     async (scene, index) => {
       let result;
-      if (complianceMode) {
-        // Skip Runway entirely — guaranteed shape preservation.
+      const useKenBurnsForScene =
+        complianceMode ||
+        (protectHighRiskRooms && HIGH_RISK_ROOMS.has(scene.roomType));
+      if (useKenBurnsForScene) {
+        // Skip Runway entirely for this scene — guaranteed shape preservation.
         result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
       } else {
         try {
@@ -109,7 +122,7 @@ export async function renderRunwayJob(body, options = {}) {
   const finalMp4 = path.join(tempDir, `${jobId}.mp4`);
   const thumbnailPath = path.join(tempDir, `${jobId}.png`);
 
-  await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options);
+  const { normalizedClips } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options);
 
   // Voice narration — synthesize per-scene narration via ElevenLabs and mix
   // it into the master with music ducking. Wrapped in fail-soft try/catch
@@ -206,6 +219,23 @@ export async function renderRunwayJob(body, options = {}) {
     }
   });
 
+  // Upload per-scene clips for regenerate-scene support. Each clip is
+  // 2-5 MB; 24 of them = ~50-120 MB extra upload. Worth it because
+  // single-scene regen is the production-grade fix. Each clip gets a
+  // predictable URL inside the same Supabase folder as master/variants.
+  const scenesMeta = await uploadPerSceneClips({
+    manifest,
+    jobId,
+    normalizedClips,
+    clipResults,
+    pathPrefix: "runway"
+  });
+
+  // Cleanup per-scene local files now that they're uploaded.
+  for (const clip of normalizedClips) {
+    await fs.unlink(clip.clipPath).catch(() => {});
+  }
+
   options.onProgress?.({ phase: "Ready to download", progress: 100 });
 
   // Audit log — TRULY fire-and-forget (no await). A slow Supabase REST
@@ -216,7 +246,8 @@ export async function renderRunwayJob(body, options = {}) {
     jobId,
     engine: "runway",
     upload,
-    narration
+    narration,
+    scenes: scenesMeta
   }).catch(() => {});
 
   return {
@@ -251,7 +282,7 @@ export async function renderRunwayJob(body, options = {}) {
    Per-scene Runway generation
    ================================================================= */
 
-async function generateClip(scene, manifest, tempDir, sceneIndex) {
+export async function generateClip(scene, manifest, tempDir, sceneIndex) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   const imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Scene ${sceneIndex + 1} (${scene.photoId}) missing durable image URL.`);
@@ -328,7 +359,7 @@ async function generateClip(scene, manifest, tempDir, sceneIndex) {
 // the visual intent matches what the AI was supposed to do. Visually less
 // dramatic than Runway image-to-video but indistinguishable to a casual
 // viewer, and crucially, the render completes.
-async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIndex) {
+export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIndex) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   const imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Fallback impossible — scene ${sceneIndex + 1} has no image URL.`);
@@ -437,7 +468,7 @@ async function pollRunwayTask(taskId, sceneIndex) {
    FFmpeg stitching
    ================================================================= */
 
-async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbnailPath, options = {}) {
+export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbnailPath, options = {}) {
   clipResults.sort((a, b) => a.sceneIndex - b.sceneIndex);
   const tempDir = path.dirname(outputPath);
   const dimensions = runwayDimensions(manifest);
@@ -572,13 +603,14 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     await fs.copyFile(stitched, outputPath);
   }
 
-  // Free intermediates immediately — each can be 10-30 MB and we don't need
-  // them after concat. Helps RAM pressure on the Supabase upload below.
-  for (const clip of normalizedClips) {
-    await fs.unlink(clip.clipPath).catch(() => {});
-  }
+  // Free the stitched intermediate immediately (already concatenated to outputPath).
   if (outroClip) await fs.unlink(outroClip).catch(() => {});
   await fs.unlink(stitched).catch(() => {});
+
+  // NOTE: We do NOT delete the per-scene normalized clips here anymore.
+  // The caller needs them for the per-scene regenerate flow — each clip
+  // is uploaded to Supabase Storage so a single bad scene can be swapped
+  // without re-rendering the entire video. Caller deletes them after upload.
 
   // Step 5: extract a thumbnail from ~10% in.
   await runFFmpeg([
@@ -590,6 +622,9 @@ async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbna
     "-q:v", "3",
     thumbnailPath
   ], { timeoutMs: 30000, label: "runway:thumbnail" });
+
+  // Return the normalized clips so the caller can upload them for regen support.
+  return { normalizedClips };
 }
 
 // Build a single ffmpeg filter_complex chain that crossfades through every
@@ -979,6 +1014,85 @@ async function downloadFile(url, destPath) {
 /* =================================================================
    Supabase upload
    ================================================================= */
+
+// Per-scene clip uploader for regenerate-scene support. Pushes each
+// normalized per-scene MP4 to Supabase Storage with a deterministic
+// filename (scene-000.mp4 → scene-023.mp4) inside the job folder, and
+// returns the scene metadata array that goes into the audit log.
+// Failures here are warned-and-skipped; regen for that one scene will
+// fall back to "not available" in the UI but the rest of the render
+// still ships.
+export async function uploadPerSceneClips({ manifest, jobId, normalizedClips, clipResults, pathPrefix }) {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const bucket = process.env.SUPABASE_GENERATED_VIDEOS_BUCKET || "generated-videos";
+  if (!supabaseUrl || !serviceRoleKey) {
+    return [];
+  }
+  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+  const ownerId = slug(manifest.project?.userId || manifest.project?.id || "demo");
+  const basePath = `${ownerId}/${pathPrefix}/${jobId}`;
+
+  // Cross-reference normalizedClips against clipResults so we have full
+  // per-scene metadata (photoId, runwayPrompt, fallback flag, etc).
+  const resultsByIndex = new Map(clipResults.map((c) => [c.sceneIndex, c]));
+  const sceneMeta = [];
+  for (const clip of normalizedClips) {
+    const original = resultsByIndex.get(clip.sceneIndex) || {};
+    const sceneIndex = clip.sceneIndex;
+    const filename = `scene-${String(sceneIndex).padStart(3, "0")}.mp4`;
+    const storagePath = `${basePath}/${filename}`;
+    let clipUrl = "";
+    try {
+      const buffer = await fs.readFile(clip.clipPath);
+      const result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
+        contentType: "video/mp4",
+        upsert: true
+      });
+      if (!result.error) {
+        clipUrl = supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;
+      } else {
+        console.warn(`[upload] scene ${sceneIndex} clip upload failed: ${result.error.message}`);
+      }
+    } catch (err) {
+      console.warn(`[upload] scene ${sceneIndex} clip read/upload failed: ${err.message || err}`);
+    }
+    // Even if upload failed, still include the metadata — clipUrl will
+    // just be empty and the regen UI will show that scene as "not regenerable".
+    sceneMeta.push({
+      sceneIndex,
+      photoId: original.photoId || "",
+      photoUrl: pickSceneImageUrl(original, manifest),
+      clipUrl,
+      storagePath: clipUrl ? storagePath : "",
+      roomType: original.roomType || inferRoomTypeFromScene(original, manifest) || "",
+      cameraMotion: original.cameraMotion || "",
+      duration: Number(clip.duration || original.duration || 5),
+      runwayPrompt: original.runwayPrompt || "",
+      wasFallback: Boolean(original.fallback)
+    });
+  }
+  return sceneMeta;
+}
+
+// Look up the durable photo URL for a scene from the manifest's
+// orderedPhotos. Used to build the scenes audit metadata.
+function pickSceneImageUrl(sceneOrResult, manifest) {
+  if (!sceneOrResult) return "";
+  const photoId = sceneOrResult.photoId;
+  if (!photoId) return "";
+  const photo = (manifest.orderedPhotos || []).find((p) => p.id === photoId);
+  if (!photo) return "";
+  return photo.durableUrl || photo.durable_url || photo.publicUrl || photo.public_url || "";
+}
+
+function inferRoomTypeFromScene(sceneOrResult, manifest) {
+  if (sceneOrResult?.roomType) return sceneOrResult.roomType;
+  const manifestScene = (manifest.scenes || []).find((s) => s.photoId === sceneOrResult?.photoId);
+  return manifestScene?.roomType || "";
+}
 
 async function uploadRunwayAssets({ manifest, jobId, variants, shorts, thumbnailPath, onProgress }) {
   return uploadDeliverables({

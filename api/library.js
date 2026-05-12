@@ -110,6 +110,10 @@ export default async function handler(request, response) {
         socialShortCount: Number(row.social_short_count || 0),
         formatsCount: Number(row.formats_count || 1),
         narrationApplied: Boolean(row.narration_applied),
+        // Per-scene metadata for the LibraryDetailModal's regen UI. Older
+        // renders predating the v16 migration won't have this — UI shows a
+        // "regen requires re-render once" hint in that case.
+        scenes: Array.isArray(row.scenes) ? row.scenes : [],
         createdAt: row.created_at
       })),
       pagination: { limit, offset, returned: rows.length }

@@ -1,6 +1,7 @@
 import http from "node:http";
 import { renderEstateMotionJob } from "./src/render-job.mjs";
 import { renderRunwayJob } from "./src/runway-job.mjs";
+import { regenerateScene } from "./src/regenerate-job.mjs";
 
 // Route to the correct render engine based on manifest.engine.
 // "remotion" (default) — existing Ken-Burns photo-animation pipeline.
@@ -38,7 +39,7 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.05.07-v14-compliance-mode",
+      version: "2026.05.12-v16-per-scene-regen",
       bootedAt: BOOTED_AT,
       uptimeSec: Math.round(process.uptime()),
       activeJobs: jobs.size,
@@ -46,8 +47,19 @@ const server = http.createServer(async (request, response) => {
         ffmpegTimeouts: true,
         overallJobTimeout: "18min",
         narrationFailSoft: true,
-        runwayFallbacks: ["ken_burns", "simple_concat", "letterbox_wide"]
-      }
+        runwayFallbacks: ["ken_burns", "simple_concat", "letterbox_wide"],
+        perScenePersistence: true,
+        perSceneRegenerate: true
+      },
+      endpoints: [
+        "GET /health",
+        "GET /version",
+        "POST /render",
+        "POST /render/sync",
+        "GET /render/status/:jobId",
+        "POST /regenerate-scene",
+        "POST /regenerate-scene/sync"
+      ]
     });
     return;
   }
@@ -68,8 +80,16 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method !== "POST" || !["/render", "/render/sync"].includes(request.url || "")) {
-    sendJson(response, 404, { status: "failed", error: "Use POST /render or GET /render/status/:jobId." });
+  const renderRoutes = ["/render", "/render/sync"];
+  const regenRoutes = ["/regenerate-scene", "/regenerate-scene/sync"];
+  const isRenderRoute = renderRoutes.includes(request.url || "");
+  const isRegenRoute = regenRoutes.includes(request.url || "");
+
+  if (request.method !== "POST" || (!isRenderRoute && !isRegenRoute)) {
+    sendJson(response, 404, {
+      status: "failed",
+      error: "Use POST /render, POST /regenerate-scene, or GET /render/status/:jobId."
+    });
     return;
   }
 
@@ -80,6 +100,46 @@ const server = http.createServer(async (request, response) => {
 
   try {
     const body = await readJsonBody(request);
+
+    // Per-scene regenerate. The new job runs against the EXISTING jobId — we
+    // intentionally don't mint a new one because the audit row, master URL,
+    // and library entry are all keyed off the original jobId and we want
+    // them to update in place.
+    if (isRegenRoute) {
+      const targetJobId = body?.jobId;
+      if (!targetJobId) {
+        sendJson(response, 400, { status: "failed", error: "regenerate-scene requires jobId." });
+        return;
+      }
+      if (request.url === "/regenerate-scene/sync") {
+        const result = await regenerateScene(body);
+        sendJson(response, 200, result);
+        return;
+      }
+      const now = new Date().toISOString();
+      // Use a derived progress key so the original render's job entry stays
+      // intact for status polling. Format: <jobId>:regen:<sceneIndex>.
+      const progressKey = `${targetJobId}:regen:${body?.sceneIndex ?? "?"}`;
+      const job = {
+        status: "queued",
+        phase: "Preparing scene regenerate",
+        progress: 3,
+        jobId: progressKey,
+        originalJobId: targetJobId,
+        sceneIndex: body?.sceneIndex,
+        mode: body?.mode || "ai",
+        mp4Url: "",
+        thumbnailUrl: "",
+        error: "",
+        createdAt: now,
+        updatedAt: now
+      };
+      jobs.set(progressKey, job);
+      sendJson(response, 202, job);
+      runRegenerateJob(progressKey, body);
+      return;
+    }
+
     if (request.url === "/render/sync") {
       const result = await dispatchRender(body);
       sendJson(response, 200, publishLocalAssetUrls(result));
@@ -164,6 +224,42 @@ async function runRenderJob(jobId, body) {
       phase: "Render failed",
       progress: 100,
       error: error.message || "EstateMotion render worker failed."
+    });
+  }
+}
+
+// Run the per-scene regenerate orchestrator with an overall timeout. Regen
+// only generates 1 new clip + downloads N-1 + re-stitches, so it's much
+// faster than a full render. 10-minute cap is conservative — typical
+// runtime is 60-180 seconds.
+async function runRegenerateJob(progressKey, body) {
+  updateJob(progressKey, { status: "rendering", phase: "Starting regen", progress: 5 });
+  const REGEN_TIMEOUT_MS = 10 * 60 * 1000;
+  const startedAt = Date.now();
+  try {
+    const result = await Promise.race([
+      regenerateScene(body, { onProgress: (patch) => updateJob(progressKey, patch) }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Regenerate exceeded ${REGEN_TIMEOUT_MS / 1000 / 60}-minute hard timeout.`)), REGEN_TIMEOUT_MS)
+      )
+    ]);
+    const elapsedMin = ((Date.now() - startedAt) / 1000 / 60).toFixed(1);
+    console.info(`[server] regen ${progressKey} completed in ${elapsedMin} min`);
+    updateJob(progressKey, {
+      ...result,
+      status: "completed",
+      phase: "Ready to download",
+      progress: 100
+    });
+  } catch (error) {
+    const elapsedMin = ((Date.now() - startedAt) / 1000 / 60).toFixed(1);
+    console.error(`[server] regen ${progressKey} failed after ${elapsedMin} min: ${error.message}`);
+    updateJob(progressKey, {
+      status: "failed",
+      phase: "Regenerate failed",
+      progress: 100,
+      error: error.message || "EstateMotion regenerate failed.",
+      errorCode: error.code || ""
     });
   }
 }

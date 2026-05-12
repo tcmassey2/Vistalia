@@ -55,6 +55,23 @@ const RUNWAY_CONSTRAINT_CLAUSE =
   "Preserve original lighting, time of day, weather, sky. " +
   "Real estate documentary. MLS compliant.";
 
+// Per-room anti-hallucination clauses. Injected into the prompt only when
+// the scene's roomType matches. Gen-4 Turbo responds much better to
+// SPECIFIC named objects ("the refrigerator", "the cabinet doors") than
+// to abstract instructions ("preserve appliances"). Each clause names
+// the actual physical items in that room to anchor the model's spatial
+// understanding. Keep each clause under ~180 chars so the total prompt
+// (motion + subject + visible + style + universal constraint + this)
+// stays under Runway's 1000-char limit.
+const RUNWAY_ROOM_CONSTRAINTS = {
+  kitchen:
+    "Kitchen anchoring: the refrigerator, oven, microwave, dishwasher, range, hood, sink, faucet, cabinets, drawers, and countertops keep their exact shape, door count, and position. Cabinet doors stay closed.",
+  bathroom:
+    "Bathroom anchoring: the shower head, faucets, toilet, vanity, mirror, towel rack, and any tile patterns stay exactly aligned and unchanged. No new tiles or fixtures appear.",
+  bedroom:
+    "Bedroom anchoring: the bed, headboard, nightstands, lamps, art, and any closet doors keep their exact shape and position. Bedding stays still."
+};
+
 const RUNWAY_STYLE_PROMPTS = {
   "Cinematic Luxury":
     "Editorial luxury feel. Warm golden tones. Slow, deliberate, premium pacing.",
@@ -550,6 +567,10 @@ function buildRunwayPrompt(scene, photos, context = {}) {
   const photo = photos.find((p) => p.id === scene.photoId) || {};
   const motionClause = RUNWAY_MOTION_PROMPTS[scene.cameraMotion] || RUNWAY_MOTION_PROMPTS.push_in;
   const styleClause = RUNWAY_STYLE_PROMPTS[context.selectedStyle] || RUNWAY_STYLE_PROMPTS["Cinematic Luxury"];
+  // Room-specific anchoring — only kitchens, bathrooms, and bedrooms get
+  // an additional named-object constraint. Other room types use only the
+  // universal constraint clause.
+  const roomClause = RUNWAY_ROOM_CONSTRAINTS[scene.roomType] || "";
 
   const subject = describeSubject(scene, photo);
   const visibleClause = scene.visibleFeatures && scene.visibleFeatures.length
@@ -557,15 +578,29 @@ function buildRunwayPrompt(scene, photos, context = {}) {
     : "";
 
   // Order matters: motion first (most important to Runway), then subject,
-  // then visible elements (anchoring), then style, then constraints (last so
-  // they override style if conflict).
-  return [
+  // then visible elements (anchoring), then style, then universal
+  // constraint, then the room-specific clause LAST so it has the most
+  // weight in the model's attention.
+  const parts = [
     motionClause,
     `Subject: ${subject}.`,
     visibleClause.trim(),
     styleClause,
-    RUNWAY_CONSTRAINT_CLAUSE
-  ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    RUNWAY_CONSTRAINT_CLAUSE,
+    roomClause
+  ].filter(Boolean);
+
+  let combined = parts.join(" ").replace(/\s+/g, " ").trim();
+  // Hard cap at 1000 chars — Runway's API rejects longer prompts. If we
+  // exceed it, drop room-specific clause first (universal constraint is
+  // the safety net), then drop visible elements.
+  if (combined.length > 1000 && roomClause) {
+    combined = parts.filter((p) => p !== roomClause).join(" ").replace(/\s+/g, " ").trim();
+  }
+  if (combined.length > 1000) {
+    combined = combined.slice(0, 990) + " ...";
+  }
+  return combined;
 }
 
 function describeSubject(scene, photo) {

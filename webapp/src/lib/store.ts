@@ -63,6 +63,10 @@ interface AppState {
   // for every scene. Zero hallucination but no AI motion. Right choice
   // for MLS-required listings where faithfulness > flair.
   complianceMode: boolean;
+  // Default ON — surgical fallback for kitchens + bathrooms (Gen-4 Turbo's
+  // worst-case rooms because of parallel-edge appliance/cabinet/tile
+  // surfaces). Rest of the scenes still use full Cinematic AI motion.
+  protectHighRiskRooms: boolean;
   editPlan: EditPlan | null;
   renderJob: RenderJobStatus | null;
 
@@ -94,6 +98,7 @@ interface AppState {
   setNarrationEnabled: (enabled: boolean) => void;
   setCrossfadesEnabled: (enabled: boolean) => void;
   setComplianceMode: (enabled: boolean) => void;
+  setProtectHighRiskRooms: (enabled: boolean) => void;
   setEditPlan: (plan: EditPlan | null) => void;
   setRenderJob: (job: RenderJobStatus | null) => void;
   setLoading: (msg: string) => void;
@@ -156,6 +161,7 @@ const emptyProject = () => ({
   narrationEnabled: false,
   crossfadesEnabled: false,
   complianceMode: false,
+  protectHighRiskRooms: true, // default ON — surgical hallucination prevention
   editPlan: null as EditPlan | null,
   renderJob: null as RenderJobStatus | null
 });
@@ -274,6 +280,7 @@ export const useStore = create<AppState>((set, get) => ({
   setNarrationEnabled: (enabled) => set({ narrationEnabled: enabled, editPlan: null }),
   setCrossfadesEnabled: (enabled) => set({ crossfadesEnabled: enabled }),
   setComplianceMode: (enabled) => set({ complianceMode: enabled, editPlan: null }),
+  setProtectHighRiskRooms: (enabled) => set({ protectHighRiskRooms: enabled }),
   setEditPlan: (plan) => set({ editPlan: plan }),
   setRenderJob: (job) => set({ renderJob: job }),
   setLoading: (msg) => set({ loading: msg }),

@@ -21,7 +21,7 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 // effect on next deploy).
 let auditTableMissing = false;
 
-export async function writeRenderAudit({ manifest, jobId, engine, upload, narration }) {
+export async function writeRenderAudit({ manifest, jobId, engine, upload, narration, scenes }) {
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return;
   if (auditTableMissing) return; // already determined the table doesn't exist
   const organizationId = manifest?.organizationId || null;
@@ -43,7 +43,9 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     formats_count: Object.keys(upload?.formats || {}).length || 1,
     narration_applied: Boolean(narration?.applied),
     narration_voice_id: narration?.voiceId || null,
-    status: "completed"
+    status: "completed",
+    // Per-scene metadata for regenerate-scene flow. JSONB column.
+    scenes: Array.isArray(scenes) ? scenes : []
   };
 
   try {
@@ -70,5 +72,59 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     }
   } catch (err) {
     console.warn("[EstateMotion audit-log] write threw:", err.message || err);
+  }
+}
+
+// Update an existing audit row — used by the regenerate-scene flow when
+// the new master + scene clip + scenes array need to overwrite the
+// previous render's row. Matched by job_id.
+export async function updateRenderAudit({ jobId, patch }) {
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return;
+  if (auditTableMissing) return;
+  if (!jobId || !patch) return;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/render_audit_log?job_id=eq.${encodeURIComponent(jobId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          apikey: SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal"
+        },
+        body: JSON.stringify(patch)
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.warn(`[EstateMotion audit-log] update failed (${res.status}):`, text.slice(0, 240));
+    }
+  } catch (err) {
+    console.warn("[EstateMotion audit-log] update threw:", err.message || err);
+  }
+}
+
+// Fetch a single audit row by job_id — used by /api/regenerate-scene to
+// load the original scenes array before re-rolling one of them.
+export async function readRenderAudit(jobId) {
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return null;
+  if (auditTableMissing) return null;
+  if (!jobId) return null;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/render_audit_log?job_id=eq.${encodeURIComponent(jobId)}&select=*&limit=1`,
+      {
+        headers: {
+          apikey: SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SERVICE_ROLE_KEY}`
+        }
+      }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json().catch(() => []);
+    return Array.isArray(rows) && rows.length ? rows[0] : null;
+  } catch {
+    return null;
   }
 }

@@ -244,7 +244,25 @@ export interface LibraryEntry {
   socialShortCount: number;
   formatsCount: number;
   narrationApplied: boolean;
+  // Per-scene metadata (one entry per scene in the rendered video). Populated
+  // for renders made with worker v16+ where each scene was persisted to
+  // Supabase Storage. Empty for older renders — UI shows a "re-render once
+  // to enable per-scene regen" hint in that case.
+  scenes: LibrarySceneEntry[];
   createdAt: string;
+}
+
+// One scene's metadata in a library entry — drives the regen UI.
+export interface LibrarySceneEntry {
+  sceneIndex: number;
+  photoId: string;
+  photoUrl: string;     // Durable URL to the source listing photo
+  clipUrl: string;      // Durable URL to the persisted scene-NNN.mp4
+  roomType: string;
+  cameraMotion: string;
+  duration: number;
+  runwayPrompt: string;
+  wasFallback: boolean; // true if this scene was rendered via Ken Burns
 }
 
 export interface OrgAuditLogEntry {

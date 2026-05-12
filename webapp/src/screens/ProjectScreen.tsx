@@ -117,6 +117,7 @@ export default function ProjectScreen() {
           <EngineToggle engine={renderEngine} onChange={setEngine} />
           <NarrationToggle />
           <CrossfadeToggle />
+          <ProtectHighRiskRoomsToggle />
           <ComplianceModeToggle />
           <RenderControls />
           {renderJob && <RenderStatusPanel />}
@@ -209,6 +210,56 @@ function CrossfadeToggle() {
           {enabled
             ? `0.5s crossfades between every scene. Adds ~3-5 min to render and needs the Render Pro 4GB worker — turn off if your renders hang.`
             : `Hard cuts between scenes. Fast and reliable on any worker plan. Recommended unless you're on Render Pro+.`}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function ProtectHighRiskRoomsToggle() {
+  const enabled = useStore((s) => s.protectHighRiskRooms);
+  const setEnabled = useStore((s) => s.setProtectHighRiskRooms);
+  const complianceMode = useStore((s) => s.complianceMode);
+  // Greyed out (and irrelevant) when full Compliance Mode is on — that
+  // already routes EVERY scene through Ken Burns.
+  const disabled = complianceMode;
+  return (
+    <button
+      type="button"
+      onClick={() => !disabled && setEnabled(!enabled)}
+      disabled={disabled}
+      className={cn(
+        "card-press flex items-center gap-3 p-4 rounded-xl bg-surface border text-left transition-colors",
+        disabled ? "opacity-50 cursor-not-allowed border-edge" :
+        enabled ? "border-gold bg-surface-raised" : "border-edge hover:border-edge-strong"
+      )}
+    >
+      <div
+        className={cn(
+          "flex-shrink-0 w-10 h-6 rounded-full border transition-colors relative",
+          enabled && !disabled ? "bg-gold border-gold" : "bg-surface-input border-edge-strong"
+        )}
+      >
+        <div
+          className={cn(
+            "absolute top-0.5 w-5 h-5 rounded-full bg-paper transition-all",
+            enabled ? "left-[18px]" : "left-0.5"
+          )}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold tracking-tightish flex items-center gap-2">
+          Protect kitchens &amp; bathrooms
+          {enabled && !disabled && (
+            <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold text-paper">SMART</span>
+          )}
+        </div>
+        <div className="text-xs text-ink-muted mt-0.5">
+          {disabled
+            ? `Skipped — Compliance Mode already routes every scene through Ken Burns.`
+            : enabled
+            ? `Surgical fix: kitchens and bathrooms use Ken Burns (no hallucination risk) while every other room still gets full Cinematic AI motion. Recommended default.`
+            : `Every scene including kitchens uses Cinematic AI. Highest quality, highest hallucination risk on appliance-heavy rooms.`}
         </div>
       </div>
     </button>
@@ -1691,6 +1742,7 @@ function RenderControls() {
   const narrationEnabled = useStore((s) => s.narrationEnabled);
   const crossfadesEnabled = useStore((s) => s.crossfadesEnabled);
   const complianceMode = useStore((s) => s.complianceMode);
+  const protectHighRiskRooms = useStore((s) => s.protectHighRiskRooms);
   const renderJob = useStore((s) => s.renderJob);
   const projectId = useStore((s) => s.projectId);
   const projectTitle = useStore((s) => s.projectTitle);
@@ -1801,7 +1853,8 @@ function RenderControls() {
         brandKit: branding,
         organizationId: organization?.id || null,
         skipNarration: !narrationEnabled,
-        complianceMode
+        complianceMode,
+        protectHighRiskRooms
       };
 
       // 3. Submit

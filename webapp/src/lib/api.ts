@@ -191,6 +191,14 @@ export interface RenderManifest {
   // credits burned. Trade-off: less "AI motion" feel. Right default for
   // listings that need MLS-grade faithfulness above all.
   complianceMode?: boolean;
+  // Surgical fallback — route only kitchens and bathrooms (the highest-
+  // hallucination room types) through Ken Burns while letting the rest
+  // use Cinematic AI. Cleaner than all-or-nothing Compliance Mode.
+  protectHighRiskRooms?: boolean;
+  // Per-scene regenerate-only: skip ElevenLabs re-synthesis even if the
+  // original render had narration. Saves ~30s per regen and avoids
+  // resplicing voice tracks against a swapped scene's new timing.
+  regenSkipNarration?: boolean;
 }
 
 export interface SubmitRenderResult {
@@ -258,6 +266,57 @@ export async function fetchLibrary(args: { limit?: number; offset?: number } = {
     return { status: "failed", library: [], error: payload.error || `Library fetch failed (${res.status}).` };
   }
   return res.json();
+}
+
+/* ============================================================
+   /api/regenerate-scene — surgical single-scene re-render
+   ============================================================ */
+
+export type RegenerateMode = "ai" | "kenburns";
+
+export interface RegenerateSceneResult {
+  status: "queued" | "rendering" | "completed" | "failed";
+  jobId?: string;            // progressKey: "<originalJobId>:regen:<sceneIndex>"
+  originalJobId?: string;
+  sceneIndex?: number;
+  mode?: RegenerateMode;
+  phase?: string;
+  progress?: number;
+  mp4Url?: string;
+  error?: string;
+  errorCode?: string;
+  upgradeRequired?: boolean;
+  currentTier?: string;
+}
+
+// Submit a per-scene regenerate. Returns immediately (202) with a progressKey
+// the caller polls via pollRender(progressKey) — the worker stores regen
+// progress under the same /render/status/:id surface that full renders use.
+export async function submitRegenerateScene(args: {
+  jobId: string;
+  sceneIndex: number;
+  mode: RegenerateMode;
+  manifest: RenderManifest;
+}): Promise<RegenerateSceneResult> {
+  const headers = await authHeaders();
+  const res = await fetch("/api/regenerate-scene", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(args)
+  });
+  const payload = await res.json().catch(() => ({} as RegenerateSceneResult));
+  if (res.status === 402) {
+    return {
+      status: "failed",
+      error: payload.error || "Plan upgrade required.",
+      upgradeRequired: true,
+      currentTier: payload.currentTier
+    };
+  }
+  if (!res.ok) {
+    throw new Error(payload.error || `Regenerate-scene failed (${res.status}).`);
+  }
+  return payload;
 }
 
 /* ============================================================
