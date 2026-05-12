@@ -529,13 +529,27 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   const brand = normalizeBrandKitForFFmpeg(manifest.brandKit || {});
 
   // Step 1: normalize each clip to a uniform codec / framerate / resolution,
-  // bake in the persistent brand watermark, AND apply a unified cinematic
-  // color grade (subtle warm, contrast bump, saturation pull) so every clip
-  // has the same look despite Runway's per-clip color variance. The grade
-  // is what turns "AI-rendered footage" into "looks like one production
-  // grading pass."
+  // bake in the persistent brand watermark + color grade + corner headshot.
+  //
+  // v20 OOM fix: corner headshot is baked HERE per-clip instead of in a
+  // separate post-stitch pass. The post-stitch approach (v19) ran a single
+  // big ffmpeg overlay over ~120s of stitched video — peak memory was
+  // ~250MB just for that step on top of the existing pipeline, which
+  // tipped Render Standard's 2GB ceiling. Per-clip overlay is ~50MB peak
+  // and runs serially, never accumulating.
   const watermarkFilter = buildWatermarkDrawtext(brand, dimensions);
   const colorGrade = COLOR_GRADE;
+  // Pre-render the small corner headshot ONCE. Reused as a 2nd input on
+  // every normalize call below. Falls back to null if the user has no
+  // headshot URL or the pre-render fails — in that case we use -vf and
+  // skip the overlay entirely.
+  const cornerHeadshotSize = Math.round(dimensions.width * 0.12);
+  const cornerHeadshotPath = brand.headshotUrl
+    ? await buildHeadshotCircle(brand.headshotUrl, cornerHeadshotSize, tempDir).catch(() => null)
+    : null;
+  const cornerOverlayX = dimensions.width - cornerHeadshotSize - 24;
+  const cornerOverlayY = 24;
+
   const normalizedClips = [];
   // Per-clip granular progress so the bar visibly moves through this step
   // instead of sitting at 76%. We split the 76→80 range across the clips.
@@ -544,37 +558,62 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   for (let i = 0; i < clipResults.length; i++) {
     const clip = clipResults[i];
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
-    const filterChain = [
+    const baseFilters = [
       `fps=30`,
       `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=lanczos`,
       `crop=${dimensions.width}:${dimensions.height}`,
       colorGrade,
       ...(watermarkFilter ? [watermarkFilter] : [])
     ].join(",");
-    await runFFmpeg([
-      "-y",
-      "-threads", "1",
-      "-i", clip.clipPath,
-      "-vf", filterChain,
-      "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-preset", ENCODE_PRESET,
-      "-crf", ENCODE_CRF_MASTER,
-      // v19 memory caps — keep x264 from running away with RAM on
-      // Render Standard's 2GB ceiling.
-      "-x264-params", X264_PARAMS,
-      "-bufsize", BUFSIZE,
-      "-an",
-      // 180s timeout — superfast + crf=19 is ~1.4× slower than
-      // ultrafast/crf=21. Still well within the overall 18-min job ceiling.
-      normalized
-    ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
+
+    if (cornerHeadshotPath) {
+      // Two-input filter_complex: base video → grade + watermark → overlay headshot.
+      const filterComplex =
+        `[0:v]${baseFilters}[bg];` +
+        `[bg][1:v]overlay=${cornerOverlayX}:${cornerOverlayY}[vout]`;
+      await runFFmpeg([
+        "-y",
+        "-threads", "1",
+        "-i", clip.clipPath,
+        "-i", cornerHeadshotPath,
+        "-filter_complex", filterComplex,
+        "-map", "[vout]",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", ENCODE_PRESET,
+        "-crf", ENCODE_CRF_MASTER,
+        "-x264-params", X264_PARAMS,
+        "-bufsize", BUFSIZE,
+        "-an",
+        normalized
+      ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
+    } else {
+      // No headshot — simpler single-input -vf chain.
+      await runFFmpeg([
+        "-y",
+        "-threads", "1",
+        "-i", clip.clipPath,
+        "-vf", baseFilters,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", ENCODE_PRESET,
+        "-crf", ENCODE_CRF_MASTER,
+        "-x264-params", X264_PARAMS,
+        "-bufsize", BUFSIZE,
+        "-an",
+        normalized
+      ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
+    }
+
     normalizedClips.push({ ...clip, clipPath: normalized });
     options.onProgress?.({
       phase: `Polishing scene ${i + 1}/${clipResults.length}`,
       progress: NORMALIZE_PROGRESS_START + Math.floor(((i + 1) / clipResults.length) * NORMALIZE_PROGRESS_RANGE)
     });
   }
+  // Clean up the corner headshot asset — every normalize call already
+  // consumed it. Keeping it around just hogs disk.
+  if (cornerHeadshotPath) await fs.unlink(cornerHeadshotPath).catch(() => {});
 
   // Step 2: prepare brand assets (headshot circle + brokerage logo) for the
   // outro card. These ffmpeg calls are tiny — fractions of a second each.
@@ -641,56 +680,10 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     });
   }
 
-  // v19: Persistent corner headshot — agent's brand mark in the upper-right
-  // corner of every photo scene. Time-gated to disappear during the outro
-  // card (which already has a big centered headshot — adding the corner
-  // one would create awkward dual-headshot composition).
-  // Single ffmpeg pass over the stitched master is much cheaper than baking
-  // the overlay into each normalized clip (24× ffmpeg calls would do).
-  let postBrandStitched = stitched;
-  if (brand.headshotUrl) {
-    try {
-      const cornerSize = Math.round(dimensions.width * 0.12); // ~12% of width
-      const cornerHeadshotPath = await buildHeadshotCircle(brand.headshotUrl, cornerSize, tempDir);
-      if (cornerHeadshotPath) {
-        // Total seconds of photo scenes (excludes outro). Each normalized clip
-        // carries its own duration; outroClip adds 5s onto the end of the stitch.
-        const scenesDurationSec = normalizedClips.reduce(
-          (sum, c) => sum + Number(c.duration || 5),
-          0
-        );
-        const branded = path.join(tempDir, "stitched-branded.mp4");
-        // Upper-right corner with a 24px inset. enable='lt(t,scenesEnd)' makes
-        // the overlay appear ONLY during the photo scenes — the outro is left
-        // clean so its own centered headshot stays the visual focus.
-        const overlayX = dimensions.width - cornerSize - 24;
-        const overlayY = 24;
-        const filter =
-          `[0:v][1:v]overlay=${overlayX}:${overlayY}:` +
-          `enable='lt(t\\,${scenesDurationSec.toFixed(2)})'`;
-        await runFFmpeg([
-          "-y",
-          "-threads", "1",
-          "-i", stitched,
-          "-i", cornerHeadshotPath,
-          "-filter_complex", filter,
-          "-c:v", "libx264",
-          "-pix_fmt", "yuv420p",
-          "-preset", ENCODE_PRESET,
-          "-crf", ENCODE_CRF_MASTER,
-          "-x264-params", X264_PARAMS,
-          "-bufsize", BUFSIZE,
-          "-c:a", "copy",
-          branded
-        ], { timeoutMs: 4 * 60 * 1000, label: "runway:corner-headshot" });
-        postBrandStitched = branded;
-        await fs.unlink(cornerHeadshotPath).catch(() => {});
-      }
-    } catch (err) {
-      console.warn(`[runway] corner headshot overlay failed (${err.message}). Shipping master without corner mark.`);
-      // postBrandStitched stays = stitched. Render continues without the corner headshot.
-    }
-  }
+  // v20: corner headshot is baked into each clip during normalize above —
+  // no separate post-stitch ffmpeg pass needed. The v19 approach OOM'd
+  // Render Standard 2GB. Per-clip overlay distributes the work and never
+  // accumulates more than one ffmpeg process worth of memory at a time.
 
   // Step 4: optional audio mix from manifest.musicMood mapping. We honor a
   // RUNWAY_MUSIC_<MOOD>_URL env var pointing to a remote MP3. If no music
@@ -700,7 +693,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     await runFFmpeg([
       "-y",
       "-threads", "1",
-      "-i", postBrandStitched,
+      "-i", stitched,
       "-i", musicUrl,
       "-c:v", "copy",
       "-c:a", "aac",
@@ -711,14 +704,12 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       outputPath
     ], { timeoutMs: 120000, label: "runway:music-mix" });
   } else {
-    await fs.copyFile(postBrandStitched, outputPath);
+    await fs.copyFile(stitched, outputPath);
   }
 
-  // Free intermediates. If the corner-headshot pass produced a branded file
-  // separate from the raw stitch, both are now consumed by outputPath.
+  // Free the stitched intermediate (already concatenated into outputPath).
   if (outroClip) await fs.unlink(outroClip).catch(() => {});
   await fs.unlink(stitched).catch(() => {});
-  if (postBrandStitched !== stitched) await fs.unlink(postBrandStitched).catch(() => {});
 
   // NOTE: We do NOT delete the per-scene normalized clips here anymore.
   // The caller needs them for the per-scene regenerate flow — each clip
