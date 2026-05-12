@@ -467,8 +467,15 @@ function buildZoompanExpr(motion, totalFrames, dim) {
   // The s= argument MUST equal the final scene dimensions or concat fails.
   const s = `${dim.width}x${dim.height}`;
   const fps = 30;
-  // Common base: 4K-ish input scaling so zoompan has resolution headroom.
-  const PRE = `scale=${dim.width * 2}:${dim.height * 2}:force_original_aspect_ratio=increase,crop=${dim.width * 2}:${dim.height * 2}`;
+  // v21 memory fix: pre-scale at 1.3× output instead of 2×. The previous
+  // 2× pre-scale held a 2160×3840×4 ≈ 33 MB frame buffer in zoompan's
+  // internal state, which OOM'd the Ken Burns fallback on Render Standard
+  // 2GB the moment Runway dropped a scene and we re-encoded the photo.
+  // Max zoompan zoom is 1.12× (see expressions below), so 1.3× headroom
+  // is plenty for crisp motion. Per-frame buffer drops to ~14 MB.
+  const PRE_W = Math.round(dim.width * 1.3);
+  const PRE_H = Math.round(dim.height * 1.3);
+  const PRE = `scale=${PRE_W}:${PRE_H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${PRE_W}:${PRE_H}`;
   if (motion === "pull_out") {
     // Start zoomed in, pull back to neutral.
     return `${PRE},zoompan=z='1.12-0.0008*on':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`;
