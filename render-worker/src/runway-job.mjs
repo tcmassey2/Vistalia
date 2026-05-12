@@ -242,9 +242,12 @@ async function generateClip(scene, manifest, tempDir, sceneIndex) {
   if (!prompt) throw new Error(`Scene ${sceneIndex + 1} missing runwayPrompt. Regenerate edit plan with engine=runway.`);
 
   const config = manifest.runwayConfig || {};
-  const ratio = ratioForRunway(config.ratio);
+  // Default Gen-4 Turbo for new renders. Better shape preservation, fewer
+  // morphed surfaces. The ratio resolver picks the right pixel-pair based
+  // on which model we're hitting (Gen-4 uses 1280:720, Gen-3 uses 1280:768).
+  const model = config.model || process.env.RUNWAY_MODEL || "gen4_turbo";
+  const ratio = ratioForRunway(config.ratio, model);
   const duration = clamp(Number(scene.duration || 5) > 5.5 ? 10 : 5, 5, 10);
-  const model = config.model || "gen3a_turbo";
 
   // Submit task — with 429 / 5xx resilience.
   // Runway's task-submit endpoint hits us with three failure modes worth
@@ -1155,12 +1158,21 @@ function pickImageUrl(scene, photo) {
   );
 }
 
-function ratioForRunway(ratio) {
-  // Runway Gen-3 Turbo expects WxH pixel pairs for image_to_video, not aspect strings.
+function ratioForRunway(ratio, model = "gen4_turbo") {
+  // Runway expects WxH pixel pairs for image_to_video, not aspect strings.
+  // Gen-3a Turbo and Gen-4 Turbo use slightly different pixel pairs.
+  // Picking the right pair per model so the API doesn't reject the request.
   const value = String(ratio || "9:16").toLowerCase();
-  if (value === "16:9" || value === "wide") return "1280:768";
-  if (value === "1:1" || value === "square") return "960:960";
-  return "768:1280"; // 9:16 default
+  const isGen4 = String(model || "").toLowerCase().includes("gen4");
+
+  if (value === "16:9" || value === "wide") {
+    return isGen4 ? "1280:720" : "1280:768";
+  }
+  if (value === "1:1" || value === "square") {
+    return "960:960"; // both Gen-3 and Gen-4 accept this
+  }
+  // 9:16 default
+  return isGen4 ? "720:1280" : "768:1280";
 }
 
 // Music selection — checks the bundled local files first, then falls back

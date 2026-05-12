@@ -42,13 +42,18 @@ const RUNWAY_MOTION_PROMPTS = {
 // 400. This compressed version preserves the same constraint coverage
 // (no new objects, no plants, no people, no weather changes) in ~400
 // chars so the motion + style + scene-description pieces fit too.
+// v3 — added explicit shape/design preservation after Runway placed a
+// microwave door on a fridge and added a phantom wall. Gen-3 Turbo morphs
+// object surfaces during temporal interpolation when prompts don't anchor
+// shape strongly enough. Concrete examples ("fridges keep their doors")
+// work better than abstract instructions with Gen-3.
 const RUNWAY_CONSTRAINT_CLAUSE =
-  "STRICT FIDELITY: photorealistic, faithful to source. Apply ONLY the described camera motion. " +
-  "DO NOT add, remove, duplicate, or move any objects, furniture, fixtures, ceiling fans, lights, plants, vegetation, people, animals, vehicles, signage, or text. " +
-  "Preserve the EXACT count of every object visible in the source frame. " +
-  "DO NOT add water ripples, fire, smoke, fog, or particles. " +
-  "Preserve original lighting, time of day, weather, and sky exactly. " +
-  "Real estate documentary style, MLS compliant.";
+  "STRICT FIDELITY: photorealistic, only the described camera motion. " +
+  "Every appliance, door, wall, fixture keeps its EXACT shape, design, count, and position. " +
+  "Fridges keep their doors. Walls stay put — no new partitions or panels. " +
+  "DO NOT add, remove, duplicate, morph, or redesign any object, plant, person, animal, vehicle, sign, text, water, fire, or particle. " +
+  "Preserve original lighting, time of day, weather, sky. " +
+  "Real estate documentary. MLS compliant.";
 
 const RUNWAY_STYLE_PROMPTS = {
   "Cinematic Luxury":
@@ -579,13 +584,18 @@ function describeSubject(scene, photo) {
 
 function defaultRunwayConfig(exportFormat) {
   const format = String(exportFormat || "vertical").toLowerCase();
-  // Runway Gen-3 Turbo accepts these aspect ratios for image_to_video.
-  // Our worker translates these to the actual API ratio strings.
+  // Runway Gen-4 Turbo accepts these aspect ratios for image_to_video.
+  // Our worker translates these to the actual API pixel-pair strings.
   const ratio = format === "wide" || format === "16:9" ? "16:9"
     : format === "square" || format === "1:1" ? "1:1"
     : "9:16";
   return {
-    model: process.env.RUNWAY_MODEL || "gen3a_turbo",
+    // Default Gen-4 Turbo — significantly better object/shape preservation
+    // than Gen-3a Turbo. Roughly 60% more expensive per second of output
+    // ($0.08/sec vs $0.05/sec on Runway's developer pricing) but the
+    // hallucination drop is the difference between MLS-compliant and not.
+    // Override via RUNWAY_MODEL env var if you need to test gen3a_turbo.
+    model: process.env.RUNWAY_MODEL || "gen4_turbo",
     ratio,
     duration: 5,
     seed: null,
