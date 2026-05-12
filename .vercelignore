@@ -1,0 +1,44 @@
+# EstateMotion — files the Vercel deploy should NOT serve publicly.
+#
+# vercel.json sets outputDirectory=. so Vercel deploys the repo root. That's
+# correct for serving index.html (marketing) + /app/ (built React app) + /api/
+# (serverless functions), but it would also expose source-code folders that
+# only matter during build. Filter those out here.
+#
+# Note: .vercelignore only affects what gets SERVED. The build step still has
+# access to every file in the repo (scripts/, webapp/src/, etc.), so this
+# doesn't break the build command.
+
+# React app source — only the build output in /app/ should be public.
+webapp/src
+webapp/node_modules
+webapp/public
+webapp/dist
+webapp/vite.config.ts
+webapp/tsconfig.json
+webapp/tailwind.config.js
+webapp/postcss.config.js
+webapp/package.json
+webapp/package-lock.json
+webapp/index.html
+
+# Render worker code — runs on Render.com, not Vercel.
+render-worker
+
+# Supabase schema + migrations — server-side only.
+supabase
+
+# Build / verification scripts — only needed at build time.
+scripts
+
+# Documentation and dev-time files.
+docs
+DEPLOY_CHECKLIST.md
+README.md
+*.md
+.env.example
+tsconfig.json
+
+# App folder bundled into the repo for legacy reasons (separate from /app
+# which Vite builds at deploy time). Belt-and-suspenders block.
+app/node_modules

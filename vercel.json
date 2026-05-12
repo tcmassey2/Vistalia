@@ -2,6 +2,7 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "buildCommand": "node scripts/verify-static-deploy.mjs && cd webapp && npm install --no-audit --no-fund && npm run build",
+  "outputDirectory": ".",
   "rewrites": [
     { "source": "/demo", "destination": "/app/index.html" },
     { "source": "/demo/:path*", "destination": "/app/index.html" },
