@@ -34,14 +34,25 @@ export async function getSession(): Promise<Session | null> {
   }
 }
 
-export async function signUp(email: string, password: string) {
-  const { data, error } = await supabase().auth.signUp({ email, password });
+export async function signUp(email: string, password: string, captchaToken?: string) {
+  // Pass captchaToken through when present. Supabase verifies it server-side
+  // when CAPTCHA is enabled in the Auth settings; ignored otherwise. So
+  // shipping this code is safe even if hCaptcha isn't configured yet.
+  const { data, error } = await supabase().auth.signUp({
+    email,
+    password,
+    options: captchaToken ? { captchaToken } : undefined
+  });
   if (error) throw error;
   return data;
 }
 
-export async function signIn(email: string, password: string) {
-  const { data, error } = await supabase().auth.signInWithPassword({ email, password });
+export async function signIn(email: string, password: string, captchaToken?: string) {
+  const { data, error } = await supabase().auth.signInWithPassword({
+    email,
+    password,
+    options: captchaToken ? { captchaToken } : undefined
+  });
   if (error) throw error;
   return data;
 }
@@ -82,6 +93,82 @@ export async function resendConfirmationEmail(email: string) {
     email
   });
   if (error) throw error;
+}
+
+/* ============================================================
+   2FA / TOTP — Supabase auth.mfa
+   ============================================================
+   Two-step flow:
+     1. enrollTotpFactor() returns a QR-code SVG + secret. User scans it
+        in their authenticator app (1Password, Authy, Google Authenticator).
+     2. verifyTotpEnrollment(factorId, code) confirms the 6-digit code from
+        the app and "activates" the factor. After this, future sign-ins
+        require a TOTP challenge.
+   To turn 2FA off, call unenrollTotpFactor(factorId).
+   On sign-in, if the user has TOTP enrolled, signIn returns an aal2-required
+   session. Use challengeAndVerifyTotp(factorId, code) to finish.
+*/
+
+export async function listMfaFactors() {
+  const { data, error } = await supabase().auth.mfa.listFactors();
+  if (error) throw error;
+  return data?.totp || [];
+}
+
+export async function enrollTotpFactor() {
+  const { data, error } = await supabase().auth.mfa.enroll({ factorType: "totp" });
+  if (error) throw error;
+  return data; // { id, type, totp: { qr_code, secret, uri } }
+}
+
+export async function verifyTotpEnrollment(factorId: string, code: string) {
+  const { data: challenge, error: challengeError } = await supabase().auth.mfa.challenge({ factorId });
+  if (challengeError) throw challengeError;
+  const { data, error } = await supabase().auth.mfa.verify({
+    factorId,
+    challengeId: challenge.id,
+    code
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function unenrollTotpFactor(factorId: string) {
+  const { error } = await supabase().auth.mfa.unenroll({ factorId });
+  if (error) throw error;
+}
+
+// Used when an existing 2FA-enrolled user signs in. Supabase upgrades the
+// session to aal2 once the TOTP code verifies.
+export async function challengeAndVerifyTotp(factorId: string, code: string) {
+  const { data: challenge, error: challengeError } = await supabase().auth.mfa.challenge({ factorId });
+  if (challengeError) throw challengeError;
+  const { data, error } = await supabase().auth.mfa.verify({
+    factorId,
+    challengeId: challenge.id,
+    code
+  });
+  if (error) throw error;
+  return data;
+}
+
+// True when the current session needs a 2FA step to be fully authenticated.
+// Supabase exposes this as currentLevel='aal1' but nextLevel='aal2'.
+export async function needsTotpChallenge(): Promise<{ needed: boolean; factorId?: string }> {
+  try {
+    const { data: aal } = await supabase().auth.mfa.getAuthenticatorAssuranceLevel();
+    if (!aal || aal.currentLevel === aal.nextLevel) return { needed: false };
+    if (aal.currentLevel === "aal1" && aal.nextLevel === "aal2") {
+      // Find the verified TOTP factor we should challenge against.
+      const { data: factors } = await supabase().auth.mfa.listFactors();
+      const verified = factors?.totp?.find((f) => f.status === "verified");
+      if (!verified) return { needed: false };
+      return { needed: true, factorId: verified.id };
+    }
+    return { needed: false };
+  } catch {
+    return { needed: false };
+  }
 }
 
 export function onAuthChange(cb: (session: Session | null) => void) {

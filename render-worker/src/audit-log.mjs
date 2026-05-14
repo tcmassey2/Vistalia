@@ -105,6 +105,54 @@ export async function updateRenderAudit({ jobId, patch }) {
   }
 }
 
+// Upsert in-flight job state to public.render_jobs so the Vercel side can
+// serve status polls even when this worker instance doesn't have the job
+// in its memory Map (e.g., after a restart, or when horizontally scaled).
+// Fire-and-forget — never blocks the render. Workers that opt in get
+// cleaner status-poll behavior; workers that don't still work via the
+// existing in-memory path + library-recovery fallback.
+const WORKER_INSTANCE_ID = process.env.RENDER_INSTANCE_ID || `worker-${Date.now().toString(36)}`;
+let renderJobsTableMissing = false;
+export async function upsertRenderJob({ jobId, userId, status, phase, progress, engine, mp4Url, thumbnailUrl, error }) {
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return;
+  if (renderJobsTableMissing) return;
+  if (!jobId) return;
+  const row = {
+    job_id: jobId,
+    user_id: userId || null,
+    status: status || "rendering",
+    phase: phase || "Render in progress",
+    progress: Math.max(0, Math.min(100, Math.round(Number(progress) || 0))),
+    engine: engine || null,
+    mp4_url: mp4Url || null,
+    thumbnail_url: thumbnailUrl || null,
+    worker_instance_id: WORKER_INSTANCE_ID,
+    error: error || null
+  };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/render_jobs?on_conflict=job_id`, {
+      method: "POST",
+      headers: {
+        apikey: SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal,resolution=merge-duplicates"
+      },
+      body: JSON.stringify(row)
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      if (res.status === 404 && /PGRST205|Could not find the table/i.test(text)) {
+        renderJobsTableMissing = true;
+        console.warn(`[render_jobs] table missing — run supabase/migrations/09_render_jobs_queue.sql to enable horizontal-scaling status fallback. Skipping until worker restart.`);
+      }
+      // Other errors are silent — single-instance topology doesn't depend on this.
+    }
+  } catch {
+    // Network blip — drop the update; next progress event will catch up.
+  }
+}
+
 // Fetch a single audit row by job_id — used by /api/regenerate-scene to
 // load the original scenes array before re-rolling one of them.
 export async function readRenderAudit(jobId) {

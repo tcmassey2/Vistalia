@@ -24,7 +24,6 @@ export default async function handler(request, response) {
   }
 
   if (request.method === "GET") {
-    // (status polling — unchanged)
     try {
       const jobId = new URL(request.url || "", "http://localhost").searchParams.get("jobId");
       if (!jobId) {
@@ -47,6 +46,28 @@ export default async function handler(request, response) {
           ...(process.env.RENDER_WEBHOOK_SECRET ? { Authorization: `Bearer ${process.env.RENDER_WEBHOOK_SECRET}` } : {})
         }
       }, 30000);
+
+      // Fast path — worker has the job in memory.
+      if (workerResponse.ok) {
+        const text = await workerResponse.text();
+        const payload = parseBody(text);
+        response.status(200).json(payload || { status: "rendering" });
+        return;
+      }
+
+      // Slow path — worker doesn't know the job (restart between submit
+      // and poll, or horizontally-scaled worker that's not the one that
+      // accepted the submit). Fall back to the render_jobs table in
+      // Supabase. Migration 09 created this table; opted-in workers
+      // PUT progress to it so multi-instance topology works.
+      if (workerResponse.status === 404) {
+        const fallback = await fetchRenderJobFromSupabase(jobId);
+        if (fallback) {
+          response.status(200).json(fallback);
+          return;
+        }
+      }
+
       const text = await workerResponse.text();
       const payload = parseBody(text);
       response.status(workerResponse.status).json(payload || { status: workerResponse.ok ? "rendering" : "failed", message: text });
@@ -328,6 +349,37 @@ async function enforceTierGuard(request, manifest) {
   }
 
   return { ok: true, userId, state };
+}
+
+// Look up an in-flight render in Supabase render_jobs table when the worker
+// returns 404 (typically because the worker restarted). Returns the same
+// shape as the worker's status response so the frontend can stay generic.
+async function fetchRenderJobFromSupabase(jobId) {
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey || !jobId) return null;
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(jobId)}&select=*&limit=1`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json().catch(() => []);
+    const row = Array.isArray(rows) && rows.length ? rows[0] : null;
+    if (!row) return null;
+    return {
+      jobId: row.job_id,
+      status: row.status || "rendering",
+      phase: row.phase || "Render in progress",
+      progress: Number.isFinite(row.progress) ? row.progress : 0,
+      mp4Url: row.mp4_url || "",
+      thumbnailUrl: row.thumbnail_url || "",
+      engine: row.engine || "remotion",
+      error: row.error || ""
+    };
+  } catch {
+    return null;
+  }
 }
 
 // Bump the trial-renders counter via the increment_trial_render RPC.

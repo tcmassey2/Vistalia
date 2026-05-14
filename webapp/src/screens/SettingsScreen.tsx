@@ -3,6 +3,7 @@ import { useStore } from "../lib/store";
 import { fetchUsage, openBillingPortal, deleteAccount } from "../lib/api";
 import { signOut, requestPasswordReset } from "../lib/supabase";
 import type { UserProfile } from "../lib/types";
+import TwoFactorSection from "../components/TwoFactorSection";
 
 /**
  * SettingsScreen — account + subscription management.
@@ -176,6 +177,13 @@ export default function SettingsScreen() {
             </div>
           </Field>
         </div>
+      </Section>
+
+      {/* ============================================================
+          Two-factor authentication
+          ============================================================ */}
+      <Section title="Security" subtitle="Stronger account protection.">
+        <TwoFactorSection />
       </Section>
 
       {/* ============================================================

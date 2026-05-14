@@ -2,6 +2,7 @@ import http from "node:http";
 import { renderEstateMotionJob } from "./src/render-job.mjs";
 import { renderRunwayJob } from "./src/runway-job.mjs";
 import { regenerateScene } from "./src/regenerate-job.mjs";
+import { upsertRenderJob } from "./src/audit-log.mjs";
 
 // Route to the correct render engine based on manifest.engine.
 // "remotion" (default) — existing Ken-Burns photo-animation pipeline.
@@ -164,6 +165,10 @@ const server = http.createServer(async (request, response) => {
       phase: "Preparing video",
       progress: 5,
       jobId,
+      // Stash userId on the in-memory job so updateJob's Supabase mirror
+      // can attribute the render_jobs row back to its owner.
+      userId: body?.manifest?.project?.userId || null,
+      engine: String(body?.manifest?.engine || "remotion").toLowerCase(),
       mp4Url: "",
       thumbnailUrl: "",
       error: "",
@@ -278,11 +283,26 @@ async function runRegenerateJob(progressKey, body) {
 
 function updateJob(jobId, patch) {
   const current = jobs.get(jobId) || { jobId };
-  jobs.set(jobId, {
+  const next = {
     ...current,
     ...patch,
     updatedAt: new Date().toISOString()
-  });
+  };
+  jobs.set(jobId, next);
+  // Mirror to Supabase render_jobs (fire-and-forget). Lets the Vercel
+  // /api/render?jobId fallback serve correct progress when this worker
+  // instance has restarted between submit and poll.
+  upsertRenderJob({
+    jobId,
+    userId: next.userId || next.body?.manifest?.project?.userId || null,
+    status: next.status,
+    phase: next.phase,
+    progress: next.progress,
+    engine: next.engine,
+    mp4Url: next.mp4Url,
+    thumbnailUrl: next.thumbnailUrl,
+    error: next.error
+  }).catch(() => {});
 }
 
 function publishLocalAssetUrls(result = {}) {

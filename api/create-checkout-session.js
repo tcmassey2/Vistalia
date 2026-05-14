@@ -17,7 +17,11 @@ import { rateLimit } from "./_lib/rate-limit.js";
 const TIER_TO_PRICE_ENV = {
   quick_reel: "STRIPE_PRICE_QUICK_REEL",
   cinematic_ai: "STRIPE_PRICE_CINEMATIC_AI",
-  cinematic_4k: "STRIPE_PRICE_CINEMATIC_4K"
+  cinematic_4k: "STRIPE_PRICE_CINEMATIC_4K",
+  // Brokerage-tier subscription. Set STRIPE_PRICE_BROKERAGE on Vercel
+  // to a recurring per-seat price; quantity is set from the request
+  // body's `seats` field (default 5, min 3, max 100).
+  brokerage: "STRIPE_PRICE_BROKERAGE"
 };
 
 export default async function handler(request, response) {
@@ -68,18 +72,30 @@ export default async function handler(request, response) {
     const appUrl = process.env.APP_URL || `${request.headers["x-forwarded-proto"] || "https"}://${request.headers.host}`;
     const returnUrl = String(body.returnUrl || `${appUrl}/app`);
 
-    const session = await stripe("/v1/checkout/sessions", "POST", {
+    // Brokerage tier is per-seat. Quantity comes from the request; clamp
+    // sensibly so a typo can't 100x the bill. Solo tiers stay at qty=1.
+    const isBrokerage = tier === "brokerage";
+    const seatsRaw = Number(body?.seats || 5);
+    const seats = isBrokerage ? Math.max(3, Math.min(100, Math.round(seatsRaw))) : 1;
+    const orgId = isBrokerage ? String(body?.organizationId || "").trim() : "";
+
+    const sessionParams = {
       "mode": "subscription",
       "customer": customerId,
       "client_reference_id": userId,
       "line_items[0][price]": priceId,
-      "line_items[0][quantity]": "1",
+      "line_items[0][quantity]": String(seats),
       "success_url": `${returnUrl}?checkout=success&tier=${encodeURIComponent(tier)}`,
       "cancel_url": `${returnUrl}?checkout=cancelled`,
       "subscription_data[metadata][user_id]": userId,
       "subscription_data[metadata][tier]": tier,
       "allow_promotion_codes": "true"
-    });
+    };
+    if (isBrokerage && orgId) {
+      sessionParams["subscription_data[metadata][organization_id]"] = orgId;
+      sessionParams["subscription_data[metadata][seats]"] = String(seats);
+    }
+    const session = await stripe("/v1/checkout/sessions", "POST", sessionParams);
 
     return response.status(200).json({ url: session.url, sessionId: session.id });
   } catch (error) {

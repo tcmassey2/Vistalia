@@ -95,6 +95,15 @@ async function onCheckoutCompleted(session) {
 }
 
 async function onSubscriptionChanged(subscription) {
+  // Brokerage path — when subscription metadata names an org, update the
+  // organization (not the individual user's profile). Members of the org
+  // inherit the team plan via a Supabase RLS join (see migration 10).
+  const orgId = subscription.metadata?.organization_id || "";
+  if (orgId) {
+    await updateOrganizationSubscription(orgId, subscription);
+    return;
+  }
+
   const userId = subscription.metadata?.user_id || (await findUserByCustomer(subscription.customer));
   if (!userId) return;
   const priceId = subscription.items?.data?.[0]?.price?.id;
@@ -110,6 +119,45 @@ async function onSubscriptionChanged(subscription) {
     billing_cycle_start: subscription.current_period_start ? new Date(subscription.current_period_start * 1000).toISOString() : new Date().toISOString(),
     videos_used_this_month: 0
   });
+}
+
+// Brokerage subscriptions update the organizations row (introduced by
+// migration 04_brokerages.sql). Per-seat quantity and cancellation state
+// are tracked here so the brokerage-admin UI can show the seat count and
+// renewal date without round-tripping to Stripe.
+async function updateOrganizationSubscription(orgId, subscription) {
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey) return;
+  const seats = Number(subscription.items?.data?.[0]?.quantity || 1);
+  const patch = {
+    stripe_subscription_id: subscription.id,
+    stripe_customer_id: subscription.customer || null,
+    subscription_status: subscription.status,
+    seats,
+    agent_seat_cap: seats,
+    current_period_end: subscription.current_period_end
+      ? new Date(subscription.current_period_end * 1000).toISOString()
+      : null,
+    cancel_at_period_end: !!subscription.cancel_at_period_end
+  };
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/organizations?id=eq.${encodeURIComponent(orgId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal"
+        },
+        body: JSON.stringify(patch)
+      }
+    );
+  } catch (err) {
+    console.warn("[stripe-webhook] org update threw:", err.message);
+  }
 }
 
 async function onSubscriptionCanceled(subscription) {

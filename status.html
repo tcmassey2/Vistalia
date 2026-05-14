@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status — EstateMotion</title>
+<meta name="description" content="EstateMotion service status. Live up/down for the rendering worker, Vercel API, and Supabase auth/database.">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="/landing.css">
+<style>
+  /* Status page reuses brand chrome but keeps the body very simple —
+     a stack of service rows with a colored dot. Refreshes itself
+     automatically every 30 seconds (visible via the "Last checked" time). */
+  .status-shell { max-width: 720px; margin: 0 auto; padding: 80px 24px 120px; }
+  .status-shell h1 { font-size: clamp(32px, 4vw, 44px); letter-spacing: -0.02em; margin-bottom: 8px; }
+  .status-shell .meta { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; }
+  .status-shell .lede { color: var(--ink-muted); font-size: 15px; line-height: 1.6; margin: 12px 0 24px; }
+
+  .overall-banner { padding: 18px 22px; border-radius: 14px; border: 1px solid var(--edge); margin-bottom: 28px; display: flex; align-items: center; gap: 14px; }
+  .overall-banner.ok    { border-color: rgba(199,167,108,0.35); background: rgba(199,167,108,0.05); }
+  .overall-banner.warn  { border-color: rgba(245,158,11,0.4);  background: rgba(245,158,11,0.06); }
+  .overall-banner.down  { border-color: rgba(239,68,68,0.4);   background: rgba(239,68,68,0.06); }
+  .overall-banner .dot  { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .overall-banner.ok .dot   { background: var(--gold); box-shadow: 0 0 0 4px rgba(199,167,108,0.15); }
+  .overall-banner.warn .dot { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245,158,11,0.15); }
+  .overall-banner.down .dot { background: #ef4444; box-shadow: 0 0 0 4px rgba(239,68,68,0.15); }
+  .overall-banner .label { font-size: 16px; font-weight: 600; letter-spacing: -0.005em; }
+
+  .service-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--edge); border-radius: 12px; margin-bottom: 8px; }
+  .service-row .left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .service-row .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .service-row .dot.ok      { background: var(--gold); }
+  .service-row .dot.warn    { background: #f59e0b; }
+  .service-row .dot.down    { background: #ef4444; }
+  .service-row .dot.checking{ background: var(--ink-dim); animation: pulse 1.4s ease-in-out infinite; }
+  .service-row .name { font-size: 15px; font-weight: 600; color: var(--ink); }
+  .service-row .desc { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
+  .service-row .right { font-size: 12px; color: var(--ink-muted); font-family: 'JetBrains Mono', ui-monospace, monospace; text-align: right; }
+  .service-row .latency { color: var(--ink-soft); }
+  @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+  .footer-meta { margin-top: 28px; font-size: 12px; color: var(--ink-dim); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .back { display: inline-block; margin-bottom: 32px; font-size: 13px; color: var(--ink-muted); text-decoration: none; }
+  .back:hover { color: var(--gold); }
+</style>
+</head>
+<body class="bg-paper text-ink">
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">E</span>
+        <span class="brand-word">EstateMotion</span>
+      </a>
+    </div>
+  </header>
+
+  <main class="status-shell">
+    <a class="back" href="/">← Home</a>
+    <p class="meta">Live status</p>
+    <h1>Service status</h1>
+    <p class="lede">
+      Real-time health of the EstateMotion stack. This page polls each service
+      directly from your browser, so what you see is what's actually reachable.
+      Updates every 30 seconds.
+    </p>
+
+    <div id="overall-banner" class="overall-banner">
+      <div class="dot"></div>
+      <div class="label" id="overall-label">Checking…</div>
+    </div>
+
+    <div id="services">
+      <div class="service-row" data-service="vercel">
+        <div class="left">
+          <div class="dot checking"></div>
+          <div>
+            <div class="name">Web app + API</div>
+            <div class="desc">Hosted on Vercel. Powers signin, dashboard, billing.</div>
+          </div>
+        </div>
+        <div class="right">
+          <div class="state">Checking…</div>
+          <div class="latency"></div>
+        </div>
+      </div>
+
+      <div class="service-row" data-service="worker">
+        <div class="left">
+          <div class="dot checking"></div>
+          <div>
+            <div class="name">Render worker</div>
+            <div class="desc">Cinematic AI + Quick Reel rendering, hosted on Render.com.</div>
+          </div>
+        </div>
+        <div class="right">
+          <div class="state">Checking…</div>
+          <div class="latency"></div>
+        </div>
+      </div>
+
+      <div class="service-row" data-service="supabase">
+        <div class="left">
+          <div class="dot checking"></div>
+          <div>
+            <div class="name">Auth + database</div>
+            <div class="desc">Supabase. Powers sign-in sessions and your library.</div>
+          </div>
+        </div>
+        <div class="right">
+          <div class="state">Checking…</div>
+          <div class="latency"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-meta">
+      <span>Last checked: <span id="last-checked">—</span></span>
+      <span>Auto-refresh in <span id="next-refresh">30</span>s</span>
+    </div>
+
+    <p style="margin-top:32px;font-size:12px;color:var(--ink-dim);line-height:1.6;">
+      Seeing red on a service that's clearly working for you? Some browsers /
+      networks block one of the third-party endpoints — try a different
+      network. Real outages get posted at
+      <a href="mailto:support@estatemotion.ai" style="color:var(--gold);">support@estatemotion.ai</a>.
+    </p>
+  </main>
+
+  <script>
+    /* Service definitions. Each row pings a tiny endpoint and reports the
+       status based on HTTP success + round-trip latency. We deliberately
+       run these from the browser so the page reflects what your network
+       can reach (a server-side check would mask CDN / regional issues). */
+    var services = [
+      {
+        key: "vercel",
+        // /api/env is the cheapest Vercel function — returns a tiny JS payload.
+        url: "/api/env",
+        method: "GET",
+        warnLatencyMs: 800,
+        downLatencyMs: 4000
+      },
+      {
+        key: "worker",
+        // Worker /version returns JSON. Defaults to the production URL but
+        // can be overridden via window.ESTATEMOTION_WORKER_URL or the URL ?worker=…
+        // for staging / preview testing.
+        url: window.ESTATEMOTION_WORKER_URL ||
+             "https://estatemotion-render-worker.onrender.com/version",
+        method: "GET",
+        warnLatencyMs: 2500,  // worker has cold-start, be lenient
+        downLatencyMs: 10000
+      },
+      {
+        key: "supabase",
+        // /auth/v1/health is unauth and returns "GoTrue is healthy". The
+        // production Supabase URL is hardcoded here because /api/env is
+        // already a separate (Vercel) check and we want this row to
+        // measure Supabase directly. Override with ?supabase=…
+        url: getSupabaseUrl(),
+        method: "GET",
+        warnLatencyMs: 800,
+        downLatencyMs: 4000
+      }
+    ];
+
+    function getSupabaseUrl() {
+      var fromQuery = new URLSearchParams(location.search).get("supabase");
+      if (fromQuery) return fromQuery.replace(/\/$/, "") + "/auth/v1/health";
+      return "https://wnxmlrkxcwgjolymcyiu.supabase.co/auth/v1/health";
+    }
+
+    function setRow(key, status, label, latency) {
+      var row = document.querySelector('[data-service="' + key + '"]');
+      if (!row) return;
+      var dot = row.querySelector(".dot");
+      var state = row.querySelector(".state");
+      var lat = row.querySelector(".latency");
+      dot.className = "dot " + status;
+      state.textContent = label;
+      lat.textContent = latency != null ? latency + " ms" : "";
+    }
+
+    function setOverall(worstStatus, message) {
+      var banner = document.getElementById("overall-banner");
+      banner.className = "overall-banner " + worstStatus;
+      document.getElementById("overall-label").textContent = message;
+    }
+
+    var statusRank = { ok: 0, warn: 1, down: 2 };
+    function worst(a, b) { return statusRank[b] > statusRank[a] ? b : a; }
+
+    async function checkOne(svc) {
+      var startedAt = performance.now();
+      try {
+        var ctrl = new AbortController();
+        var timer = setTimeout(function() { ctrl.abort(); }, svc.downLatencyMs + 1000);
+        var res = await fetch(svc.url, {
+          method: svc.method,
+          cache: "no-store",
+          signal: ctrl.signal,
+          mode: "cors"
+        });
+        clearTimeout(timer);
+        var latency = Math.round(performance.now() - startedAt);
+        if (!res.ok && res.status !== 0) {
+          // Non-2xx but we got a response — report the status code
+          setRow(svc.key, "down", "HTTP " + res.status, latency);
+          return "down";
+        }
+        if (latency > svc.downLatencyMs) {
+          setRow(svc.key, "down", "Very slow", latency);
+          return "down";
+        }
+        if (latency > svc.warnLatencyMs) {
+          setRow(svc.key, "warn", "Degraded", latency);
+          return "warn";
+        }
+        setRow(svc.key, "ok", "Operational", latency);
+        return "ok";
+      } catch (err) {
+        var latency = Math.round(performance.now() - startedAt);
+        setRow(svc.key, "down", "Unreachable", latency);
+        return "down";
+      }
+    }
+
+    async function checkAll() {
+      var results = await Promise.all(services.map(checkOne));
+      var status = results.reduce(worst, "ok");
+      var message = status === "ok"
+        ? "All systems operational."
+        : status === "warn"
+        ? "Some services are slow but reachable."
+        : "Some services are unreachable.";
+      setOverall(status, message);
+      document.getElementById("last-checked").textContent = new Date().toLocaleTimeString();
+    }
+
+    // Run + schedule every 30s. Visible countdown for transparency.
+    var refreshSec = 30;
+    var refreshTimer = null;
+    function startTimer() {
+      var el = document.getElementById("next-refresh");
+      var n = refreshSec;
+      el.textContent = n;
+      clearInterval(refreshTimer);
+      refreshTimer = setInterval(function() {
+        n--;
+        el.textContent = n;
+        if (n <= 0) { tick(); }
+      }, 1000);
+    }
+    function tick() {
+      checkAll().finally(startTimer);
+    }
+    tick();
+  </script>
+</body>
+</html>

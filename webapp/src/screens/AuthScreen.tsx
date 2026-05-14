@@ -5,11 +5,16 @@ import {
   signUp,
   requestPasswordReset,
   updatePassword,
-  resendConfirmationEmail
+  resendConfirmationEmail,
+  needsTotpChallenge,
+  challengeAndVerifyTotp,
+  signOut
 } from "../lib/supabase";
 import { events, track } from "../lib/analytics";
+import HCaptcha from "../components/HCaptcha";
+import { env } from "../lib/env";
 
-type Mode = "signin" | "signup" | "forgot" | "reset";
+type Mode = "signin" | "signup" | "forgot" | "reset" | "totp";
 
 export default function AuthScreen() {
   const [mode, setMode] = useState<Mode>("signup");
@@ -21,6 +26,17 @@ export default function AuthScreen() {
   // Track the email of the just-finished signup so the "Resend confirmation"
   // button knows which address to retarget when the original mail vanishes.
   const [pendingConfirmEmail, setPendingConfirmEmail] = useState("");
+  // hCaptcha token from the widget. Required by Supabase Auth when CAPTCHA
+  // is enabled in the project settings AND HCAPTCHA_SITE_KEY is configured.
+  // When the site key is empty, the widget renders nothing and this stays
+  // empty — Supabase accepts the request without it.
+  const [captchaToken, setCaptchaToken] = useState("");
+  const captchaRequired = Boolean(env().HCAPTCHA_SITE_KEY);
+  // 2FA challenge state. When sign-in returns with the user enrolled in
+  // TOTP, we flip to mode='totp' and stash the factorId here for the
+  // verify call.
+  const [totpCode, setTotpCode] = useState("");
+  const [totpFactorId, setTotpFactorId] = useState("");
   const setToast = useStore((s) => s.setToast);
 
   // Detect Supabase recovery tokens in the URL hash. When the user clicks the
@@ -48,17 +64,41 @@ export default function AuthScreen() {
     setBusy(true);
     try {
       if (mode === "signup") {
+        if (captchaRequired && !captchaToken) {
+          throw new Error("Please complete the CAPTCHA below to continue.");
+        }
         track(events.signupStarted);
-        await signUp(email, password);
+        await signUp(email, password, captchaToken || undefined);
         track(events.signupCompleted);
+        setCaptchaToken(""); // single-use token; force re-challenge on retry
         setPendingConfirmEmail(email);
         setInfo("Check your email to confirm. We've sent the link to " + email + ".");
         setMode("signin");
       } else if (mode === "signin") {
-        await signIn(email, password);
+        await signIn(email, password, captchaToken || undefined);
+        setCaptchaToken("");
+        // Check whether this account has 2FA enrolled. If so, the session
+        // is at aal1 — we need a TOTP challenge to upgrade to aal2 before
+        // the dashboard route is allowed. signOut() if the challenge is
+        // canceled, so we don't leave a half-authed session lying around.
+        const totp = await needsTotpChallenge();
+        if (totp.needed && totp.factorId) {
+          setTotpFactorId(totp.factorId);
+          setMode("totp");
+          setInfo("Enter the 6-digit code from your authenticator app.");
+          return;
+        }
         track(events.signinCompleted);
         setToast("Signed in");
         // store.init's onAuthChange handler will move us to dashboard
+      } else if (mode === "totp") {
+        await challengeAndVerifyTotp(totpFactorId, totpCode);
+        track(events.signinCompleted);
+        setToast("Signed in");
+        setTotpCode("");
+        setTotpFactorId("");
+        // store.init's onAuthChange will route to dashboard now that
+        // the session is at aal2.
       } else if (mode === "forgot") {
         await requestPasswordReset(email);
         setInfo(
@@ -101,19 +141,22 @@ export default function AuthScreen() {
     mode === "signup" ? "Make your first listing video."
     : mode === "signin" ? "Welcome back."
     : mode === "forgot" ? "Reset your password."
+    : mode === "totp"   ? "Two-factor required."
     : "Set a new password.";
   const subhead =
     mode === "signup" ? "Free 7-day trial · 3 videos · No credit card."
     : mode === "signin" ? "Pick up where you left off."
     : mode === "forgot" ? "We'll email you a secure link to set a new one."
+    : mode === "totp"   ? "Enter the 6-digit code from your authenticator app."
     : "Choose a strong password to finish resetting.";
   const submitLabel =
     mode === "signup" ? "Create account"
     : mode === "signin" ? "Sign in"
     : mode === "forgot" ? "Send reset link"
+    : mode === "totp"   ? "Verify code"
     : "Set new password";
-  const showEmail = mode !== "reset";
-  const showPassword = mode !== "forgot";
+  const showEmail = mode !== "reset" && mode !== "totp";
+  const showPassword = mode !== "forgot" && mode !== "totp";
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -202,6 +245,36 @@ export default function AuthScreen() {
                 </label>
               )}
 
+              {/* TOTP code input — appears in 'totp' mode only. We treat it
+                  as the sole input on this view; the email/password fields
+                  are hidden because the user already authenticated to aal1. */}
+              {mode === "totp" && (
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs text-ink-soft">6-digit code</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    required
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="123 456"
+                    className="h-12 px-3.5 bg-surface-input border border-edge rounded-lg text-ink text-2xl font-mono tracking-widest text-center focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/15 transition-colors"
+                  />
+                </label>
+              )}
+
+              {/* hCaptcha — only renders on signup mode (the highest abuse
+                  surface) and only when a site key is configured. */}
+              {mode === "signup" && captchaRequired && (
+                <HCaptcha
+                  onVerify={(token) => setCaptchaToken(token)}
+                  onExpire={() => setCaptchaToken("")}
+                />
+              )}
+
               {error && (
                 <div className="px-3 py-2.5 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-300">
                   {error}
@@ -215,7 +288,7 @@ export default function AuthScreen() {
 
               <button
                 type="submit"
-                disabled={busy}
+                disabled={busy || (mode === "signup" && captchaRequired && !captchaToken)}
                 className="btn-primary-em h-11 mt-2 rounded-lg disabled:opacity-50"
               >
                 {busy ? (
@@ -253,6 +326,27 @@ export default function AuthScreen() {
                   className="text-xs text-ink-muted hover:text-ink transition-colors"
                 >
                   ← Back to sign in
+                </button>
+              </div>
+            )}
+
+            {mode === "totp" && (
+              <div className="mt-5 pt-5 border-t border-edge-soft text-center">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    // Bail out of the half-authed (aal1) session so we
+                    // don't leave a stale token around.
+                    try { await signOut(); } catch { /* noop */ }
+                    setMode("signin");
+                    setTotpCode("");
+                    setTotpFactorId("");
+                    setError("");
+                    setInfo("");
+                  }}
+                  className="text-xs text-ink-muted hover:text-ink transition-colors"
+                >
+                  ← Cancel sign in
                 </button>
               </div>
             )}

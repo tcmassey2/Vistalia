@@ -303,6 +303,10 @@ export interface AppEnv {
   CREATE_EDIT_PLAN_ENDPOINT: string;
   RENDER_ENDPOINT: string;
   STRIPE_PUBLISHABLE_KEY: string;
+  HCAPTCHA_SITE_KEY?: string;
+  PLAUSIBLE_DOMAIN?: string;
+  SENTRY_DSN_PUBLIC?: string;
+  SENTRY_ENVIRONMENT?: string;
 }
 
 declare global {

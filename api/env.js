@@ -41,7 +41,11 @@ function publicEnv() {
     SENTRY_DSN_PUBLIC: process.env.SENTRY_DSN_PUBLIC || "",
     SENTRY_ENVIRONMENT: process.env.VERCEL_ENV || process.env.SENTRY_ENVIRONMENT || "production",
     // Plausible Analytics — domain string. Empty = analytics disabled.
-    PLAUSIBLE_DOMAIN: process.env.PLAUSIBLE_DOMAIN || ""
+    PLAUSIBLE_DOMAIN: process.env.PLAUSIBLE_DOMAIN || "",
+    // hCaptcha public site key. Required by Supabase auth when CAPTCHA
+    // is enabled in the Supabase Dashboard. Empty = signup form skips
+    // the widget and Supabase accepts unverified signups.
+    HCAPTCHA_SITE_KEY: process.env.HCAPTCHA_SITE_KEY || ""
   };
 }
 

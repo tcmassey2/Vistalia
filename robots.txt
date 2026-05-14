@@ -1,0 +1,13 @@
+# EstateMotion — robots.txt
+# Allow public crawling of marketing + help + legal. Block the React app
+# itself (login-walled, no SEO value) and the API surface.
+
+User-agent: *
+Allow: /
+Disallow: /app/
+Disallow: /demo
+Disallow: /beta
+Disallow: /waitlist
+Disallow: /api/
+
+Sitemap: https://estatemotion.ai/sitemap.xml
