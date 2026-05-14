@@ -146,6 +146,12 @@ const emptyListing: ListingDetails = {
 // never blocks the UI.
 
 const BRANDING_STORAGE_KEY = "estatemotion.brandkit.v2";
+// v1 key kept around so users who saved a kit before v18 can be migrated
+// forward instead of seeing an empty form. Pre-v18 the kit only held 5
+// fields (fullName, brokerage, phone, email, headshotUrl); v2 added logo,
+// license, voice. Migrating means: read v1, copy fields into v2 shape,
+// write to v2, delete v1.
+const BRANDING_STORAGE_KEY_V1 = "estatemotion.brandkit.v1";
 
 const EMPTY_BRANDING: AgentBranding = {
   fullName: "",
@@ -159,11 +165,8 @@ const EMPTY_BRANDING: AgentBranding = {
   voiceLabel: undefined
 };
 
-function loadStoredBranding(): AgentBranding {
-  if (typeof window === "undefined") return EMPTY_BRANDING;
+function parseBrandingJson(raw: string): AgentBranding | null {
   try {
-    const raw = window.localStorage.getItem(BRANDING_STORAGE_KEY);
-    if (!raw) return EMPTY_BRANDING;
     const parsed = JSON.parse(raw);
     return {
       fullName: String(parsed.fullName || ""),
@@ -176,6 +179,33 @@ function loadStoredBranding(): AgentBranding {
       voiceId: parsed.voiceId || undefined,
       voiceLabel: parsed.voiceLabel || undefined
     };
+  } catch {
+    return null;
+  }
+}
+
+function loadStoredBranding(): AgentBranding {
+  if (typeof window === "undefined") return EMPTY_BRANDING;
+  try {
+    // 1) Try v2 first (the current key).
+    const rawV2 = window.localStorage.getItem(BRANDING_STORAGE_KEY);
+    if (rawV2) {
+      const parsed = parseBrandingJson(rawV2);
+      if (parsed) return parsed;
+    }
+    // 2) BUG FIX (v1→v2 migration): if v2 is empty but v1 exists (user
+    //    saved a brand kit before the v18 ship), migrate it forward so
+    //    they don't see an empty form. Write to v2, delete v1.
+    const rawV1 = window.localStorage.getItem(BRANDING_STORAGE_KEY_V1);
+    if (rawV1) {
+      const migrated = parseBrandingJson(rawV1);
+      if (migrated) {
+        window.localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(migrated));
+        window.localStorage.removeItem(BRANDING_STORAGE_KEY_V1);
+        return migrated;
+      }
+    }
+    return EMPTY_BRANDING;
   } catch {
     return EMPTY_BRANDING;
   }
@@ -199,6 +229,14 @@ function scheduleSupabaseBrandSave(userId: string, branding: AgentBranding) {
     saveBrandKit(userId, branding).catch(() => {});
   }, 600);
 }
+
+// Hydration race guard. `hydrateBrandKit` runs async on every sign-in.
+// If the user starts editing branding before the Supabase fetch returns,
+// the hydrate would overwrite their in-flight edits. We bump this counter
+// every time setBranding is called, snapshot it before the fetch, and
+// check at apply-time — if the counter moved while we were fetching, skip
+// the apply because the user typed something we shouldn't clobber.
+let brandEditEpoch = 0;
 
 const emptyProject = () => ({
   projectId: newProjectId(),
@@ -273,8 +311,16 @@ export const useStore = create<AppState>((set, get) => ({
   hydrateBrandKit: async () => {
     const userId = get().session?.user?.id;
     if (!userId) return;
+    // Snapshot the edit counter BEFORE the network call. If the user types
+    // anything during the fetch, brandEditEpoch will increase and we'll
+    // bail at apply-time without clobbering their edits.
+    const snapshot = brandEditEpoch;
     const remote = await fetchBrandKit(userId);
     if (!remote) return; // user has no saved kit yet — leave localStorage as is
+    if (brandEditEpoch !== snapshot) {
+      console.info("[brand-kit] hydrate skipped — user edited branding mid-fetch.");
+      return;
+    }
     // Merge remote into current state, preferring remote fields when set.
     // (Empty strings in remote count as "set" — if the user explicitly
     //  cleared a field, that clear should propagate to this device too.)
@@ -324,6 +370,9 @@ export const useStore = create<AppState>((set, get) => ({
   setProjectTitle: (t) => set({ projectTitle: t }),
   setListing: (patch) => set({ listing: { ...get().listing, ...patch } }),
   setBranding: (patch) => {
+    // Bump the hydration race counter so any in-flight hydrateBrandKit
+    // knows the user has typed and skips its overwrite at apply-time.
+    brandEditEpoch++;
     const next = { ...get().branding, ...patch };
     persistBranding(next);
     set({ branding: next });

@@ -39,7 +39,7 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.05.12-v22-batched-xfade",
+      version: "2026.05.12-v23-bug-sweep",
       bootedAt: BOOTED_AT,
       uptimeSec: Math.round(process.uptime()),
       activeJobs: jobs.size,

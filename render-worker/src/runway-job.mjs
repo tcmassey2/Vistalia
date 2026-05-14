@@ -565,6 +565,28 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   for (let i = 0; i < clipResults.length; i++) {
     const clip = clipResults[i];
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
+
+    // BUG FIX (regen double-bake): when the regenerate-scene flow downloads
+    // the 23 already-normalized scene clips from Supabase Storage, those
+    // clips ALREADY have the color grade + watermark + corner headshot baked
+    // in from the original render. Re-running the normalize chain on them
+    // would stack a second corner headshot on top of the first, re-grade an
+    // already-graded image, and add a second watermark. We pass-through
+    // copy them instead — same wall-clock as a few hundred ms vs ~5 seconds
+    // of re-encode per clip, AND preserves the original visual.
+    if (clip.preNormalized) {
+      await runFFmpeg(
+        ["-y", "-threads", "1", "-i", clip.clipPath, "-c", "copy", normalized],
+        { timeoutMs: 30000, label: `runway:normalize-${clip.sceneIndex}-passthrough` }
+      );
+      normalizedClips.push({ ...clip, clipPath: normalized });
+      options.onProgress?.({
+        phase: `Polishing scene ${i + 1}/${clipResults.length}`,
+        progress: NORMALIZE_PROGRESS_START + Math.floor(((i + 1) / clipResults.length) * NORMALIZE_PROGRESS_RANGE)
+      });
+      continue;
+    }
+
     const baseFilters = [
       `fps=30`,
       `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=lanczos`,

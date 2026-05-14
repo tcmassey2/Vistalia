@@ -2113,7 +2113,7 @@ function RenderControls() {
         // have actually FINISHED uploading to Supabase before the restart,
         // so check the library before declaring failure.
         if (err instanceof RenderJobMissingError) {
-          const recovered = await tryRecoverFromLibrary(startTime);
+          const recovered = await tryRecoverFromLibrary(jobId, startTime);
           if (recovered) {
             // Map the library entry into renderJob state — UI will show the
             // completed-render panel exactly as if the poll finished.
@@ -2151,26 +2151,39 @@ function RenderControls() {
   };
 
   // After a 404 from the status endpoint, look at the library for a
-  // freshly-completed entry that matches this user's render window. If
-  // we find one created after the current poll loop started, the render
-  // actually succeeded before the worker restart — we just lost the jobId.
+  // freshly-completed entry that matches this render. The audit_log row's
+  // job_id is the same value we just polled, so EXACT jobId match is the
+  // reliable path. We only fall back to a time-window match when no jobId
+  // match exists (covers very rare cases where the audit log was written
+  // with a slightly different id — e.g., a worker hot-fix that munged the
+  // id format).
+  //
+  // BUG FIX: previously this matched ONLY by createdAt window, which could
+  // surface a different render's mp4Url if the user had multiple renders
+  // going. Always prefer jobId equality.
   const tryRecoverFromLibrary = async (
+    targetJobId: string,
     pollStartedAtMs: number
   ): Promise<{ mp4Url: string; thumbnailUrl: string } | null> => {
     try {
-      const lib = await fetchLibrary({ limit: 5 });
+      const lib = await fetchLibrary({ limit: 25 });
       if (lib.status !== "ok" || !lib.library.length) return null;
-      // Newest-first response. Accept any entry created within the last
-      // 30 minutes that has a master URL (covers the case where the worker
-      // restarted moments after the upload finished).
-      const RECOVERY_WINDOW_MS = 30 * 60 * 1000;
+      // 1) Exact jobId match — the safe path.
+      const exact = lib.library.find(
+        (entry) => entry.jobId === targetJobId && Boolean(entry.mp4Url)
+      );
+      if (exact) return { mp4Url: exact.mp4Url, thumbnailUrl: exact.thumbnailUrl };
+      // 2) Fallback: time-window match (only if no jobId match found).
+      // Tightened from 30 min to 10 min so we don't accidentally match
+      // an unrelated earlier render.
+      const RECOVERY_WINDOW_MS = 10 * 60 * 1000;
       const cutoff = pollStartedAtMs - RECOVERY_WINDOW_MS;
-      const match = lib.library.find((entry) => {
+      const fuzzy = lib.library.find((entry) => {
         const t = new Date(entry.createdAt).getTime();
         return Number.isFinite(t) && t >= cutoff && Boolean(entry.mp4Url);
       });
-      if (!match) return null;
-      return { mp4Url: match.mp4Url, thumbnailUrl: match.thumbnailUrl };
+      if (!fuzzy) return null;
+      return { mp4Url: fuzzy.mp4Url, thumbnailUrl: fuzzy.thumbnailUrl };
     } catch {
       return null;
     }

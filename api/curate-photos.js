@@ -86,10 +86,14 @@ export default async function handler(request, response) {
     .slice(0, MAX_INPUT_PHOTOS);
 
   if (photos.length < TARGET_KEEP + 1) {
-    // Nothing to curate — fewer photos than the keep target.
+    // Nothing to curate — already at or under the keep target.
+    const reason =
+      photos.length === TARGET_KEEP
+        ? `You already have the target ${TARGET_KEEP} photos — nothing to curate.`
+        : `You have ${photos.length} photos — curate kicks in once you upload more than ${TARGET_KEEP}.`;
     response.status(200).json({
       status: "skipped",
-      reason: `Need at least ${TARGET_KEEP + 1} photos to curate. You have ${photos.length}.`,
+      reason,
       curated: photos.map((p, i) => ({ photoId: p.id, order: i + 1, roomType: "", score: 0, reason: "" })),
       rejected: []
     });
@@ -146,7 +150,50 @@ export default async function handler(request, response) {
       return;
     }
 
+    // BUG FIX: detect partial OpenAI responses (truncation at max_output_tokens,
+    // mid-stream drops, or the model omitting entries). Without this guard the
+    // curator would happily return only the photos OpenAI scored, silently
+    // dropping the unscored ones from the user's project.
+    // We accept anything within 90% of input as "the model just rejected a
+    // few" (legitimate), but below that we fall back rather than lose photos.
+    const completeness = scored.length / photos.length;
+    if (completeness < 0.9) {
+      console.warn(
+        `[curate-photos] OpenAI returned ${scored.length}/${photos.length} entries — too partial, falling back.`
+      );
+      response.status(200).json({
+        status: "fallback",
+        reason: `AI only scored ${scored.length} of your ${photos.length} photos (possibly hit a token limit). Falling back to upload order so no photos are dropped.`,
+        curated: photos.slice(0, TARGET_KEEP).map((p, i) => ({
+          photoId: p.id, order: i + 1, roomType: "", score: 0, reason: ""
+        })),
+        rejected: photos.slice(TARGET_KEEP).map((p) => ({
+          photoId: p.id, reason: "Beyond top 24 in upload order — fallback used."
+        }))
+      });
+      return;
+    }
+
     const result = pickAndOrder(scored);
+
+    // Secondary guard: if AI marked every photo as "skip", pickAndOrder will
+    // return zero kept photos. Without this fallback the frontend sees
+    // status:ok + curated:[] and surfaces "AI didn't return any picks" —
+    // which is misleading; the AI returned data, it just rejected everything.
+    if (!result.curated.length) {
+      response.status(200).json({
+        status: "fallback",
+        reason: "AI marked every photo as not tour-worthy (paperwork, floor plans, or low quality). Falling back to upload order.",
+        curated: photos.slice(0, TARGET_KEEP).map((p, i) => ({
+          photoId: p.id, order: i + 1, roomType: "", score: 0, reason: ""
+        })),
+        rejected: photos.slice(TARGET_KEEP).map((p) => ({
+          photoId: p.id, reason: "Beyond top 24 in upload order — fallback used."
+        }))
+      });
+      return;
+    }
+
     response.status(200).json({
       status: "ok",
       model: motionModel(),
