@@ -78,6 +78,48 @@ export default function SettingsScreen() {
     // store.init's onAuthChange will route us back to /auth.
   };
 
+  // Data export download. We can't use a plain <a download> because the
+  // /api/export-account endpoint requires the Supabase JWT in an
+  // Authorization header. Fetch with auth, turn the response body into a
+  // blob, then trigger a download via a temporary object URL.
+  const [exporting, setExporting] = useState(false);
+  const handleExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setError("");
+    try {
+      const sessionRes = await import("../lib/supabase").then((m) => m.getSession());
+      const token = sessionRes?.access_token;
+      if (!token) {
+        setError("Sign in expired. Refresh the page.");
+        return;
+      }
+      const res = await fetch("/api/export-account", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        setError(payload.error || `Export failed (${res.status}).`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const today = new Date().toISOString().split("T")[0];
+      a.download = `estatemotion-export-${today}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setToast("Your data was downloaded.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const tier = usage?.tier || "trial";
   const tierLabel = TIER_LABELS[tier] || tier;
   const isPaidTier = tier !== "trial";
@@ -189,9 +231,31 @@ export default function SettingsScreen() {
       </Section>
 
       {/* ============================================================
+          Data export — portable JSON snapshot, free for any user.
+          Encouraged before account deletion but not gated on it.
+          ============================================================ */}
+      <div className="mt-10 pt-8 border-t border-edge-soft flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold tracking-tightish">Download my data</div>
+          <div className="text-xs text-ink-muted mt-0.5 max-w-md">
+            JSON snapshot of your account, brand kit, and library — including
+            URLs to every rendered file. Useful before deleting your account.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="card-press h-10 px-4 rounded-lg text-sm font-semibold bg-surface-input border border-edge hover:border-gold text-ink hover:text-gold transition-colors disabled:opacity-50"
+        >
+          {exporting ? "Preparing…" : "Download JSON"}
+        </button>
+      </div>
+
+      {/* ============================================================
           Sign out — recoverable, separated from destructive zone below
           ============================================================ */}
-      <div className="mt-12 pt-8 border-t border-edge-soft flex items-center justify-between">
+      <div className="mt-6 pt-6 border-t border-edge-soft flex items-center justify-between">
         <div>
           <div className="text-sm font-semibold tracking-tightish">Sign out</div>
           <div className="text-xs text-ink-muted mt-0.5">

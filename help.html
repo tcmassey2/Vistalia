@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Help — EstateMotion</title>
+<meta name="description" content="EstateMotion help center. Frequently asked questions about renders, billing, and AI safety. Contact support directly.">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="/landing.css">
+<style>
+  /* Help page reuses the legal-shell typography but adds an FAQ accordion
+     and contact-form layout. Same brand chrome. */
+  .help-shell { max-width: 800px; margin: 0 auto; padding: 80px 24px 120px; }
+  .help-shell h1 { font-size: clamp(32px, 4vw, 44px); letter-spacing: -0.02em; margin: 8px 0 14px; }
+  .help-shell .lede { color: var(--ink-muted); font-size: 15px; line-height: 1.6; margin: 0 0 32px; }
+  .help-shell .meta { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin-bottom: 4px; }
+  .help-shell .back { display: inline-block; margin-bottom: 32px; font-size: 13px; color: var(--ink-muted); text-decoration: none; }
+  .help-shell .back:hover { color: var(--gold); }
+
+  .faq-block { margin-top: 32px; }
+  .faq-block h2 { font-size: 22px; letter-spacing: -0.01em; margin: 0 0 16px; }
+  details.faq-item { background: var(--surface); border: 1px solid var(--edge); border-radius: 12px; padding: 16px 20px; margin-bottom: 10px; }
+  details.faq-item[open] { border-color: rgba(199,167,108,0.3); }
+  details.faq-item summary { cursor: pointer; font-size: 15px; font-weight: 600; color: var(--ink); list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; letter-spacing: -0.005em; }
+  details.faq-item summary::-webkit-details-marker { display: none; }
+  details.faq-item summary::after { content: "+"; font-size: 22px; font-weight: 400; color: var(--gold); line-height: 1; transition: transform 200ms ease; }
+  details.faq-item[open] summary::after { transform: rotate(45deg); }
+  details.faq-item .faq-body { color: var(--ink-muted); font-size: 14.5px; line-height: 1.7; padding-top: 12px; }
+  details.faq-item .faq-body p { margin: 6px 0; }
+  details.faq-item .faq-body strong { color: var(--ink); }
+
+  .contact-card { background: var(--surface); border: 1px solid var(--edge); border-radius: 16px; padding: 24px; margin-top: 48px; }
+  .contact-card h2 { font-size: 22px; letter-spacing: -0.01em; margin: 0 0 6px; }
+  .contact-card .contact-sub { color: var(--ink-muted); font-size: 14px; margin: 0 0 18px; }
+  .contact-form { display: flex; flex-direction: column; gap: 12px; }
+  .contact-form label { font-size: 12px; color: var(--ink-soft); display: flex; flex-direction: column; gap: 6px; }
+  .contact-form input, .contact-form textarea { background: var(--surface-input); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; color: var(--ink); font-family: inherit; font-size: 14px; transition: border-color 160ms ease, box-shadow 160ms ease; }
+  .contact-form input:focus, .contact-form textarea:focus { border-color: var(--gold); outline: none; box-shadow: 0 0 0 3px rgba(199,167,108,0.18); }
+  .contact-form textarea { resize: vertical; min-height: 130px; }
+  .contact-form .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .contact-form button { background: var(--gold); color: var(--paper); border: none; border-radius: 8px; padding: 12px 20px; font-size: 14px; font-weight: 600; cursor: pointer; align-self: flex-start; transition: background 160ms ease; }
+  .contact-form button:hover { background: var(--gold-light); }
+  .contact-form button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .contact-form .honeypot { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .contact-status { font-size: 13px; padding: 10px 12px; border-radius: 8px; margin-top: 6px; }
+  .contact-status.ok { background: rgba(199,167,108,0.12); border: 1px solid rgba(199,167,108,0.4); color: var(--gold-light); }
+  .contact-status.err { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: #f87171; }
+
+  @media (max-width: 540px) {
+    .contact-form .row-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body class="bg-paper text-ink">
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/">
+        <span class="brand-mark">E</span>
+        <span class="brand-word">EstateMotion</span>
+      </a>
+    </div>
+  </header>
+
+  <main class="help-shell">
+    <a class="back" href="/">← Home</a>
+    <p class="meta">Help center</p>
+    <h1>How can we help?</h1>
+    <p class="lede">
+      Quick answers to the questions agents ask most. If your question isn't
+      covered, reach out below — we usually reply within a business day.
+    </p>
+
+    <section class="faq-block">
+      <h2>Renders</h2>
+      <details class="faq-item">
+        <summary>How long does a render take?</summary>
+        <div class="faq-body">
+          <p><strong>Quick Reel</strong> (photo motion) finishes in under 90 seconds for most listings.</p>
+          <p><strong>Cinematic AI</strong> takes 3–5 minutes — it's running each scene through Runway Gen-4 Turbo, which is the heavy step. We bake in a corner headshot, color grade, and persistent watermark while you wait.</p>
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary>What's the difference between Off, Smart, and MLS-Safe?</summary>
+        <div class="faq-body">
+          <p>The Render Safety control decides how much AI motion to use:</p>
+          <p><strong>Off</strong> — every scene goes through Cinematic AI. Highest impact, but kitchens and appliance-heavy rooms can hallucinate (split countertops, phantom fans).</p>
+          <p><strong>Smart</strong> (recommended) — AI motion on safe rooms, Ken Burns photo motion on risky scenes. Best balance.</p>
+          <p><strong>MLS-Safe</strong> — every scene uses Ken Burns. Zero AI hallucination, no Runway credits used, MLS-compliant.</p>
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary>One scene came out wrong. Do I have to re-render the whole thing?</summary>
+        <div class="faq-body">
+          <p>No. Open the render in your library, scroll to <strong>Scene-by-scene fixes</strong>, and click <strong>Regen AI</strong> on the bad scene. We re-roll just that one clip, re-stitch the master, and update everything in your library — usually in 60–180 seconds.</p>
+          <p>Or click <strong>Use KB</strong> to swap the scene for a Ken Burns motion clip — free, zero AI, instant.</p>
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary>How many photos can I upload?</summary>
+        <div class="faq-body">
+          <p>Up to 60. The render uses 24 of them. If you upload more than 24, hit <strong>Pick best 24 with AI</strong> and OpenAI Vision will score every photo and arrange the strongest 24 in tour order.</p>
+          <p>Eight is the minimum for a full tour; below that the video feels thin.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="faq-block">
+      <h2>Billing &amp; trial</h2>
+      <details class="faq-item">
+        <summary>What does the free trial include?</summary>
+        <div class="faq-body">
+          <p>Seven days, three rendered videos — whichever you hit first. No credit card required. Full access to Cinematic AI and every export format during the trial.</p>
+          <p>After the trial ends, your library, brand kit, and rendered videos stay in your account. You just can't render new videos until you pick a plan.</p>
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary>How do I cancel my subscription?</summary>
+        <div class="faq-body">
+          <p>From the app: <strong>Settings → Manage subscription</strong>. That opens the Stripe customer portal where you can cancel, change plans, or update your payment method.</p>
+          <p>Cancellation takes effect at the end of your current billing cycle. You keep access until then, and your library stays put.</p>
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary>Refunds?</summary>
+        <div class="faq-body">
+          <p>If a render fails because of something on our end (worker outage, bad hallucination flagged within 24 hours), we credit you a replacement render at no charge.</p>
+          <p>Subscription fees aren't refundable except where required by law. Email <a href="mailto:support@estatemotion.ai">support@estatemotion.ai</a> if you think your case is the exception.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="faq-block">
+      <h2>Account &amp; data</h2>
+      <details class="faq-item">
+        <summary>How do I delete my account?</summary>
+        <div class="faq-body">
+          <p><strong>Settings → Delete my account</strong>. We remove your profile, brand kit, library, and uploaded photos within 30 days. Stripe billing records are retained as required by tax law.</p>
+          <p>Tip: hit <strong>Download my data</strong> right above the delete button first — it gives you a portable JSON snapshot of everything.</p>
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary>Where do my listing photos live?</summary>
+        <div class="faq-body">
+          <p>Supabase Storage in the US, behind row-level security so only your account can access them. Listing photos go to OpenAI for room classification and Runway for AI motion — neither uses them to train models (per their published API policies). Full details in our <a href="/legal/privacy.html">Privacy Policy</a>.</p>
+        </div>
+      </details>
+    </section>
+
+    <div class="contact-card">
+      <h2>Still stuck?</h2>
+      <p class="contact-sub">Send us a note and we'll respond directly. Average reply time: under one business day.</p>
+      <form id="contact-form" class="contact-form" novalidate>
+        <div class="row-2">
+          <label>
+            Name
+            <input type="text" name="name" autocomplete="name" placeholder="Optional" />
+          </label>
+          <label>
+            Email
+            <input type="email" name="email" required autocomplete="email" placeholder="you@brokerage.com" />
+          </label>
+        </div>
+        <label>
+          Subject
+          <input type="text" name="subject" placeholder="What's this about?" />
+        </label>
+        <label>
+          Message
+          <textarea name="message" required minlength="10" placeholder="Describe what you need help with — render IDs, screenshots, error messages all welcome."></textarea>
+        </label>
+        <input class="honeypot" type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <button type="submit" id="contact-submit">Send</button>
+        <div id="contact-status" class="contact-status" hidden></div>
+      </form>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      var form = document.getElementById("contact-form");
+      var btn = document.getElementById("contact-submit");
+      var status = document.getElementById("contact-status");
+      if (!form) return;
+      form.addEventListener("submit", async function (ev) {
+        ev.preventDefault();
+        status.hidden = true;
+        status.className = "contact-status";
+        btn.disabled = true;
+        btn.textContent = "Sending…";
+        var data = {
+          name: form.name.value,
+          email: form.email.value,
+          subject: form.subject.value,
+          message: form.message.value,
+          website: form.website.value
+        };
+        try {
+          var res = await fetch("/api/contact", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data)
+          });
+          var payload = await res.json().catch(function() { return {}; });
+          if (res.ok) {
+            status.textContent = "Thanks — we'll get back to you shortly.";
+            status.classList.add("ok");
+            status.hidden = false;
+            form.reset();
+          } else {
+            status.textContent = payload.error || "Couldn't send. Try emailing support@estatemotion.ai directly.";
+            status.classList.add("err");
+            status.hidden = false;
+          }
+        } catch (err) {
+          status.textContent = "Network error. Email support@estatemotion.ai directly.";
+          status.classList.add("err");
+          status.hidden = false;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Send";
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

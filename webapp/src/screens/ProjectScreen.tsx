@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefOb
 import { useStore } from "../lib/store";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot, uploadBrokerageLogo } from "../lib/supabase";
 import { createEditPlan, submitRender, pollRender, lookupProperty, fetchLibrary, RenderJobMissingError, type RenderManifest } from "../lib/api";
+import { events, track } from "../lib/analytics";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
 
@@ -1984,6 +1985,10 @@ function RenderControls() {
       }
 
       phaseCreep.stop();
+      track(events.renderStarted, {
+        engine: renderEngine,
+        sceneCount: planResult.editPlan.scenes.length
+      });
       setRenderJob({
         jobId: submitted.jobId || "",
         status: submitted.status,
@@ -2099,6 +2104,7 @@ function RenderControls() {
           // and the meter / trial countdown reflects the just-finished render.
           if (status.status === "completed") {
             useStore.getState().bumpUsageRefresh();
+            track(events.renderCompleted, { engine: renderEngine });
           }
           return;
         }

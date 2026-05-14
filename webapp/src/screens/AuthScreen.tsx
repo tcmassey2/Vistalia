@@ -7,6 +7,7 @@ import {
   updatePassword,
   resendConfirmationEmail
 } from "../lib/supabase";
+import { events, track } from "../lib/analytics";
 
 type Mode = "signin" | "signup" | "forgot" | "reset";
 
@@ -47,12 +48,15 @@ export default function AuthScreen() {
     setBusy(true);
     try {
       if (mode === "signup") {
+        track(events.signupStarted);
         await signUp(email, password);
+        track(events.signupCompleted);
         setPendingConfirmEmail(email);
         setInfo("Check your email to confirm. We've sent the link to " + email + ".");
         setMode("signin");
       } else if (mode === "signin") {
         await signIn(email, password);
+        track(events.signinCompleted);
         setToast("Signed in");
         // store.init's onAuthChange handler will move us to dashboard
       } else if (mode === "forgot") {

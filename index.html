@@ -11,7 +11,15 @@
   <meta property="og:title" content="EstateMotion — Cinematic listing videos in minutes">
   <meta property="og:description" content="Turn MLS photos into cinematic walkthroughs. AI-directed motion. 4K-ready. Built for real estate agents.">
   <meta property="og:site_name" content="EstateMotion">
+  <meta property="og:url" content="https://estatemotion.ai">
+  <meta property="og:image" content="https://estatemotion.ai/og-image.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="EstateMotion — cinematic AI-directed listing videos for real estate agents">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="EstateMotion — Cinematic listing videos in minutes">
+  <meta name="twitter:description" content="Turn MLS photos into cinematic walkthroughs. AI-directed motion. 4K-ready.">
+  <meta name="twitter:image" content="https://estatemotion.ai/og-image.jpg">
 
   <!-- Theme -->
   <meta name="theme-color" content="#08080A">
@@ -39,6 +47,31 @@
       { "@type": "Offer", "name": "Cinematic AI 4K", "price": "299", "priceCurrency": "USD" }
     ]
   }
+  </script>
+
+  <!-- Plausible Analytics — privacy-first, no cookies, GDPR-friendly. The
+       data-domain attribute is corrected at runtime via the small inline
+       script below so the same HTML works in dev (script no-ops without
+       a domain), preview, and prod. Use window.plausible(name, {props})
+       from anywhere on the page to fire custom events. -->
+  <script defer data-domain="estatemotion.ai" src="https://plausible.io/js/script.outbound-links.tagged-events.js" id="plausible-script"></script>
+  <script>
+    window.plausible = window.plausible || function () {
+      (window.plausible.q = window.plausible.q || []).push(arguments);
+    };
+    // If /api/env reports a different production domain (e.g. for preview
+    // deploys), retarget the Plausible script to it on load.
+    fetch("/api/env", { cache: "no-store" })
+      .then((r) => r.ok ? r.text() : "")
+      .then((js) => {
+        try { new Function(js)(); } catch (_) {}
+        var d = (window.ESTATEMOTION_ENV && window.ESTATEMOTION_ENV.PLAUSIBLE_DOMAIN) || "";
+        if (d) {
+          var el = document.getElementById("plausible-script");
+          if (el) el.setAttribute("data-domain", d);
+        }
+      })
+      .catch(function() {});
   </script>
 </head>
 <body>
@@ -513,10 +546,10 @@
         <div class="footer-col">
           <h5>Company</h5>
           <ul>
+            <li><a href="/help.html">Help center</a></li>
+            <li><a href="mailto:hello@estatemotion.ai">Contact</a></li>
             <li><a href="#">About</a></li>
             <li><a href="#">Blog</a></li>
-            <li><a href="mailto:hello@estatemotion.com">Contact</a></li>
-            <li><a href="#">Careers</a></li>
           </ul>
         </div>
         <div class="footer-col">

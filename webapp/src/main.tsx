@@ -26,6 +26,40 @@ window.addEventListener("unhandledrejection", (e) => {
   showFallback(msg);
 });
 
+// Sentry — loaded via CDN BEFORE React mounts so errors during render
+// still get reported. We initialize only when SENTRY_DSN_PUBLIC is set on
+// window.ESTATEMOTION_ENV (so dev/preview deploys without a DSN don't ship
+// noise to the production project).
+async function loadSentryIfConfigured() {
+  const env = (window as { ESTATEMOTION_ENV?: { SENTRY_DSN_PUBLIC?: string; SENTRY_ENVIRONMENT?: string } }).ESTATEMOTION_ENV;
+  const dsn = env?.SENTRY_DSN_PUBLIC;
+  if (!dsn) return;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://browser.sentry-cdn.com/8.40.0/bundle.min.js";
+      script.crossOrigin = "anonymous";
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Sentry CDN failed"));
+      document.head.appendChild(script);
+    });
+    const Sentry = (window as { Sentry?: { init: (config: Record<string, unknown>) => void } }).Sentry;
+    if (Sentry?.init) {
+      Sentry.init({
+        dsn,
+        environment: env?.SENTRY_ENVIRONMENT || "production",
+        // Sample 10% of normal sessions, 100% of errors.
+        tracesSampleRate: 0.1,
+        // Don't send personal data — no IP, no headers, no breadcrumbs that
+        // contain form input. Real estate agents care about client privacy.
+        sendDefaultPii: false
+      });
+    }
+  } catch {
+    // Sentry CDN block (ad blocker etc) is fine — app continues unmonitored.
+  }
+}
+
 async function bootstrap() {
   try {
     const res = await fetch("/api/env", { cache: "no-store" });
@@ -38,6 +72,9 @@ async function bootstrap() {
   } catch {
     window.ESTATEMOTION_API_ENV_UNAVAILABLE = true;
   }
+
+  // Init Sentry AFTER /api/env (so the DSN is on window) but BEFORE React.
+  await loadSentryIfConfigured();
 
   const root = document.getElementById("root");
   if (!root) { showFallback("Root element not found"); return; }

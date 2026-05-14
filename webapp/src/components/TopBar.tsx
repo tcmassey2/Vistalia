@@ -61,6 +61,15 @@ export default function TopBar() {
               </span>
             )}
           </button>
+          <a
+            href="/help.html"
+            target="_blank"
+            rel="noopener"
+            className="btn-press text-xs text-ink-muted hover:text-ink px-3 py-1.5 rounded-md border border-transparent hover:border-edge transition-colors"
+            title="Help center & FAQ"
+          >
+            Help
+          </a>
           <button
             onClick={() => goToScreen("settings")}
             className={`btn-press text-xs px-3 py-1.5 rounded-md transition-colors inline-flex items-center gap-1.5 ${

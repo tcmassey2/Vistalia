@@ -35,7 +35,13 @@ function publicEnv() {
     STRIPE_PUBLISHABLE_KEY: process.env.STRIPE_PUBLISHABLE_KEY || process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || "",
     STRIPE_CHECKOUT_ENDPOINT: process.env.STRIPE_CHECKOUT_ENDPOINT || "",
     RENDER_ENDPOINT: process.env.RENDER_ENDPOINT || "",
-    SUPABASE_JS_URL: process.env.SUPABASE_JS_URL || "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
+    SUPABASE_JS_URL: process.env.SUPABASE_JS_URL || "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm",
+    // Sentry — public DSN is safe to ship to the browser. Keep separate
+    // from any server-side SENTRY_DSN you might add later for /api/* errors.
+    SENTRY_DSN_PUBLIC: process.env.SENTRY_DSN_PUBLIC || "",
+    SENTRY_ENVIRONMENT: process.env.VERCEL_ENV || process.env.SENTRY_ENVIRONMENT || "production",
+    // Plausible Analytics — domain string. Empty = analytics disabled.
+    PLAUSIBLE_DOMAIN: process.env.PLAUSIBLE_DOMAIN || ""
   };
 }
 

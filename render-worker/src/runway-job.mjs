@@ -302,6 +302,19 @@ export async function renderRunwayJob(body, options = {}) {
     scenes: scenesMeta
   }).catch(() => {});
 
+  // Render-complete email — fire-and-forget POST to the Vercel notify
+  // endpoint. Worker doesn't hold Resend keys; Vercel does. Same secret
+  // guards both directions.
+  notifyRenderComplete({
+    userId: manifest?.project?.userId || "",
+    jobId,
+    mp4Url: upload?.formats?.vertical?.mp4Url || "",
+    thumbnailUrl: upload?.thumbnailUrl || "",
+    listingTitle: manifest?.project?.address || manifest?.project?.title || ""
+  }).catch((err) => {
+    console.warn("[runway] notify-render-complete failed:", err.message || err);
+  });
+
   return {
     status: "complete",
     mock: false,
@@ -1660,6 +1673,33 @@ function createJobId(manifest) {
 
 function slug(value) {
   return String(value || "render").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "render";
+}
+
+// POST to the Vercel /api/notify-render-complete endpoint to fire the
+// "your video is ready" email. Worker → Vercel → Resend. Worker doesn't
+// hold Resend keys; Vercel does. Auth uses the same shared secret as the
+// render webhook. Configure NOTIFY_BASE_URL on the worker to point at
+// the Vercel domain (e.g. https://estatemotion.ai).
+async function notifyRenderComplete({ userId, jobId, mp4Url, thumbnailUrl, listingTitle }) {
+  const baseUrl = process.env.NOTIFY_BASE_URL || process.env.APP_URL || "";
+  if (!baseUrl || !userId || !jobId || !mp4Url) return;
+  const secret = process.env.RENDER_WEBHOOK_SECRET || process.env.RENDER_WORKER_SECRET || "";
+  const url = `${baseUrl.replace(/\/$/, "")}/api/notify-render-complete`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(secret ? { Authorization: `Bearer ${secret}` } : {})
+      },
+      body: JSON.stringify({ userId, jobId, mp4Url, thumbnailUrl, listingTitle }),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* =================================================================
