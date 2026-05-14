@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   listMfaFactors,
   enrollTotpFactor,
@@ -37,6 +37,15 @@ export default function TwoFactorSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  const codeInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Autofocus the 6-digit input as soon as enrollment kicks off.
+  useEffect(() => {
+    if (enroll) {
+      const t = setTimeout(() => codeInputRef.current?.focus(), 80);
+      return () => clearTimeout(t);
+    }
+  }, [enroll]);
 
   const refresh = async () => {
     setError("");
@@ -180,10 +189,19 @@ export default function TwoFactorSection() {
           </div>
 
           <div className="text-xs uppercase tracking-widest text-gold mt-5 mb-3 font-mono">Step 2 — Verify</div>
-          <div className="flex flex-wrap gap-3 items-end">
+          {/* Wrapped in a form so Enter from the input fires the verify
+              button — much faster than reaching for the mouse. */}
+          <form
+            className="flex flex-wrap gap-3 items-end"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (code.length === 6 && !busy) handleVerify();
+            }}
+          >
             <label className="flex flex-col gap-1.5 flex-1 min-w-[180px]">
               <span className="text-xs text-ink-soft">6-digit code</span>
               <input
+                ref={codeInputRef}
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
@@ -196,8 +214,7 @@ export default function TwoFactorSection() {
               />
             </label>
             <button
-              type="button"
-              onClick={handleVerify}
+              type="submit"
               disabled={busy || code.length !== 6}
               className="card-press h-11 px-5 rounded-lg text-sm font-semibold bg-gold text-paper hover:bg-gold-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -211,7 +228,7 @@ export default function TwoFactorSection() {
             >
               Cancel
             </button>
-          </div>
+          </form>
         </div>
       )}
 

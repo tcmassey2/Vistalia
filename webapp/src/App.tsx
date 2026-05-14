@@ -66,7 +66,13 @@ export default function App() {
   return (
     <ErrorBoundary>
       {screen !== "auth" && <TopBar />}
-      <main>
+      {/*
+        Re-keying <main> on screen change forces a fresh mount, which
+        re-runs the fade-up-in animation each time. Cheap "page transition"
+        feel without bringing in a router. Adds ~180ms of soft entry on
+        every Dashboard ↔ Project ↔ Settings hop.
+      */}
+      <main key={screen} className="fade-up-in">
         {screen === "auth" && <AuthScreen />}
         {screen === "dashboard" && <DashboardScreen />}
         {screen === "project" && <ProjectScreen />}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
 import { fetchUsage, openBillingPortal, deleteAccount } from "../lib/api";
 import { signOut, requestPasswordReset } from "../lib/supabase";
@@ -293,6 +293,17 @@ function DangerZone({ email }: { email: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const setToast = useStore((s) => s.setToast);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Autofocus the email-confirm input the moment the panel opens so the
+  // user can just start typing. Tiny but feels intentional vs the click-
+  // to-focus default.
+  useEffect(() => {
+    if (open) {
+      const t = setTimeout(() => inputRef.current?.focus(), 80);
+      return () => clearTimeout(t);
+    }
+  }, [open]);
 
   const ready = typed.trim().toLowerCase() === email.toLowerCase() && email.length > 0;
 
@@ -345,12 +356,21 @@ function DangerZone({ email }: { email: string }) {
         </div>
 
         {open && (
-          <div className="mt-4 flex flex-col gap-3">
+          // Wrap in <form> so pressing Enter while focused on the input
+          // fires the confirm action (only when the typed email matches).
+          <form
+            className="mt-4 flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (ready && !busy) handleDelete();
+            }}
+          >
             <label className="flex flex-col gap-1.5">
               <span className="text-xs text-ink-muted">
                 Type <strong className="text-ink">{email}</strong> to confirm deletion
               </span>
               <input
+                ref={inputRef}
                 type="text"
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
@@ -377,8 +397,7 @@ function DangerZone({ email }: { email: string }) {
                 Cancel
               </button>
               <button
-                type="button"
-                onClick={handleDelete}
+                type="submit"
                 disabled={!ready || busy}
                 className={
                   "card-press h-10 px-4 rounded-lg text-sm font-semibold transition-colors " +
@@ -390,7 +409,7 @@ function DangerZone({ email }: { email: string }) {
                 {busy ? "Deleting…" : "Delete forever"}
               </button>
             </div>
-          </div>
+          </form>
         )}
       </div>
     </div>

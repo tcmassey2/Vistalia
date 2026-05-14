@@ -105,9 +105,23 @@ export default function DashboardScreen() {
 
       {/* Loading state */}
       {libraryLoading && (
-        <div className="border border-edge rounded-2xl bg-surface px-8 py-16 text-center">
-          <span className="spinner mx-auto" />
-          <p className="text-sm text-ink-muted mt-3">Loading your library…</p>
+        // Skeleton trio. Same dimensions as a real library card so the
+        // layout doesn't reflow when content arrives. Better perceived
+        // performance than a centered spinner.
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="bg-surface border border-edge rounded-xl overflow-hidden animate-pulse"
+              style={{ animationDelay: `${i * 120}ms` }}
+            >
+              <div className="aspect-video bg-surface-input" />
+              <div className="p-4">
+                <div className="h-4 w-3/4 bg-edge rounded mb-2" />
+                <div className="h-3 w-1/2 bg-edge rounded" />
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -125,26 +139,69 @@ export default function DashboardScreen() {
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state — first-time users land here. Three-step preview
+          gives them the shape of the workflow before they commit, then
+          two CTAs (start fresh OR try sample) lower the barrier. */}
       {!libraryLoading && !libraryError && library && library.length === 0 && !libraryNote && (
-        <div className="border border-edge rounded-2xl bg-surface px-8 py-16 text-center">
-          <div className="mx-auto w-12 h-12 rounded-full bg-gold/10 grid place-items-center mb-5">
-            <svg viewBox="0 0 24 24" className="w-6 h-6 text-gold" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <rect x="3" y="5" width="18" height="14" rx="2" />
-              <path d="M10 9l5 3-5 3V9z" fill="currentColor" stroke="none" />
-            </svg>
+        <div className="border border-edge rounded-2xl bg-surface overflow-hidden">
+          <div className="px-8 pt-12 pb-8 text-center">
+            <div className="mx-auto w-14 h-14 rounded-full bg-gradient-to-br from-gold/30 to-gold/5 grid place-items-center mb-6 ring-1 ring-gold/20">
+              <svg viewBox="0 0 24 24" className="w-7 h-7 text-gold" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="M10 9l5 3-5 3V9z" fill="currentColor" stroke="none" />
+              </svg>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-semibold tracking-tighter2 mb-3">
+              Your first cinematic listing video, in three minutes.
+            </h2>
+            <p className="text-ink-muted text-sm sm:text-base max-w-md mx-auto mb-8 leading-relaxed">
+              Upload your MLS photos, pick a style, and EstateMotion directs the
+              motion, music, and pacing — then hands you every aspect ratio at once.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3 mb-2">
+              <button onClick={newProject} className="btn-primary-em h-12 px-6 rounded-lg pulse-glow">
+                <span className="text-lg leading-none mr-1.5">+</span>
+                Create your first video
+              </button>
+              <button onClick={startWithSample} className="btn-secondary-em h-12 px-5 rounded-lg">
+                Try with sample listing
+              </button>
+            </div>
+            <p className="text-xs text-ink-dim mt-3">
+              Free for 7 days · 3 videos · No credit card
+            </p>
           </div>
-          <h2 className="text-xl font-semibold mb-2">Nothing rendered yet</h2>
-          <p className="text-ink-muted text-sm max-w-md mx-auto mb-6">
-            Upload a listing's photos. EstateMotion directs the cuts, motion, and pacing — and hands you a cinematic walkthrough in about three minutes.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <button onClick={newProject} className="btn-primary-em h-11 px-5 rounded-lg">
-              Create your first video
-            </button>
-            <button onClick={startWithSample} className="btn-secondary-em h-11 px-5 rounded-lg">
-              Try sample listing
-            </button>
+
+          {/* "How it works" strip — three illustrated micro-steps so the
+              workflow doesn't feel like a black box. Subtle alternating
+              background tints separate it from the CTA above. */}
+          <div className="border-t border-edge-soft bg-surface-input/40 px-6 sm:px-10 py-8">
+            <p className="text-[10px] uppercase tracking-widest text-gold mb-5 font-mono text-center">
+              How it works
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+              <div className="text-center sm:text-left">
+                <div className="font-mono text-[11px] text-gold mb-2">01</div>
+                <h3 className="text-sm font-semibold mb-1.5 tracking-tightish">Upload photos</h3>
+                <p className="text-xs text-ink-muted leading-relaxed">
+                  Drop in 8–60 listing photos. The AI curator picks the best 24 in tour order.
+                </p>
+              </div>
+              <div className="text-center sm:text-left">
+                <div className="font-mono text-[11px] text-gold mb-2">02</div>
+                <h3 className="text-sm font-semibold mb-1.5 tracking-tightish">Pick a style</h3>
+                <p className="text-xs text-ink-muted leading-relaxed">
+                  Cinematic Luxury, Modern Social, MLS Clean, or Investor Tour. Each has its own grade and music.
+                </p>
+              </div>
+              <div className="text-center sm:text-left">
+                <div className="font-mono text-[11px] text-gold mb-2">03</div>
+                <h3 className="text-sm font-semibold mb-1.5 tracking-tightish">Hit Generate</h3>
+                <p className="text-xs text-ink-muted leading-relaxed">
+                  Quick Reel finishes in under 90 seconds. Cinematic AI in three to five minutes.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}
