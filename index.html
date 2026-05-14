@@ -91,11 +91,13 @@
 
         <div class="hero-visual">
           <div class="hero-glow" aria-hidden="true"></div>
-          <!-- HERO PREVIEW SLOT
-               Reserved for the real EstateMotion demo render. To go live:
-               drop a vertical 9:16 1080×1920 MP4 at /showcase/preview.mp4
-               and the <video> below will autoplay it. Until then, the
-               placeholder is the design — intentional, not "missing asset." -->
+          <!-- HERO PREVIEW
+               Real EstateMotion render. /showcase/preview.mp4 is the
+               web-optimized loop; /showcase/preview-poster.jpg is the
+               first-paint frame so the card looks great even before the
+               video loads. The decorative placeholder underneath stays
+               in the markup as the empty-state design (visible briefly
+               on slow connections). -->
           <div class="hero-preview" data-state="placeholder">
             <video class="hero-preview-video"
                    autoplay muted loop playsinline preload="metadata"
@@ -113,17 +115,17 @@
               <div class="hero-preview-content">
                 <div class="hero-preview-eyebrow">
                   <span class="hero-preview-dot"></span>
-                  Preview reel
+                  Live render
                 </div>
-                <div class="hero-preview-title">Coming this week</div>
+                <div class="hero-preview-title">Loading reel&hellip;</div>
                 <div class="hero-preview-meta">
-                  Fresh render &middot; 9:16 &middot; Cinematic AI &middot; 4K
+                  Cinematic AI &middot; 9:16 &middot; under 3 minutes
                 </div>
               </div>
             </div>
             <div class="hero-preview-overlay" aria-hidden="true">
-              <div class="hero-preview-listing">Sample listing &middot; Scottsdale, AZ</div>
-              <div class="hero-preview-runtime">0:54 &middot; 9:16 &middot; AI-DIRECTED</div>
+              <div class="hero-preview-listing">Live render &middot; Phoenix, AZ</div>
+              <div class="hero-preview-runtime">0:30 &middot; 9:16 &middot; AI-DIRECTED</div>
             </div>
           </div>
         </div>
