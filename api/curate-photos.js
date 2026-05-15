@@ -29,9 +29,30 @@
 
 import { rateLimit } from "./_lib/rate-limit.js";
 
+// v23: Vercel function timeout. Default for Node serverless is 10s (Hobby)
+// or 60s (Pro). The OpenAI Vision call alone can take 50-90s for 25-photo
+// curations, so we explicitly request 120s. Pro plan allows up to 300s.
+// Without this, Vercel kills the function before OpenAI responds and the
+// frontend sees the same "Auto-curate timed out. Falling back to upload
+// order." error every time.
+export const config = {
+  maxDuration: 120
+};
+
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
-const DEFAULT_TIMEOUT_MS = 45000;
+// v23 retune: bumped from 45s → 120s. Real-world finding: scoring 25 photos
+// at gpt-4.1-mini Vision ("low" detail) regularly takes 50-90s when OpenAI
+// is under load. The old 45s timeout fired the "Auto-curate timed out.
+// Falling back to upload order." path on every legitimate large request.
+// Vercel serverless function ceiling is 300s on Pro plans, so 120s leaves
+// plenty of headroom for the rest of the response handling.
+const DEFAULT_TIMEOUT_MS = 120000;
+// Cap requests we forward to OpenAI to avoid hitting context-window or
+// per-request token limits even on the upper input bound. Vision input
+// images count toward token budget; staying under this keeps responses
+// well within model limits.
+const MAX_OPENAI_BATCH = 30;
 
 // Hard caps to bound cost + token usage.
 const MAX_INPUT_PHOTOS = 60;

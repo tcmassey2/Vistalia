@@ -1,6 +1,15 @@
+// v23: explicit Vercel function timeout. Default for Node serverless is
+// 60s on Pro plans. The Motion Director call (gpt-4.1-mini Vision on
+// 12 photos + scene planning) typically completes in 25-50s but can hit
+// 70s under OpenAI load. Budget 90s to keep functions alive past
+// 'normal slow' without burning serverless minutes on truly hung requests.
+export const config = {
+  maxDuration: 90
+};
+
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
-const DEFAULT_TIMEOUT_MS = 35000;
+const DEFAULT_TIMEOUT_MS = 60000; // bumped from 35s to 60s (matches the longer function ceiling)
 // Number of photos sent to OpenAI Vision for actual visual analysis.
 // Cost-controlled: at gpt-4.1-mini "low" detail, ~$0.002/image so 12 images =
 // ~$0.024 per render. Photos beyond this cap are still INCLUDED in the edit
