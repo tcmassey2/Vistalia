@@ -369,6 +369,51 @@ export async function openBillingPortal(): Promise<BillingPortalResponse> {
 }
 
 /* ============================================================
+   /api/create-checkout-session — start a Stripe Checkout flow
+   ============================================================
+   Returns the Stripe-hosted checkout URL. Caller should immediately
+   navigate the browser there (window.location.href = result.url).
+   On success the user lands back on returnUrl?checkout=success.
+*/
+
+export type CheckoutTier = "quick_reel" | "cinematic_ai" | "cinematic_4k" | "brokerage";
+
+export interface CheckoutResponse {
+  url?: string;
+  sessionId?: string;
+  error?: string;
+}
+
+export async function startCheckout(args: {
+  tier: CheckoutTier;
+  email?: string;
+  returnUrl?: string;
+  // Brokerage tier only — number of seats (clamped 3-100 server-side).
+  seats?: number;
+  organizationId?: string;
+}): Promise<CheckoutResponse> {
+  const headers = await authHeaders();
+  const body = {
+    tier: args.tier,
+    email: args.email || "",
+    returnUrl: args.returnUrl || `${window.location.origin}/app/`,
+    ...(args.seats ? { seats: args.seats } : {}),
+    ...(args.organizationId ? { organizationId: args.organizationId } : {})
+  };
+  const res = await fetch("/api/create-checkout-session", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    return { error: payload.error || `Checkout failed (${res.status}).` };
+  }
+  const payload = await res.json().catch(() => ({}));
+  return { url: payload.url, sessionId: payload.sessionId };
+}
+
+/* ============================================================
    /api/curate-photos — AI picks the best 24 in tour order
    ============================================================ */
 

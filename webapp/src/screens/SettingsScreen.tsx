@@ -5,6 +5,7 @@ import { signOut, requestPasswordReset } from "../lib/supabase";
 import type { UserProfile } from "../lib/types";
 import TwoFactorSection from "../components/TwoFactorSection";
 import VoiceSection from "../components/VoiceSection";
+import PricingModal from "../components/PricingModal";
 
 /**
  * SettingsScreen — account + subscription management.
@@ -27,6 +28,7 @@ export default function SettingsScreen() {
   const [usageLoading, setUsageLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
 
   const email = session?.user?.email || "";
 
@@ -229,12 +231,13 @@ export default function SettingsScreen() {
                     {portalLoading ? "Opening…" : "Manage subscription ↗"}
                   </button>
                 ) : (
-                  <a
-                    href="/#pricing"
+                  <button
+                    type="button"
+                    onClick={() => setPricingOpen(true)}
                     className="card-press h-9 px-4 rounded-lg text-xs font-semibold bg-gold text-paper hover:bg-gold-light transition-colors inline-flex items-center"
                   >
                     Pick a plan
-                  </a>
+                  </button>
                 )}
               </div>
             </Field>
@@ -293,6 +296,9 @@ export default function SettingsScreen() {
           Delete account — fully destructive, type-to-confirm guard
           ============================================================ */}
       <DangerZone email={email} />
+
+      {/* v23: in-app upgrade flow. Replaces the old `/#pricing` anchor link. */}
+      <PricingModal open={pricingOpen} onClose={() => setPricingOpen(false)} />
     </div>
   );
 }
