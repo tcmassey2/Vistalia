@@ -69,6 +69,7 @@ const TIERS: TierCard[] = [
     price: "$299",
     features: [
       "60 finished videos per month",
+      "Runway Gen-4.5 — premium AI engine",
       "4K Ultra HD output",
       "Twilight Magic (day-to-dusk hero shots)",
       "Multiple aspect ratios (9:16, 1:1, 16:9)",

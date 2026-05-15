@@ -58,7 +58,15 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
       twilightHero: Boolean(manifest?.creative?.twilightHero),
       injectBroll: manifest?.creative?.injectBroll !== false,
       disableAddressCard: Boolean(manifest?.disableAddressCard),
-      userTier: manifest?.userTier || null
+      userTier: manifest?.userTier || null,
+      // v23.1: which Runway model the tier-based resolver picked. Surfaced
+      // here at the render-level (per-scene model usage lives on the
+      // scenes[] array). Lets analytics queries answer "what % of 4K-tier
+      // renders actually got Gen-4.5 vs fell back to Turbo".
+      runwayModelRequested: manifest?.runwayConfig?.model
+        || (String(manifest?.userTier || "").toLowerCase() === "cinematic_4k"
+            ? (process.env.RUNWAY_PREMIUM_MODEL || "gen4_5")
+            : "gen4_turbo")
     },
     // Per-scene metadata for regenerate-scene flow. JSONB column.
     // v23: per-scene now includes engineUsed / fallbackReason / guardRisk

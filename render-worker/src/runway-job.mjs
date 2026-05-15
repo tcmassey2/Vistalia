@@ -478,6 +478,49 @@ export async function renderRunwayJob(body, options = {}) {
    Per-scene Runway generation
    ================================================================= */
 
+/* ----------------------------------------------------------------
+   Per-tier Runway model resolver (v23 follow-up)
+   ----------------------------------------------------------------
+   Cinematic AI 4K customers pay $299/mo and get Runway's premium model
+   (Gen-4.5) by default. Everyone else uses Gen-4 Turbo. The resolution
+   order is:
+     1. manifest.runwayConfig.model      (explicit per-render override)
+     2. process.env.RUNWAY_MODEL          (env-level override — for testing)
+     3. tier-based default (4k → gen4_5, all others → gen4_turbo)
+
+   Why gate Gen-4.5 behind the 4K tier:
+   - Gen-4.5 costs ~2.5x more per credit than Gen-4 Turbo
+   - On the $149 Cinematic AI tier, default Gen-4.5 would push Runway
+     spend to ~$190/mo per active customer — negative gross margin
+   - The $299 4K tier absorbs that cost and still leaves room
+   - Below $299: opt-out of premium AI, accept Gen-4 Turbo (still
+     industry-best quality for the price)
+
+   Override knob: set process.env.RUNWAY_PREMIUM_MODEL to swap out the
+   premium model name (e.g. when Gen-5 launches). Defaults to "gen4_5".
+*/
+function resolveRunwayModel(manifest) {
+  const config = manifest?.runwayConfig || {};
+  if (config.model) return config.model;
+  if (process.env.RUNWAY_MODEL) return process.env.RUNWAY_MODEL;
+  const tier = String(manifest?.userTier || "").toLowerCase().trim();
+  if (tier === "cinematic_4k") {
+    return process.env.RUNWAY_PREMIUM_MODEL || "gen4_5";
+  }
+  return "gen4_turbo";
+}
+
+// Detect Runway error responses that mean "this model isn't available
+// for this account" — usually a 400 or 403 mentioning "model" or "access".
+// When that happens on Gen-4.5 we silently fall back to Gen-4 Turbo so
+// the render still completes (worst case: customer gets a Turbo render
+// they thought would be 4.5; we log it for billing reconciliation).
+function isModelUnavailableError(httpStatus, errBody) {
+  if (httpStatus !== 400 && httpStatus !== 403 && httpStatus !== 404) return false;
+  const lower = String(errBody || "").toLowerCase();
+  return /model|access|not.*available|unsupported|invalid.*model/.test(lower);
+}
+
 export async function generateClip(scene, manifest, tempDir, sceneIndex) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   const imageUrl = pickImageUrl(scene, photo);
@@ -486,11 +529,12 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
   if (!prompt) throw new Error(`Scene ${sceneIndex + 1} missing runwayPrompt. Regenerate edit plan with engine=runway.`);
 
   const config = manifest.runwayConfig || {};
-  // Default Gen-4 Turbo for new renders. Better shape preservation, fewer
-  // morphed surfaces. The ratio resolver picks the right pixel-pair based
-  // on which model we're hitting (Gen-4 uses 1280:720, Gen-3 uses 1280:768).
-  const model = config.model || process.env.RUNWAY_MODEL || "gen4_turbo";
-  const ratio = ratioForRunway(config.ratio, model);
+  // v23.1: per-tier model resolution. cinematic_4k → gen4_5, else gen4_turbo.
+  // Falls back to gen4_turbo automatically if gen4_5 is unavailable on this
+  // Runway account (so a misconfigured account doesn't black-hole renders).
+  const requestedModel = resolveRunwayModel(manifest);
+  const fallbackModel = "gen4_turbo";
+  const ratio = ratioForRunway(config.ratio, requestedModel);
   const duration = clamp(Number(scene.duration || 5) > 5.5 ? 10 : 5, 5, 10);
 
   // Submit task — with 429 / 5xx resilience.
@@ -501,9 +545,10 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
   //      until the user upgrades. No point retrying. Surface a clear
   //      error so the frontend can prompt for an upgrade.
   //   3. 5xx — transient Runway side. Retry with backoff.
-  const submitResponse = await submitRunwayTaskWithRetry({
+  let modelUsed = requestedModel;
+  let submitResponse = await submitRunwayTaskWithRetry({
     body: {
-      model,
+      model: requestedModel,
       promptImage: imageUrl,
       promptText: prompt,
       ratio,
@@ -514,6 +559,32 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
     sceneIndex,
     maxAttempts: 5
   });
+
+  // Fallback path: requested premium model but it's not available on this
+  // account. Re-submit with Gen-4 Turbo so the render completes.
+  if (!submitResponse.ok && requestedModel !== fallbackModel) {
+    const errBody = await safeText(submitResponse);
+    if (isModelUnavailableError(submitResponse.status, errBody)) {
+      console.warn(
+        `[runway] scene ${sceneIndex + 1}: ${requestedModel} not available ` +
+        `(HTTP ${submitResponse.status}). Falling back to ${fallbackModel}.`
+      );
+      modelUsed = fallbackModel;
+      submitResponse = await submitRunwayTaskWithRetry({
+        body: {
+          model: fallbackModel,
+          promptImage: imageUrl,
+          promptText: prompt,
+          ratio: ratioForRunway(config.ratio, fallbackModel),
+          duration,
+          watermark: false,
+          ...(config.seed != null ? { seed: Number(config.seed) } : {})
+        },
+        sceneIndex,
+        maxAttempts: 5
+      });
+    }
+  }
 
   if (!submitResponse.ok) {
     const errBody = await safeText(submitResponse);
@@ -545,7 +616,12 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
     duration,
     transition: scene.transition || "crossfade",
     overlay: scene.overlay || null,
-    runwayTaskId: taskId
+    runwayTaskId: taskId,
+    // v23.1: track which model actually ran (may differ from requested if
+    // the premium model fell back to Turbo). Surfaced via per-scene audit
+    // for cost reconciliation + UI badge ("Generated with Gen-4.5 Premium").
+    modelRequested: requestedModel,
+    modelUsed
   };
 }
 
@@ -1580,7 +1656,12 @@ export async function uploadPerSceneClips({ manifest, jobId, normalizedClips, cl
       guardRisk: original.guardRisk ?? null,
       guardLevel: original.guardLevel || null,
       runwayTaskId: original.runwayTaskId || null,
-      durationMs: original.durationMs ?? null
+      durationMs: original.durationMs ?? null,
+      // v23.1: which Runway model actually ran this scene. Tracks Gen-4.5
+      // premium tier usage + auto-fallback events. Cost-reconciliation +
+      // "Generated with Gen-4.5 Premium" UI badge will read from here.
+      modelRequested: original.modelRequested || null,
+      modelUsed: original.modelUsed || null
     });
   }
   return sceneMeta;
