@@ -330,6 +330,20 @@ function RenderQualityPanel() {
         )}
       </div>
 
+      {/* v23.1 compat warning: Gen-4.5 + 4K both ON is the heaviest possible
+          combination. Even on Render Pro 4GB the worker can OOM during
+          stitch with both at once. Real-world finding from launch testing.
+          Recommend picking one for now until we move to a Render Standard+
+          worker class with more headroom. */}
+      {is4KTier && !isQuickReel && export4K && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] text-amber-300/95 leading-relaxed">
+          <strong className="font-semibold">Heads up:</strong> Gen-4.5 + 4K is the
+          heaviest combo and may time out or fail on the current worker. If a
+          render fails at 4K, toggle 4K off and re-run on 1080p — Gen-4.5 quality
+          is the bigger visible upgrade and still ships at 1080p.
+        </div>
+      )}
+
       {/* Upgrade CTA — only for non-4K tiers viewing the Cinematic AI engine */}
       {!is4KTier && !isQuickReel && (
         <div className="text-[11px] text-ink-dim leading-relaxed pt-1">

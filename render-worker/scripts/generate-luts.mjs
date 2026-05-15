@@ -110,73 +110,80 @@ function splitTone(rgb, shadowTint, highlightTint, balance) {
    numbers here to tune the grades.
 */
 
-// LUXURY — Kodak 2383 print emulation (lite).
-// Goal: warm, slightly desaturated, lifted blacks, soft highlight rolloff.
-// This is the "shot on film, printed on premium stock" look that real-estate
-// luxury videography goes for. Think Architectural Digest video tours.
+// v23.1 — LUT math softened ~40% across all styles after Troy reported
+// exteriors (bright sky + green grass) looked "strange" with v23.0
+// luxury LUT. The original math was tuned for warm interior real estate
+// shots; on bright outdoor scenes the warm push + split-tone produced
+// odd shifts in greens and skies. The new math is closer to "subtle
+// grade" than "signature look" — still elevates the footage but plays
+// nicer across mixed scene types (interior + exterior in same render).
+
+// LUXURY — Kodak 2383 print emulation (subtle).
+// Goal: warm, slightly desaturated, lifted blacks. v23.1 dialed back
+// from v23.0's "filmic stylize" toward "natural grade" so backyards and
+// hero exteriors don't pick up weird color casts.
 function luxuryTransform(rgb) {
   let c = rgb;
-  // Slight warm WB push (red+, blue-)
-  c = [c[0] * 1.04, c[1] * 1.005, c[2] * 0.96];
-  // Lift shadows ~3%, hold gain at 1.0, gentle gamma lift in midtones
-  c = liftGammaGain(c, [0.03, 0.025, 0.025], [1.05, 1.04, 1.03], [0.97, 0.97, 0.98]);
-  // Soft S-curve for filmic contrast
-  c = sCurve(c, 0.45);
-  // Pull saturation down ~5% — film stocks are slightly desaturated vs digital
-  c = adjustSaturation(c, 0.94);
-  // Split-tone: cool teal in shadows, warm cream in highlights
-  c = splitTone(c, [-0.015, 0.005, 0.025], [0.025, 0.012, -0.018], 0.55);
+  // Smaller warm WB push (was 1.04, now 1.02)
+  c = [c[0] * 1.02, c[1] * 1.003, c[2] * 0.98];
+  // Lighter shadow lift, less aggressive gamma
+  c = liftGammaGain(c, [0.015, 0.012, 0.012], [1.025, 1.02, 1.015], [0.99, 0.99, 0.995]);
+  // Softer S-curve (was 0.45, now 0.25)
+  c = sCurve(c, 0.25);
+  // Tiny desat — was 0.94 (-6%), now 0.97 (-3%)
+  c = adjustSaturation(c, 0.97);
+  // Gentle split-tone — half the v23.0 strength
+  c = splitTone(c, [-0.008, 0.003, 0.012], [0.012, 0.006, -0.009], 0.40);
   return c;
 }
 
 // VIRAL — Modern teal-orange short-form look.
-// Goal: punchy, high-contrast, pushed shadows toward cyan and skin/highlights
-// toward orange. Reads as "professional Reels / TikTok edit."
+// Goal: punchy, social-native. v23.1 still distinctly teal-orange but
+// less intense so exteriors don't go neon.
 function viralTransform(rgb) {
   let c = rgb;
-  // Slight saturation bump first
-  c = adjustSaturation(c, 1.12);
-  // Stronger contrast S-curve
-  c = sCurve(c, 0.85);
-  // Lift shadows slightly so we don't crush
-  c = liftGammaGain(c, [0.02, 0.025, 0.04], [1.0, 1.0, 0.98], [1.0, 1.0, 1.0]);
-  // Heavy split-tone — this is where teal-orange comes from
-  c = splitTone(c, [-0.04, 0.005, 0.06], [0.06, 0.025, -0.05], 0.85);
-  // Final saturation kick on the result
-  c = adjustSaturation(c, 1.05);
+  // Smaller saturation bump (was 1.12, now 1.06)
+  c = adjustSaturation(c, 1.06);
+  // Softer contrast S-curve (was 0.85, now 0.50)
+  c = sCurve(c, 0.50);
+  // Light shadow lift
+  c = liftGammaGain(c, [0.01, 0.012, 0.02], [1.0, 1.0, 0.99], [1.0, 1.0, 1.0]);
+  // Lighter split-tone — half the v23.0 strength
+  c = splitTone(c, [-0.02, 0.003, 0.03], [0.03, 0.012, -0.025], 0.55);
+  // Smaller final sat kick
+  c = adjustSaturation(c, 1.02);
   return c;
 }
 
 // MLS CLEAN — Rec.709 neutral.
-// Goal: faithful, accurate, no "look." This is the compliance-mode grade —
-// what a real estate broker's lawyer would approve. Very subtle warmth so
-// it doesn't look clinical, but no creative interpretation.
+// Goal: faithful, accurate, no "look." v23.1 essentially identity — only
+// the unsharp pass adds anything visible. Compliance-grade.
 function mlsCleanTransform(rgb) {
   let c = rgb;
-  // Almost-identity WB, microscopic warmth
-  c = [c[0] * 1.01, c[1] * 1.005, c[2] * 0.995];
-  // Gentle gamma lift only (no S-curve — keep the contrast of source)
-  c = liftGammaGain(c, [0.005, 0.005, 0.005], [1.02, 1.02, 1.02], [1.0, 1.0, 1.0]);
-  // Tiny saturation lift for liveliness
-  c = adjustSaturation(c, 1.03);
+  // Effectively identity WB (was 1.01, now 1.005)
+  c = [c[0] * 1.005, c[1] * 1.002, c[2] * 0.998];
+  // Microscopic gamma lift only
+  c = liftGammaGain(c, [0.003, 0.003, 0.003], [1.01, 1.01, 1.01], [1.0, 1.0, 1.0]);
+  // Tiny saturation lift (was 1.03, now 1.015)
+  c = adjustSaturation(c, 1.015);
   return c;
 }
 
 // INVESTOR — Desaturated film stock.
-// Goal: serious, considered, slightly muted. The "this is a real asset, not
-// a vacation rental" look. Think Bloomberg/CNBC b-roll over interior shots.
+// Goal: serious, slightly muted. v23.1 less aggressive desat so footage
+// doesn't read as "color graded too much."
 function investorTransform(rgb) {
   let c = rgb;
-  // Cool WB shift (slight)
-  c = [c[0] * 0.985, c[1] * 1.0, c[2] * 1.015];
-  // Lower gain on R+G to mute the warm cast common in interior shots
-  c = liftGammaGain(c, [0.02, 0.02, 0.025], [1.02, 1.03, 1.04], [0.96, 0.97, 0.98]);
-  // Aggressive desat — this is the signature of the look
-  c = adjustSaturation(c, 0.78);
-  // Gentle S-curve
-  c = sCurve(c, 0.35);
-  // Cool greenish-cyan shadow tint, neutral highlights
-  c = splitTone(c, [-0.02, 0.01, 0.02], [0.005, 0.005, 0.005], 0.5);
+  // Smaller cool shift
+  c = [c[0] * 0.992, c[1] * 1.0, c[2] * 1.008];
+  // Lighter lift/gain
+  c = liftGammaGain(c, [0.01, 0.01, 0.012], [1.01, 1.015, 1.02], [0.98, 0.985, 0.99]);
+  // Was 0.78 (-22%), now 0.88 (-12%) — still distinctly muted but less so
+  c = adjustSaturation(c, 0.88);
+  // Lighter S-curve
+  c = sCurve(c, 0.20);
+  // Lighter split-tone
+  c = splitTone(c, [-0.01, 0.005, 0.01], [0.003, 0.003, 0.003], 0.40);
   return c;
 }
 

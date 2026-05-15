@@ -2151,6 +2151,25 @@ const ROOM_BASE_RISK = {
 // legacy protectHighRiskRooms boolean.
 function resolveGuardLevel(manifest) {
   const raw = String(manifest?.hallucinationGuard || "").toLowerCase();
+
+  // v23.1: MLS style auto-upgrades to strict guard regardless of explicit
+  // setting. MLS-style users are signaling "compliance-grade fidelity" —
+  // they don't want kitchens to morph for the sake of motion. Real-world
+  // confirmation from Troy: even Gen-4.5 + MLS still hallucinated kitchens
+  // because the user had set guard to "balanced" (which lets Gen-4.5
+  // attempt kitchens). Forcing strict on MLS routes ALL kitchens to Ken
+  // Burns regardless of the model's confidence.
+  // User can still override by explicitly setting hallucinationGuard="off".
+  const styleSlug = String(
+    manifest?.selectedStyle || manifest?.template?.style || ""
+  ).trim().toLowerCase();
+  const isMlsStyle = styleSlug === "mls" || styleSlug === "mls-clean" || styleSlug === "mls clean" || styleSlug.includes("mls");
+  if (isMlsStyle && raw !== "off") {
+    // MLS users explicitly opting OUT (raw === "off") still get pure AI.
+    // Everyone else on MLS gets strict.
+    return "strict";
+  }
+
   if (["off", "balanced", "strict"].includes(raw)) return raw;
   // Legacy: protectHighRiskRooms true → balanced, false → off.
   // (Default for new clients: "balanced" — see the next line.)
