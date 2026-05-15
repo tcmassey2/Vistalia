@@ -292,10 +292,17 @@ function buildOpenAIRequest(photos) {
             // True for photos that would make the strongest opening shot
             // (exterior hero / dramatic view / twilight / curb appeal).
             isHero: { type: "boolean" },
+            // v23.1: model-produced tour order. The model knows tour flow
+            // better than our hardcoded TOUR_ORDER list — particularly for
+            // intercutting bedrooms with their bathrooms, alternating
+            // interior/exterior for variety, and saving the strongest
+            // closing shot for last. 1 = first scene, N = last scene.
+            // Set to 0 if the photo should be REJECTED (not in the final cut).
+            tourOrder: { type: "integer", minimum: 0, maximum: 60 },
             // One-line reason for keep/reject (shown to the user).
             reason: { type: "string" }
           },
-          required: ["photoId", "roomType", "quality", "pickWorthiness", "isHero", "reason"]
+          required: ["photoId", "roomType", "quality", "pickWorthiness", "isHero", "tourOrder", "reason"]
         }
       }
     },
@@ -303,24 +310,44 @@ function buildOpenAIRequest(photos) {
   };
 
   const systemPrompt = [
-    "You are a senior real-estate cinematographer curating photos for a 60-90 second listing video.",
-    "You evaluate every photo for visual quality AND for whether it belongs in a marketing tour.",
-    "PHOTOS TO REJECT (low pickWorthiness):",
+    "You are a senior real-estate cinematographer + editor curating photos for a 60-90 second listing video.",
+    "Two jobs: (1) score each photo for keep/reject, (2) assign a global tour order for the keepers.",
+    "",
+    "REJECT criteria (low pickWorthiness, tourOrder=0):",
     "- Blurry, dark, or poorly composed.",
-    "- Empty walls, unfinished spaces, garages with clutter.",
-    "- Documents, floor plans, neighborhood maps (not actual rooms).",
-    "- Close-ups of mundane fixtures (single light switch, hose bib).",
-    "- Duplicate angles of a room when better angles exist.",
+    "- Empty walls, unfinished spaces, cluttered garages.",
+    "- Documents, floor plans, neighborhood maps.",
+    "- Close-ups of mundane fixtures (light switch, hose bib).",
+    "- Duplicate angles of the same room when a better angle exists.",
     "- Cluttered staging, half-stocked fridges, unmade beds, visible cords.",
-    "PHOTOS TO PROMOTE (high pickWorthiness):",
+    "",
+    "PROMOTE criteria (high pickWorthiness):",
     "- Wide angles showing the full room.",
-    "- Dramatic exterior, twilight, or amenity shots.",
+    "- Dramatic exterior, twilight, amenity shots.",
     "- Clean staging with intentional composition.",
     "- Hero kitchen, living, primary bedroom shots.",
-    "- Outdoor shots: pool, view, deck, landscaping.",
-    "ROOM TYPE: classify each photo. If a photo doesn't fit any category (paperwork, floor plans, etc.), use 'skip'.",
-    "isHero: TRUE only for the 1-3 strongest opening-shot candidates (front exterior, dramatic view, twilight)."
-  ].join(" ");
+    "- Pool, view, deck, landscaping.",
+    "",
+    "TOUR FLOW (this is the key job — use tourOrder to express it):",
+    "1. OPEN with the single strongest first impression — usually a wide front exterior, twilight, or curb-appeal shot. Set isHero=true on this photo.",
+    "2. ESTABLISH with a wide entry / foyer / approach shot if available.",
+    "3. MAIN LIVING SPACES: living room → kitchen → dining. Show the space agents lead with.",
+    "4. PRIMARY SUITE: bedroom → ensuite bathroom (intercut, don't group all bedrooms then all bathrooms).",
+    "5. SECONDARY BEDROOMS + their bathrooms: same intercut pattern.",
+    "6. OUTDOOR: pool, deck, yard, view shots.",
+    "7. AMENITIES: gym, office, garage (if luxury), wine cellar, theatre.",
+    "8. CLOSE with the strongest closing shot — usually pool at dusk, sunset deck view, or twilight rear exterior.",
+    "",
+    "VARIETY RULES (critical — flat sequences kill engagement):",
+    "- Avoid 3+ consecutive shots of the same room type.",
+    "- Alternate intimate (bedroom, bathroom) with expansive (living, kitchen, outdoor) when possible.",
+    "- Group a primary bedroom with its bathroom, NOT all bedrooms together.",
+    "- Save 1-2 of the best outdoor/exterior shots for the closing sequence.",
+    "",
+    "ROOM TYPE: classify each photo. Paperwork/floor plans → 'skip'.",
+    "isHero: TRUE for the single strongest opening-shot candidate (one photo, ideally exterior or dramatic interior).",
+    "tourOrder: 1..N for kept photos in the order they should appear; 0 for rejects. Numbers must be unique among kept photos."
+  ].join("\n");
 
   const userTextItem = {
     type: "input_text",
@@ -379,6 +406,7 @@ function parseOpenAIScores(payload, originalPhotos) {
         quality: clampNumber(row.quality, 0, 100),
         pickWorthiness: clampNumber(row.pickWorthiness, 0, 100),
         isHero: Boolean(row.isHero),
+        tourOrder: clampNumber(row.tourOrder, 0, 60),
         reason: String(row.reason || "").slice(0, 240)
       }));
   } catch {
@@ -420,18 +448,45 @@ function pickAndOrder(scored) {
     }
   }
 
-  // Step 5: order the kept photos in tour sequence. Within each room, keep
-  // composite-score order (best first). Hero photo always opens.
-  const heroPick = [...kept.values()].find((r) => r.isHero) || null;
-  const orderedKept = [...kept.values()]
-    .filter((r) => r !== heroPick)
-    .sort((a, b) => {
-      const ai = TOUR_ORDER.indexOf(a.roomType);
-      const bi = TOUR_ORDER.indexOf(b.roomType);
-      if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-      return composite(b) - composite(a);
-    });
-  if (heroPick) orderedKept.unshift(heroPick);
+  // Step 5: order the kept photos in tour sequence.
+  //
+  // v23.1: prefer the model's tourOrder field when it provided one. The
+  // Vision model knows tour flow (intercut bedrooms with bathrooms,
+  // alternate intimate vs expansive, save best closing shot for last)
+  // far better than a hardcoded room-type sort. We use the model's
+  // ordering directly when ALL kept photos have a non-zero, unique
+  // tourOrder. Otherwise we fall back to the legacy room-type sort.
+  const keptArray = [...kept.values()];
+  const allHaveTourOrder = keptArray.every((r) => r.tourOrder > 0);
+  const tourOrders = keptArray.map((r) => r.tourOrder);
+  const allTourOrdersUnique = new Set(tourOrders).size === tourOrders.length;
+
+  let orderedKept;
+  if (allHaveTourOrder && allTourOrdersUnique) {
+    // Trust the model's ordering. Sort ascending by tourOrder.
+    orderedKept = [...keptArray].sort((a, b) => a.tourOrder - b.tourOrder);
+    // Hero override: if the model marked an isHero photo but it's not
+    // already first, move it to position 1 (real-estate openers are
+    // psychologically anchored on the first frame — better one strong
+    // opener than the model's preferred sequence).
+    const heroPick = orderedKept.find((r) => r.isHero);
+    if (heroPick && orderedKept[0] !== heroPick) {
+      orderedKept = [heroPick, ...orderedKept.filter((r) => r !== heroPick)];
+    }
+  } else {
+    // Fallback: legacy room-type sort. Used when the model returned
+    // duplicate or missing tourOrder values (rare with strict JSON schema).
+    const heroPick = keptArray.find((r) => r.isHero) || null;
+    orderedKept = keptArray
+      .filter((r) => r !== heroPick)
+      .sort((a, b) => {
+        const ai = TOUR_ORDER.indexOf(a.roomType);
+        const bi = TOUR_ORDER.indexOf(b.roomType);
+        if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+        return composite(b) - composite(a);
+      });
+    if (heroPick) orderedKept.unshift(heroPick);
+  }
 
   // Step 6: emit the response shape the frontend wants.
   const curated = orderedKept.map((r, i) => ({
