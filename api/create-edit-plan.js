@@ -246,14 +246,15 @@ export default async function handler(request, response) {
       sceneCount: parsed.scenes?.length || 0,
       heroPhotoId: parsed.heroPhotoId
     });
-    // v23: validate then normalize. validateEditPlan checks for structural
-    // problems before normalize (which clamps + fills missing fields). If
-    // there are hard errors we still proceed with the normalized plan but
-    // include the warnings on the response so the caller can show a
-    // diagnostic if any field had to be repaired.
-    const preNormalizeValidation = validateEditPlan(parsed, photos);
+    // v23: validate then normalize. validateNormalizedPlan checks for
+    // structural problems and length-clamp violations on the normalized
+    // plan. (Renamed from validateEditPlan to avoid colliding with the
+    // pre-existing validateEditPlan at line ~534 which checks the raw
+    // OpenAI response shape — duplicate function declarations under ESM
+    // strict mode threw SyntaxError and 500'd every request.)
+    const preNormalizeValidation = validateNormalizedPlan(parsed, photos);
     const normalizedPlan = normalizeEditPlan(parsed, photos, { listingDetails, selectedStyle, exportFormat, engine, includeNarration });
-    const postNormalizeValidation = validateEditPlan(normalizedPlan, photos);
+    const postNormalizeValidation = validateNormalizedPlan(normalizedPlan, photos);
     if (!preNormalizeValidation.ok) {
       logMotionDirector("warn", "Pre-normalize validation found issues; normalize step repaired them.", {
         errors: preNormalizeValidation.errors.slice(0, 5)
@@ -921,9 +922,12 @@ function clampNarrationToWords(text, maxWords = 22) {
 }
 
 // v23: structural validation of an edit plan. Returns { ok: bool, errors: [] }.
-// Errors are surfaced to the API caller and (when integrated with the
-// re-ask logic in createEditPlan) trigger a single retry to OpenAI.
-function validateEditPlan(plan, photos) {
+// Renamed from validateEditPlan (which is the original lighter validator at
+// line 534) to avoid the duplicate-declaration SyntaxError that took down
+// every /api/create-edit-plan request with HTTP 500 on first deploy.
+// The original `validateEditPlan` checks the OpenAI response shape;
+// this one checks the normalized plan + clamped narration lengths.
+function validateNormalizedPlan(plan, photos) {
   const errors = [];
   if (!plan || typeof plan !== "object") {
     return { ok: false, errors: ["plan is not an object"] };
@@ -952,7 +956,7 @@ function validateEditPlan(plan, photos) {
 
 // Exported for tests + the worker — useful debugging when a render
 // produces unexpected output.
-export { clampNarrationToWords, validateEditPlan };
+export { clampNarrationToWords, validateNormalizedPlan };
 
 function parseOpenAIJson(payload) {
   if (typeof payload.output_text === "string" && payload.output_text.trim()) return parseBody(payload.output_text);
