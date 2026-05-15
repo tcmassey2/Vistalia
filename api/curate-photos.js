@@ -36,6 +36,12 @@ const DEFAULT_TIMEOUT_MS = 45000;
 // Hard caps to bound cost + token usage.
 const MAX_INPUT_PHOTOS = 60;
 const TARGET_KEEP = 24;
+// Minimum photo count for AI to do useful work. Below this, the photo set
+// is so small that re-ordering provides marginal value vs the OpenAI cost
+// + latency. v23 lowered from 25 → 8 because most real-estate listings
+// arrive with 12-30 photos, and users want tour-order curation even when
+// no photos need to be dropped.
+const MIN_INPUT_FOR_CURATION = 8;
 
 // Tour-order priority — how a strong real-estate walkthrough is structured.
 // Lower index = earlier in the video. Photos within the same room type
@@ -97,15 +103,14 @@ export default async function handler(request, response) {
     .filter((p) => p.id && p.durableUrl && /^https?:/i.test(p.durableUrl))
     .slice(0, MAX_INPUT_PHOTOS);
 
-  if (photos.length < TARGET_KEEP + 1) {
-    // Nothing to curate — already at or under the keep target.
-    const reason =
-      photos.length === TARGET_KEEP
-        ? `You already have the target ${TARGET_KEEP} photos — nothing to curate.`
-        : `You have ${photos.length} photos — curate kicks in once you upload more than ${TARGET_KEEP}.`;
+  // v23: only skip if there are too few photos to make AI scoring worthwhile.
+  // For sets of 8-24 photos: still run OpenAI Vision so the AI can re-order
+  // them into a strong tour sequence (kitchen-living-bedroom-bath-exterior),
+  // just don't drop any since we're already at or under TARGET_KEEP.
+  if (photos.length < MIN_INPUT_FOR_CURATION) {
     response.status(200).json({
       status: "skipped",
-      reason,
+      reason: `You have ${photos.length} photos — AI curation needs at least ${MIN_INPUT_FOR_CURATION}. Upload more or arrange manually.`,
       curated: photos.map((p, i) => ({ photoId: p.id, order: i + 1, roomType: "", score: 0, reason: "" })),
       rejected: []
     });
