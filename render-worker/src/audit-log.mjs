@@ -65,7 +65,7 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
       // renders actually got Gen-4.5 vs fell back to Turbo".
       runwayModelRequested: manifest?.runwayConfig?.model
         || (String(manifest?.userTier || "").toLowerCase() === "cinematic_4k"
-            ? (process.env.RUNWAY_PREMIUM_MODEL || "gen4_5")
+            ? (process.env.RUNWAY_PREMIUM_MODEL || "gen4.5")
             : "gen4_turbo")
     },
     // Per-scene metadata for regenerate-scene flow. JSONB column.

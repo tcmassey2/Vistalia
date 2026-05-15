@@ -486,7 +486,7 @@ export async function renderRunwayJob(body, options = {}) {
    order is:
      1. manifest.runwayConfig.model      (explicit per-render override)
      2. process.env.RUNWAY_MODEL          (env-level override — for testing)
-     3. tier-based default (4k → gen4_5, all others → gen4_turbo)
+     3. tier-based default (4k → gen4.5, all others → gen4_turbo)
 
    Why gate Gen-4.5 behind the 4K tier:
    - Gen-4.5 costs ~2.5x more per credit than Gen-4 Turbo
@@ -497,7 +497,7 @@ export async function renderRunwayJob(body, options = {}) {
      industry-best quality for the price)
 
    Override knob: set process.env.RUNWAY_PREMIUM_MODEL to swap out the
-   premium model name (e.g. when Gen-5 launches). Defaults to "gen4_5".
+   premium model name (e.g. when Gen-5 launches). Defaults to "gen4.5".
 */
 function resolveRunwayModel(manifest) {
   const config = manifest?.runwayConfig || {};
@@ -505,7 +505,7 @@ function resolveRunwayModel(manifest) {
   if (process.env.RUNWAY_MODEL) return process.env.RUNWAY_MODEL;
   const tier = String(manifest?.userTier || "").toLowerCase().trim();
   if (tier === "cinematic_4k") {
-    return process.env.RUNWAY_PREMIUM_MODEL || "gen4_5";
+    return process.env.RUNWAY_PREMIUM_MODEL || "gen4.5";
   }
   return "gen4_turbo";
 }
@@ -529,8 +529,8 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
   if (!prompt) throw new Error(`Scene ${sceneIndex + 1} missing runwayPrompt. Regenerate edit plan with engine=runway.`);
 
   const config = manifest.runwayConfig || {};
-  // v23.1: per-tier model resolution. cinematic_4k → gen4_5, else gen4_turbo.
-  // Falls back to gen4_turbo automatically if gen4_5 is unavailable on this
+  // v23.1: per-tier model resolution. cinematic_4k → gen4.5, else gen4_turbo.
+  // Falls back to gen4_turbo automatically if gen4.5 is unavailable on this
   // Runway account (so a misconfigured account doesn't black-hole renders).
   const requestedModel = resolveRunwayModel(manifest);
   const fallbackModel = "gen4_turbo";
