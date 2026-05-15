@@ -949,17 +949,46 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // ============================================================================
   const stitched = path.join(tempDir, "stitched.mp4");
   options.onProgress?.({ phase: "Stitching final video", progress: 81 });
-  const useCrossfades = Boolean(manifest?.runwayConfig?.useCrossfades);
-  if (useCrossfades) {
-    try {
-      await stitchWithCrossfades({
-        clips: stitchClips,
-        outroClip,
-        output: stitched,
-        crossfadeDurationSec: 0.5
+
+  // v23 false-stuck fix: stitchWithSimpleConcat / stitchWithCrossfades don't
+  // emit any progress during their work — they're a single ffmpeg call that
+  // takes 60-180s on a 24-clip render. The frontend's 90s heartbeat detector
+  // fired "appears stuck" warnings on every render that legitimately ran past
+  // 90s in stitch. Solve it by emitting a heartbeat ping every 25s that
+  // creeps progress from 81→84% while the stitch ffmpeg call is running.
+  // The ceiling stops short of 86% so the real "Aspect variants" phase has
+  // somewhere to advance to. Always cleared in the finally block.
+  let stitchProgress = 81;
+  const stitchHeartbeat = setInterval(() => {
+    if (stitchProgress < 84) {
+      stitchProgress += 0.4;
+      options.onProgress?.({
+        phase: "Stitching final video",
+        progress: Math.min(84, stitchProgress)
       });
-    } catch (err) {
-      console.warn(`[runway] xfade stitch failed (${err.message}). Falling back to simple concat.`);
+    }
+  }, 25000);
+
+  try {
+    const useCrossfades = Boolean(manifest?.runwayConfig?.useCrossfades);
+    if (useCrossfades) {
+      try {
+        await stitchWithCrossfades({
+          clips: stitchClips,
+          outroClip,
+          output: stitched,
+          crossfadeDurationSec: 0.5
+        });
+      } catch (err) {
+        console.warn(`[runway] xfade stitch failed (${err.message}). Falling back to simple concat.`);
+        await stitchWithSimpleConcat({
+          clips: stitchClips,
+          outroClip,
+          output: stitched,
+          tempDir
+        });
+      }
+    } else {
       await stitchWithSimpleConcat({
         clips: stitchClips,
         outroClip,
@@ -967,13 +996,8 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
         tempDir
       });
     }
-  } else {
-    await stitchWithSimpleConcat({
-      clips: stitchClips,
-      outroClip,
-      output: stitched,
-      tempDir
-    });
+  } finally {
+    clearInterval(stitchHeartbeat);
   }
 
   // v20: corner headshot is baked into each clip during normalize above —

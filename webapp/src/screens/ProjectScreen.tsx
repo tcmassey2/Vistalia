@@ -2118,10 +2118,17 @@ function RenderControls() {
     // Heartbeat-stuck threshold. If the WORKER's reported progress doesn't
     // advance for this long, we surface a clear "appears stuck" state with
     // retry options — instead of letting the user stare at a frozen bar
-    // for the full 18-minute job timeout. 90s is the right tradeoff: a
-    // single Runway scene can take ~60s legitimately, so 90s catches real
-    // hangs without false positives on slow-but-legitimate steps.
-    const STUCK_THRESHOLD_MS = 90 * 1000;
+    // for the full 18-minute job timeout.
+    //
+    // v23 retune: bumped from 90s to 180s after Troy reported repeated
+    // false positives at 81% — the stitch step legitimately takes 60-180s
+    // on 24-clip renders even on Render Pro 4GB and emitted no progress
+    // signals during that window. The worker now also emits a 25s
+    // heartbeat ping during stitch (see runway-job.mjs near line 951),
+    // so under normal operation the bar always moves at least every 25s
+    // and this 180s threshold won't fire. Keeping it as a safety net
+    // catches real hangs (worker crash, ffmpeg deadlock).
+    const STUCK_THRESHOLD_MS = 180 * 1000;
     let stuckFlagged = false;
 
     let firstIteration = true;
