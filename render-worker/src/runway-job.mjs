@@ -246,7 +246,11 @@ export async function renderRunwayJob(body, options = {}) {
   const finalMp4 = path.join(tempDir, `${jobId}.mp4`);
   const thumbnailPath = path.join(tempDir, `${jobId}.png`);
 
-  const { normalizedClips } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options);
+  // v23: stitchClipsAndOverlays now returns addressCardIncluded so the
+  // downstream voice/SFX/validation steps know whether to apply a 3.5s
+  // pre-roll offset. The address card may be skipped if the hero image
+  // fails to download or manifest.disableAddressCard is set.
+  const { normalizedClips, addressCardIncluded } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options);
 
   // Voice narration — synthesize per-scene narration via ElevenLabs and mix
   // it into the master with music ducking. Wrapped in fail-soft try/catch
@@ -270,7 +274,7 @@ export async function renderRunwayJob(body, options = {}) {
           tempDir,
           jobId,
           // v23: 3.5s pre-roll shift if address card was prepended.
-          preRollSeconds: addressCardPath ? 3.5 : 0,
+          preRollSeconds: addressCardIncluded ? 3.5 : 0,
           onProgress: (info) => {
             options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
           }
@@ -299,7 +303,7 @@ export async function renderRunwayJob(body, options = {}) {
       tempDir,
       jobId,
       manifest,
-      preRollSeconds: addressCardPath ? 3.5 : 0
+      preRollSeconds: addressCardIncluded ? 3.5 : 0
     });
     if (sfxResult.applied) {
       console.info(`[runway] transition SFX applied (${sfxResult.sfxCount} cues)`);
@@ -359,7 +363,7 @@ export async function renderRunwayJob(body, options = {}) {
       const sceneSec = (manifest.scenes || [])
         .filter((s) => String(s.type || "photo").toLowerCase() === "photo")
         .reduce((acc, s) => acc + Number(s.duration || 5), 0);
-      const cardSec = addressCardPath ? 3.5 : 0;
+      const cardSec = addressCardIncluded ? 3.5 : 0;
       const outroSec = 5; // composited outro card duration (see buildBrandOutroClip)
       return sceneSec + cardSec + outroSec;
     })();
@@ -1020,7 +1024,11 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   ], { timeoutMs: 30000, label: "runway:thumbnail" });
 
   // Return the normalized clips so the caller can upload them for regen support.
-  return { normalizedClips };
+  // v23: addressCardIncluded tells the caller whether the 3.5s opener
+  // actually made it into the stitch. The caller uses this to decide
+  // whether to apply a 3.5s pre-roll offset on voice/SFX/validation.
+  // It's truthy only if the card was generated AND prepended to stitchClips.
+  return { normalizedClips, addressCardIncluded: Boolean(addressCardPath) };
 }
 
 // Crossfade-stitch all normalized clips together.
