@@ -156,11 +156,19 @@ export default async function handler(request, response) {
   const selectedStyle = String(body.selectedStyle || "Cinematic Luxury");
   const exportFormat = String(body.exportFormat || "vertical");
   const engine = RENDER_ENGINES.includes(String(body.engine || "")) ? String(body.engine) : "remotion";
-  // Narration is requested when ElevenLabs is configured server-side. The
-  // worker uses the agent's voiceId if set, otherwise a stock voice — but
-  // either way, we want narration lines in the plan so the worker has
-  // something to synthesize.
-  const includeNarration = Boolean(process.env.ELEVENLABS_API_KEY);
+  // v23.2: ALWAYS request narration lines in the edit plan. The worker
+  // decides at render time whether to synthesize them (based on its OWN
+  // ELEVENLABS_API_KEY env var + manifest.skipNarration flag). The old
+  // gate checked process.env.ELEVENLABS_API_KEY on VERCEL — which is
+  // wrong, because ElevenLabs is a WORKER concern, not a Vercel concern.
+  // That gate caused edit plans to ship without narration text whenever
+  // the Vercel deployment didn't happen to have the worker's key
+  // configured (which was always, since it shouldn't be there). Result:
+  // narration silently broken since launch.
+  //
+  // Now: edit plan always carries narrationLine per scene. Worker
+  // gracefully no-ops if ElevenLabs isn't configured on its end.
+  const includeNarration = body?.includeNarration !== false;
 
   if (photos.length < 3) {
     const error = invalidPhotoUrls.length

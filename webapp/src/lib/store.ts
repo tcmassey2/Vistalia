@@ -261,7 +261,11 @@ const emptyProject = () => ({
   branding: loadStoredBranding(),
   selectedStyleId: "cinematic-luxury" as StyleId,
   renderEngine: "remotion" as RenderEngine,
-  narrationEnabled: false,
+  // v23.2: was false (which silently disabled narration on every render
+  // since launch — nobody knew to turn it on). Now defaults true. The
+  // worker still gracefully falls back to music-only if ElevenLabs is
+  // unavailable, so this is safe.
+  narrationEnabled: true,
   crossfadesEnabled: false,
   twilightHero: false,
   // Default ON — 4K-tier subscribers paid for 4K, give them 4K out of the
