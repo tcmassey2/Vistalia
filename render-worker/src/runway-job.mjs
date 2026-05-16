@@ -986,7 +986,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // actually made it into the stitch. The caller uses this to decide
   // whether to apply a 3.5s pre-roll offset on voice/SFX/validation.
   // It's truthy only if the card was generated AND prepended to stitchClips.
-  return { normalizedClips, addressCardIncluded: Boolean(addressCardPath) };
+  return { normalizedClips, addressCardIncluded: false };
 }
 
 // Crossfade-stitch all normalized clips together.
