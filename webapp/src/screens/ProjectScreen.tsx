@@ -116,16 +116,61 @@ export default function ProjectScreen() {
       {/* Render */}
       <Section title="Render" subtitle="Pick your engine, hit Generate.">
         <div className="flex flex-col gap-5">
+          {/* PRIMARY — everyone sees these. The simplest path to a good
+              render: pick engine, see what quality you'll get, click Generate. */}
           <EngineToggle engine={renderEngine} onChange={setEngine} />
           <RenderQualityPanel />
-          <NarrationToggle />
-          <TwilightToggle />
-          <CrossfadeToggle />
-          <RenderSafetyControl />
+
+          {/* ADVANCED — collapsed by default. The toggles below are powerful
+              but each adds a way to ship a worse render. Default-OFF + hidden
+              means new users get sane behavior without having to learn what
+              each switch does. v23.2: pulled out of the always-visible flow
+              after Troy noted the surface was too confusing. */}
+          <AdvancedRenderSettings />
+
           <RenderControls />
           {renderJob && <RenderStatusPanel />}
         </div>
       </Section>
+    </div>
+  );
+}
+
+/* v23.2: Collapses the four power-user toggles under a single disclosure.
+   Default closed. Each toggle still works the same — they're just hidden
+   from new users by default. Existing toggles preserved verbatim;
+   nothing about their behavior changes. */
+function AdvancedRenderSettings() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-xl border border-edge-soft bg-surface-input/40 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-surface-input transition-colors"
+        aria-expanded={open}
+      >
+        <div>
+          <div className="text-sm font-semibold tracking-tightish">Advanced settings</div>
+          <div className="text-xs text-ink-muted mt-0.5">
+            Narration, Twilight Magic, crossfades, render safety. Defaults are tuned — only open if you need to tweak.
+          </div>
+        </div>
+        <span className={cn(
+          "text-ink-muted transition-transform flex-shrink-0",
+          open ? "rotate-180" : "rotate-0"
+        )}>
+          ▼
+        </span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 pt-2 flex flex-col gap-4 border-t border-edge-soft">
+          <NarrationToggle />
+          <TwilightToggle />
+          <CrossfadeToggle />
+          <RenderSafetyControl />
+        </div>
+      )}
     </div>
   );
 }
@@ -330,17 +375,16 @@ function RenderQualityPanel() {
         )}
       </div>
 
-      {/* v23.1 compat warning: Gen-4.5 + 4K both ON is the heaviest possible
-          combination. Even on Render Pro 4GB the worker can OOM during
-          stitch with both at once. Real-world finding from launch testing.
-          Recommend picking one for now until we move to a Render Standard+
-          worker class with more headroom. */}
+      {/* v23.2: 4K is currently auto-downgraded to 1080p on cinematic_4k tier
+          because Gen-4.5 + 4K OOMs the worker every time. Surface this
+          clearly so the user knows the toggle isn't broken — it's
+          intentionally limited until we move to a larger worker class. */}
       {is4KTier && !isQuickReel && export4K && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] text-amber-300/95 leading-relaxed">
-          <strong className="font-semibold">Heads up:</strong> Gen-4.5 + 4K is the
-          heaviest combo and may time out or fail on the current worker. If a
-          render fails at 4K, toggle 4K off and re-run on 1080p — Gen-4.5 quality
-          is the bigger visible upgrade and still ships at 1080p.
+          <strong className="font-semibold">4K auto-downgraded to 1080p:</strong>{" "}
+          Gen-4.5 + 4K crashes the worker on the current infrastructure. Your
+          render will ship at 1080p with Gen-4.5 quality (the bigger visible
+          upgrade). 4K returns once we provision a larger worker.
         </div>
       )}
 

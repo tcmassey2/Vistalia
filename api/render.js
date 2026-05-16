@@ -122,6 +122,28 @@ export default async function handler(request, response) {
       manifest.project.userId = manifest.project.userId || tierGuard.userId;
     }
 
+    // v23.2 HARD BLOCK: Gen-4.5 + 4K is an OOM trap on the current Render
+    // Pro 4GB worker. The combo overwhelms ffmpeg's stitch step every
+    // time. Worker dies, /render/status returns 502, customer waits 10
+    // minutes for nothing. Until we move to a larger worker class:
+    //
+    //   - tier === 'cinematic_4k' + manifest.export4K === true
+    //     → silently downgrade to export4K=false. Log it so we can
+    //       audit how often this fires. Customer still gets Gen-4.5
+    //       (the bigger visible upgrade) at 1080p — better than a 502.
+    //
+    // When we have a larger worker, remove this block and let users
+    // re-enable 4K on Gen-4.5 if they want the wait.
+    if (manifest.userTier === "cinematic_4k" && manifest.export4K === true) {
+      console.warn(
+        `[render] auto-downgrading 4K → 1080p for user ${tierGuard.userId} ` +
+        `(cinematic_4k tier defaults to Gen-4.5 which OOMs the worker when ` +
+        `4K is also on). Customer still gets Gen-4.5 at 1080p.`
+      );
+      manifest.export4K = false;
+      manifest._autoDowngrade4K = true; // surfaced in response so the UI can toast
+    }
+
     if (readFlag("MOCK_RENDERING", true)) {
       response.status(503).json({
         status: "failed",
