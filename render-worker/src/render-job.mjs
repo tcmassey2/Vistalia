@@ -16,6 +16,7 @@ import { runFFmpeg } from "./ffmpeg-runner.mjs";
 import { preprocessPhotosForRender } from "./photo-preprocess.mjs";
 import { getBpmForMusic, beatGridFromBpm, snapScenesToBeats } from "./beat-detect.mjs";
 import { validateMasterMp4 } from "./output-validator.mjs";
+import { shouldRunPhotoPreprocess, shouldSnapBeats, shouldPrependAddressCard } from "./legacy-mode.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const compositionId = "EstateMotionRender";
@@ -33,15 +34,26 @@ export async function renderEstateMotionJob({ manifest, requestedFormat = "verti
   // jaundiced next to bedrooms shot at 5600K. Replaces every photo URL
   // in the manifest with the processed Supabase URL. Failures fall back
   // to the original URL on a per-photo basis (render still ships).
-  options.onProgress?.({ phase: "Normalizing photos", progress: 6 });
-  const preprocessResult = await preprocessPhotosForRender({ manifest, jobId });
-  manifest = preprocessResult.manifest;
+  if (shouldRunPhotoPreprocess()) {
+    options.onProgress?.({ phase: "Normalizing photos", progress: 6 });
+    const preprocessResult = await preprocessPhotosForRender({ manifest, jobId });
+    manifest = preprocessResult.manifest;
+  }
+
+  // V23 kill switch: address card lives inside the Remotion JSX
+  // composition. The JSX checks manifest.disableAddressCard. Stamp that
+  // flag here so the kill switch reaches the bundled JSX environment
+  // where process.env doesn't propagate.
+  if (!shouldPrependAddressCard()) {
+    manifest = { ...manifest, disableAddressCard: true };
+  }
 
   // v23: beat-aware Viral pacing — same logic as Runway side. Only fires
   // for selectedStyle="viral"; other styles keep their natural pacing.
+  // Suppressed in legacy mode.
   try {
     const styleSlug = String(manifest?.selectedStyle || manifest?.template?.style || "").toLowerCase();
-    if (styleSlug === "viral") {
+    if (styleSlug === "viral" && shouldSnapBeats()) {
       const musicSlot = String(manifest?.musicMood || manifest?.selectedStyle || "").toLowerCase();
       const bpm = getBpmForMusic({
         musicUrl: manifest?.music?.url,

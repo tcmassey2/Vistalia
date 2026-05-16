@@ -25,6 +25,15 @@ import { writeRenderAudit } from "./audit-log.mjs";
 import { runFFmpeg, timed } from "./ffmpeg-runner.mjs";
 import { buildColorGradeFilter, describeColorGrade } from "./color-grade.mjs";
 import { preprocessPhotosForRender } from "./photo-preprocess.mjs";
+import {
+  shouldRunPhotoPreprocess,
+  shouldApplyV23LUT,
+  shouldPrependAddressCard,
+  shouldMixTransitionSfx,
+  shouldSnapBeats,
+  shouldAutoStrictMls,
+  isLegacyRenderMode
+} from "./legacy-mode.mjs";
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -87,7 +96,7 @@ export async function renderRunwayJob(body, options = {}) {
   // download/process/upload. The skip is detected by whether the manifest
   // already carries a photoPreprocess marker from a prior pass.
   const isRegenCall = Boolean(manifest?.photoPreprocess?.processed);
-  if (!isRegenCall) {
+  if (!isRegenCall && shouldRunPhotoPreprocess()) {
     options.onProgress?.({ phase: "Normalizing photos", progress: 4, scenesTotal: 0 });
     const preprocessResult = await preprocessPhotosForRender({ manifest, jobId });
     manifest = preprocessResult.manifest;
@@ -95,10 +104,10 @@ export async function renderRunwayJob(body, options = {}) {
 
   // v23: beat-aware Viral pacing. Snaps photo scene durations to a beat
   // grid derived from the music's BPM. Only fires for selectedStyle="viral"
-  // — Luxury/MLS/Investor stay smooth.
+  // — Luxury/MLS/Investor stay smooth. Suppressed in legacy mode.
   try {
     const styleSlug = String(manifest?.selectedStyle || manifest?.template?.style || "").toLowerCase();
-    if (styleSlug === "viral") {
+    if (styleSlug === "viral" && shouldSnapBeats()) {
       const musicSlot = String(manifest?.musicMood || manifest?.selectedStyle || "").toLowerCase();
       const bpm = getBpmForMusic({
         musicUrl: manifest?.music?.url,
@@ -893,9 +902,12 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // v23: address opener card. Generated as a normalized clip and prepended
   // to the array before stitch. Uses the first photo as the slow-zoomed
   // backdrop with animated address + price + stats overlays. Skipped if
-  // manifest.disableAddressCard is true, or if hero image fails to download.
+  // manifest.disableAddressCard is true, hero image fails to download,
+  // or LEGACY_RENDER_MODE is on.
   let addressCardPath = null;
-  try {
+  if (!shouldPrependAddressCard()) {
+    console.info("[runway] address card skipped (legacy mode)");
+  } else try {
     const heroScene = clipResults.find((c) => c.photoId);
     const heroSceneObj = heroScene ? manifest.scenes.find((s) => s.photoId === heroScene.photoId) : null;
     const heroPhoto = heroScene ? (manifest.orderedPhotos || []).find((p) => p.id === heroScene.photoId) : null;
@@ -2163,21 +2175,15 @@ const ROOM_BASE_RISK = {
 function resolveGuardLevel(manifest) {
   const raw = String(manifest?.hallucinationGuard || "").toLowerCase();
 
-  // v23.1: MLS style auto-upgrades to strict guard regardless of explicit
-  // setting. MLS-style users are signaling "compliance-grade fidelity" —
-  // they don't want kitchens to morph for the sake of motion. Real-world
-  // confirmation from Troy: even Gen-4.5 + MLS still hallucinated kitchens
-  // because the user had set guard to "balanced" (which lets Gen-4.5
-  // attempt kitchens). Forcing strict on MLS routes ALL kitchens to Ken
-  // Burns regardless of the model's confidence.
-  // User can still override by explicitly setting hallucinationGuard="off".
+  // v23.1: MLS style auto-upgrades to strict guard. Suppressed in legacy
+  // mode so the pre-v23 behavior (MLS users get whatever guard they
+  // explicitly chose) returns. User can still set hallucinationGuard
+  // explicitly in either mode.
   const styleSlug = String(
     manifest?.selectedStyle || manifest?.template?.style || ""
   ).trim().toLowerCase();
   const isMlsStyle = styleSlug === "mls" || styleSlug === "mls-clean" || styleSlug === "mls clean" || styleSlug.includes("mls");
-  if (isMlsStyle && raw !== "off") {
-    // MLS users explicitly opting OUT (raw === "off") still get pure AI.
-    // Everyone else on MLS gets strict.
+  if (isMlsStyle && raw !== "off" && shouldAutoStrictMls()) {
     return "strict";
   }
 

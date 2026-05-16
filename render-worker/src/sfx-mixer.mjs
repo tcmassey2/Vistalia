@@ -28,6 +28,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { runFFmpeg } from "./ffmpeg-runner.mjs";
+import { shouldMixTransitionSfx } from "./legacy-mode.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +82,11 @@ const STYLE_DEFAULT_SFX = {
      { masterMp4, applied: bool, reason?: string, sfxCount?: number }
 */
 export async function applyTransitionSfx({ masterMp4, scenes, tempDir, jobId, manifest, onProgress, preRollSeconds = 0 }) {
+  // V23 kill switch: when LEGACY_RENDER_MODE=true, ship without SFX bus.
+  // Pre-v23 renders had no transition SFX — bring that behavior back.
+  if (!shouldMixTransitionSfx()) {
+    return { masterMp4, applied: false, reason: "legacy_render_mode" };
+  }
   if (manifest?.skipTransitionSfx) {
     return { masterMp4, applied: false, reason: "manifest.skipTransitionSfx=true" };
   }
