@@ -250,11 +250,27 @@ export interface LibraryEntry {
   socialShortCount: number;
   formatsCount: number;
   narrationApplied: boolean;
+  narrationVoiceId?: string | null;
   // Per-scene metadata (one entry per scene in the rendered video). Populated
   // for renders made with worker v16+ where each scene was persisted to
   // Supabase Storage. Empty for older renders — UI shows a "re-render once
   // to enable per-scene regen" hint in that case.
   scenes: LibrarySceneEntry[];
+  // v23.2 diagnostic fields — render_audit_log.prompt_version + render_config.
+  // Surfaced in LibraryDetailModal's "Render details" panel so users know
+  // exactly what config / model / engine actually shipped.
+  promptVersion?: string | null;
+  renderConfig?: {
+    selectedStyle?: string | null;
+    complianceMode?: boolean;
+    hallucinationGuard?: string | null;
+    protectHighRiskRooms?: boolean;
+    twilightHero?: boolean;
+    injectBroll?: boolean;
+    disableAddressCard?: boolean;
+    userTier?: string | null;
+    runwayModelRequested?: string | null;
+  } | null;
   createdAt: string;
 }
 
@@ -269,6 +285,13 @@ export interface LibrarySceneEntry {
   duration: number;
   runwayPrompt: string;
   wasFallback: boolean; // true if this scene was rendered via Ken Burns
+  // v23.1 per-scene engine breakdown
+  engineUsed?: string;
+  fallbackReason?: string | null;
+  guardRisk?: number | null;
+  guardLevel?: string | null;
+  modelRequested?: string | null;
+  modelUsed?: string | null;
 }
 
 export interface OrgAuditLogEntry {

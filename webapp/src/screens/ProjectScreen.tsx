@@ -167,7 +167,6 @@ function AdvancedRenderSettings() {
         <div className="px-4 pb-4 pt-2 flex flex-col gap-4 border-t border-edge-soft">
           <NarrationToggle />
           <TwilightToggle />
-          <CrossfadeToggle />
           <RenderSafetyControl />
         </div>
       )}
@@ -445,47 +444,12 @@ function TwilightToggle() {
   );
 }
 
-function CrossfadeToggle() {
-  const enabled = useStore((s) => s.crossfadesEnabled);
-  const setEnabled = useStore((s) => s.setCrossfadesEnabled);
-  return (
-    <button
-      type="button"
-      onClick={() => setEnabled(!enabled)}
-      className={cn(
-        "card-press flex items-center gap-3 p-4 rounded-xl bg-surface border text-left transition-colors",
-        enabled ? "border-gold bg-surface-raised" : "border-edge hover:border-edge-strong"
-      )}
-    >
-      <div
-        className={cn(
-          "flex-shrink-0 w-10 h-6 rounded-full border transition-colors relative",
-          enabled ? "bg-gold border-gold" : "bg-surface-input border-edge-strong"
-        )}
-      >
-        <div
-          className={cn(
-            "absolute top-0.5 w-5 h-5 rounded-full bg-paper transition-all",
-            enabled ? "left-[18px]" : "left-0.5"
-          )}
-        />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold tracking-tightish flex items-center gap-2">
-          Cinematic crossfades
-          {enabled && (
-            <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold text-paper">PRO WORKER</span>
-          )}
-        </div>
-        <div className="text-xs text-ink-muted mt-0.5">
-          {enabled
-            ? `0.5s crossfades between every scene. Adds ~3-5 min to render and needs the Render Pro 4GB worker — turn off if your renders hang.`
-            : `Hard cuts between scenes. Fast and reliable on any worker plan. Recommended unless you're on Render Pro+.`}
-        </div>
-      </div>
-    </button>
-  );
-}
+/* v23.2 REMOVED: CrossfadeToggle. Was an OOM trap that crashed renders on
+   anything below Render Pro 4GB, and even there it added 3-5 minutes for
+   marginal visual benefit. Hard cuts between scenes are cleaner and
+   reliably ship. The store still exposes crossfadesEnabled for backwards
+   compat, but the worker now hard-forces it false regardless of manifest
+   value (see runway-job.mjs / stitch). */
 
 /* Render Safety — the only hallucination-protection control the user sees.
    Replaces what used to be three overlapping toggles (Compliance Mode,
@@ -2204,7 +2168,6 @@ function RenderControls() {
   const selectedStyleId = useStore((s) => s.selectedStyleId);
   const renderEngine = useStore((s) => s.renderEngine);
   const narrationEnabled = useStore((s) => s.narrationEnabled);
-  const crossfadesEnabled = useStore((s) => s.crossfadesEnabled);
   const twilightHero = useStore((s) => s.twilightHero);
   const export4K = useStore((s) => s.export4K);
   const renderSafety = useStore((s) => s.renderSafety);
@@ -2311,13 +2274,11 @@ function RenderControls() {
         selectedStyle: styleLabel,
         runwayConfig: {
           ...(planResult.editPlan.runwayConfig || {}),
-          // Opt-in crossfades — worker defaults to simple concat unless this is true.
-          useCrossfades: crossfadesEnabled
-          // 4K is opt-in. It nearly doubles render time (4K wide variant
-          // alone is the slowest single step in the pipeline). For demo
-          // renders, 1080p is the right tradeoff — it looks identical on
-          // any phone and most desktop viewing. We can wire a UI toggle
-          // for 4K later when there's a clear pricing reason.
+          // v23.2: crossfades removed from UI. Worker hard-forces false
+          // regardless of manifest value. Hard cuts ship reliably; xfade
+          // was a 3-8 min stitch that OOM-killed renders on anything
+          // below Pro 4GB.
+          useCrossfades: false
         },
         brandKit: branding,
         organizationId: organization?.id || null,

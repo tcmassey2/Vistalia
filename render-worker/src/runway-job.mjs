@@ -932,13 +932,18 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     addressCardPath = null;
   }
 
-  // v23: B-roll lifestyle cutaways from Pexels.
-  // Inject 1-3 normalized B-roll clips evenly through the timeline.
-  // Skipped if PEXELS_API_KEY missing or manifest.disableBroll set.
-  // Failures fall back gracefully to the photo-only stitch.
+  // v23.2: B-roll OFF BY DEFAULT. Was opt-out (injectBroll !== false),
+  // now opt-in (injectBroll === true). Reason: Pexels stock clips
+  // dilute the listing-specific brand and confuse viewers ("wait,
+  // whose coffee was that?"). Keeping the integration so it can be
+  // re-enabled per-render or globally once we have a curated
+  // brokerage-owned B-roll library. To re-enable globally, set
+  // env var ENABLE_BROLL_DEFAULT=true on the worker.
   let brollPrepared = [];
+  const brollEnabledGlobally = process.env.ENABLE_BROLL_DEFAULT === "true";
+  const brollExplicitlyOn = manifest?.creative?.injectBroll === true;
   try {
-    if (manifest?.creative?.injectBroll !== false) {
+    if (brollExplicitlyOn || brollEnabledGlobally) {
       const brollCount = Math.min(3, Math.max(1, Math.floor(normalizedClips.length / 8)));
       if (brollCount > 0) {
         options.onProgress?.({ phase: "Fetching B-roll cutaways", progress: 80 });
@@ -1050,7 +1055,13 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   }, 25000);
 
   try {
-    const useCrossfades = Boolean(manifest?.runwayConfig?.useCrossfades);
+    // v23.2: crossfades hard-forced off. Was an OOM trap that crashed
+    // every render below Pro 4GB and stitched 3-8min on Pro+. Hard cuts
+    // ship reliably and look cleaner. Legacy manifests with
+    // useCrossfades:true now silently get hard cuts. To re-enable
+    // (e.g. after we move to larger workers), restore the line:
+    //   const useCrossfades = Boolean(manifest?.runwayConfig?.useCrossfades);
+    const useCrossfades = false;
     if (useCrossfades) {
       try {
         await stitchWithCrossfades({

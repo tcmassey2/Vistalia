@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { LibraryEntry, LibrarySceneEntry, Photo } from "../lib/types";
 import { useStore } from "../lib/store";
 import { pollRender, submitRegenerateScene, type RegenerateMode, type RenderManifest } from "../lib/api";
+import { cn } from "../lib/cn";
 
 /**
  * Library detail modal — shown when an agent clicks a render in their
@@ -107,6 +108,15 @@ export default function LibraryDetailModal({
             <EngineBreakdownBadge scenes={entry.scenes as any[]} />
           </div>
         )}
+
+        {/* v23.2 Render Details panel — diagnostic strip showing exactly
+            what shipped on this render. Eliminates the "is it actually
+            working?" guesswork that masked the voice-narrator-never-fired
+            bug for the whole launch week. Collapsed by default; one
+            click reveals the full per-feature audit. */}
+        <div className="px-6 sm:px-8 mt-4">
+          <RenderDetailsPanel entry={entry} />
+        </div>
 
         {/* Format bundle */}
         <div className="px-6 sm:px-8 mt-6">
@@ -306,6 +316,137 @@ function humanizeReason(reason: string): string {
   if (reason.startsWith("compliance_mode")) return "MLS-compliance mode";
   if (reason.startsWith("runway_error")) return "AI service timed out, used motion fallback";
   return reason;
+}
+
+/* v23.2 RenderDetailsPanel — collapsed diagnostic strip on every library
+   entry. Shows exactly what shipped on this render: which Runway model
+   ran, whether narration fired (and which voice), color grade, address
+   card, twilight conversion, etc. Replaces the "I think it worked?"
+   guesswork that hid the never-firing voice narrator for all of launch.
+
+   Closed by default so it doesn't compete with the video preview for
+   attention. One click reveals everything. Power-user / debug feature
+   but useful to every user when something looks off. */
+function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
+  const [open, setOpen] = useState(false);
+  const cfg = entry.renderConfig || {};
+  const isRunway = entry.engine === "runway";
+
+  const rows: Array<{ label: string; value: string; ok: boolean | null }> = [
+    {
+      label: "Engine",
+      value: isRunway
+        ? `Cinematic AI · ${cfg.runwayModelRequested || "gen4_turbo"}`
+        : "Quick Reel · Remotion Ken Burns",
+      ok: true
+    },
+    {
+      label: "Style pack",
+      value: cfg.selectedStyle || "—",
+      ok: true
+    },
+    {
+      label: "Narration",
+      value: entry.narrationApplied
+        ? `Applied · ${entry.narrationVoiceId ? entry.narrationVoiceId.slice(0, 12) + "…" : "default voice"}`
+        : "Skipped (ElevenLabs unavailable or disabled)",
+      ok: entry.narrationApplied
+    },
+    {
+      label: "Twilight Magic",
+      value: cfg.twilightHero ? "Applied to hero shot" : "Off",
+      ok: cfg.twilightHero ? true : null
+    },
+    {
+      label: "Address card",
+      value: cfg.disableAddressCard ? "Off" : "Included (3.5s opener)",
+      ok: !cfg.disableAddressCard
+    },
+    {
+      label: "Hallucination guard",
+      value: cfg.hallucinationGuard
+        ? cfg.hallucinationGuard === "off"
+          ? "Off (pure AI motion — kitchens may morph)"
+          : cfg.hallucinationGuard === "strict"
+            ? "Strict (kitchens always Ken Burns)"
+            : "Balanced (smart per-scene)"
+        : (cfg.complianceMode ? "Compliance mode (all Ken Burns)" : "Balanced (default)"),
+      ok: true
+    },
+    {
+      label: "Prompt version",
+      value: entry.promptVersion || "(pre-v23.0)",
+      ok: true
+    },
+    {
+      label: "Plan tier",
+      value: cfg.userTier || "—",
+      ok: true
+    }
+  ];
+
+  // Per-scene engine breakdown summary (Runway only).
+  const sceneSummary = isRunway && entry.scenes.length > 0 ? (() => {
+    const total = entry.scenes.length;
+    const cinematic = entry.scenes.filter((s) =>
+      (s.engineUsed || (s.wasFallback ? "ken_burns" : "cinematic_ai")) === "cinematic_ai"
+    ).length;
+    return `${cinematic} of ${total} scenes used Cinematic AI · ${total - cinematic} motion fallback`;
+  })() : null;
+
+  return (
+    <div className="rounded-xl border border-edge-soft bg-surface-input/40 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-surface-input transition-colors"
+        aria-expanded={open}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="text-xs uppercase tracking-widest text-ink-dim font-mono">
+            Render details
+          </span>
+          {!entry.narrationApplied && (
+            <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40 uppercase">
+              No narration
+            </span>
+          )}
+        </div>
+        <span className={cn(
+          "text-ink-muted transition-transform flex-shrink-0 text-xs",
+          open ? "rotate-180" : "rotate-0"
+        )}>▼</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 pt-2 border-t border-edge-soft flex flex-col gap-1.5">
+          {rows.map((r) => (
+            <div key={r.label} className="flex items-baseline justify-between gap-3 text-xs">
+              <span className="text-ink-dim font-mono uppercase tracking-wider text-[10px] flex-shrink-0 w-32">
+                {r.label}
+              </span>
+              <span className={cn(
+                "text-ink-muted text-right",
+                r.ok === false && "text-amber-300"
+              )}>
+                {r.value}
+              </span>
+            </div>
+          ))}
+          {sceneSummary && (
+            <div className="flex items-baseline justify-between gap-3 text-xs pt-1 border-t border-edge-soft mt-1">
+              <span className="text-ink-dim font-mono uppercase tracking-wider text-[10px] flex-shrink-0 w-32">
+                Scene breakdown
+              </span>
+              <span className="text-ink-muted text-right">{sceneSummary}</span>
+            </div>
+          )}
+          <div className="text-[10px] text-ink-dim leading-relaxed pt-2 mt-1 border-t border-edge-soft">
+            Job ID: <span className="font-mono">{entry.jobId}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function DeliverablePill({ label, sublabel, url }: { label: string; sublabel: string; url: string }) {
