@@ -20,6 +20,8 @@
 // Retries: standard exponential backoff on 429 / 5xx. Polls predictions
 // every 1.5s with a hard cap of 90s per call.
 
+import { readFile } from "node:fs/promises";
+
 const REPLICATE_BASE = "https://api.replicate.com/v1";
 const POLL_INTERVAL_MS = 1500;
 const POLL_TIMEOUT_MS = 90 * 1000;
@@ -107,9 +109,15 @@ export async function estimateDepth({ imageUrl }) {
 /* ============================================================
    Inpainting
    ============================================================ */
-// imageUrl: the rendered frame from depth-renderer.
-// maskUrl: PNG where white pixels = inpaint here (disocclusion holes).
+// imageUrl: HTTPS URL OR data:image/png;base64,... data URL of the frame.
+// maskUrl:  same — PNG where white pixels = inpaint here (disocclusion holes).
 // Returns: URL to the filled image.
+//
+// Data URL note: Replicate accepts base64-inlined inputs. For the depth
+// engine's per-frame inpaint pass we feed data URLs so we don't have to
+// shuffle every frame through Supabase storage just to make it HTTPS-
+// reachable. Per-frame PNGs are ~50-200 KB → ~70-270 KB base64 →
+// comfortably under Replicate's 25 MB request limit.
 export async function inpaintImage({ imageUrl, maskUrl }) {
   if (!imageUrl || !maskUrl) throw new Error("inpaintImage: imageUrl + maskUrl required");
   const output = await runPrediction({
@@ -124,6 +132,17 @@ export async function inpaintImage({ imageUrl, maskUrl }) {
   if (Array.isArray(output) && output[0]) return output[0];
   if (output?.url) return output.url;
   throw new Error(`inpaintImage: unexpected output shape: ${JSON.stringify(output).slice(0, 200)}`);
+}
+
+/* ============================================================
+   Helper: convert a local PNG path to a data: URL string
+   ============================================================
+   For passing per-frame images to inpaintImage without an
+   external storage round-trip. PNG only — caller's responsibility.
+*/
+export async function fileToDataUrl(localPath, mime = "image/png") {
+  const buf = await readFile(localPath);
+  return `data:${mime};base64,${buf.toString("base64")}`;
 }
 
 /* ============================================================

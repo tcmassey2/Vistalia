@@ -40,8 +40,9 @@ import os from "node:os";
 import path from "node:path";
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { renderDepthClip, cameraPathFor } from "./depth-renderer.mjs";
-import { estimateDepth } from "./replicate-client.mjs";
+import { renderDepthClip, stitchFramesToMp4, cameraPathFor } from "./depth-renderer.mjs";
+import { estimateDepth, inpaintImage, fileToDataUrl } from "./replicate-client.mjs";
+import sharp from "sharp";
 import {
   stitchClipsAndOverlays,
   uploadDeliverables,
@@ -54,6 +55,17 @@ import { runFFmpeg } from "./ffmpeg-runner.mjs";
 import { existsSync } from "node:fs";
 
 const ENABLE_FLAG = process.env.ENABLE_DEPTH_ENGINE === "true";
+// Phase 2 opt-in: per-frame LaMa inpaint of disocclusion gaps. Adds
+// ~$0.40-0.50 + 2-6 min latency per render (depending on parallelism
+// and how many scenes have meaningful disocclusion). Disabled by
+// default until end-to-end quality is validated.
+const ENABLE_INPAINT = process.env.ENABLE_DEPTH_INPAINT === "true";
+// How many inpaints to run concurrently per scene. Higher = faster but
+// more Replicate rate-limit risk. 4 is a safe starting point.
+const INPAINT_CONCURRENCY = Number(process.env.DEPTH_INPAINT_CONCURRENCY || 4);
+// Skip frames whose disocclusion mask has fewer than this fraction of
+// white pixels — saves cost on frames with negligible gaps.
+const INPAINT_MIN_GAP_FRACTION = Number(process.env.DEPTH_INPAINT_MIN_GAP || 0.005);
 
 /* ============================================================
    Public entry: renderDepthJob
@@ -271,7 +283,7 @@ export async function renderDepthJob(body, options = {}) {
     scenesMeta,
     narration,
     engineUsed: "depth_parallax",
-    enginePhase: "phase1-no-inpaint",
+    enginePhase: ENABLE_INPAINT ? "phase2-inpaint" : "phase1-no-inpaint",
     promptVersion: manifest?.promptVersion || null
   }).catch((err) => console.warn(`[depth] audit log failed: ${err.message}`));
 
@@ -280,7 +292,7 @@ export async function renderDepthJob(body, options = {}) {
     scenesMeta,
     narrationApplied: narration.narrationApplied,
     engineUsed: "depth_parallax",
-    enginePhase: "phase1-no-inpaint"
+    enginePhase: ENABLE_INPAINT ? "phase2-inpaint" : "phase1-no-inpaint"
   };
 }
 
@@ -306,6 +318,40 @@ async function renderOneScene({ scene, manifest, tempDir, dims, frameRate, scene
   const durationSec = Math.max(2, Math.min(10, Number(scene.duration || 5)));
   const clipPath = path.join(tempDir, `s${padIdx}-clip.mp4`);
 
+  // ----------------------------------------------------------------
+  // Path branching: Phase 1 (direct MP4) vs Phase 2 (frames + inpaint)
+  // ----------------------------------------------------------------
+  if (!ENABLE_INPAINT) {
+    // Phase 1: render straight to MP4. Disocclusion gaps will show as
+    // magenta in this version — acceptable for first end-to-end test.
+    // Once Phase 2 is enabled the magenta is filled by LaMa.
+    const renderResult = await renderDepthClip({
+      photoPath,
+      depthPath,
+      cameraPath,
+      dimensions: dims,
+      frameRate,
+      durationSec,
+      outPath: clipPath
+    });
+    await fs.unlink(photoPath).catch(() => {});
+    await fs.unlink(depthPath).catch(() => {});
+    return {
+      sceneIndex,
+      photoId: scene.photoId,
+      clipPath: renderResult.outPath,
+      duration: durationSec,
+      cameraMotion: motion,
+      engineUsed: "depth_parallax",
+      enginePhase: "phase1",
+      fallback: false,
+      runwayPrompt: ""
+    };
+  }
+
+  // Phase 2: render to per-frame PNGs + mask PNGs, inpaint disocclusion
+  // gaps via LaMa, stitch cleaned frames into the final MP4.
+  const framesDir = path.join(tempDir, `s${padIdx}-frames`);
   const renderResult = await renderDepthClip({
     photoPath,
     depthPath,
@@ -313,24 +359,105 @@ async function renderOneScene({ scene, manifest, tempDir, dims, frameRate, scene
     dimensions: dims,
     frameRate,
     durationSec,
-    outPath: clipPath
+    outPath: clipPath, // unused when writeFramesDir is set, but kept for symmetry
+    writeFramesDir: framesDir
   });
 
-  // Clean up the source photo + depth map locally — we only need the
-  // rendered clip from here on.
+  await inpaintFrames({
+    framesDir,
+    totalFrames: renderResult.framesRendered,
+    sceneIndex
+  });
+
+  await stitchFramesToMp4({
+    framesDir,
+    outPath: clipPath,
+    frameRate
+  });
+
+  // Cleanup: source photo, depth map, all per-frame PNGs and masks.
   await fs.unlink(photoPath).catch(() => {});
   await fs.unlink(depthPath).catch(() => {});
+  await fs.rm(framesDir, { recursive: true, force: true }).catch(() => {});
 
   return {
     sceneIndex,
     photoId: scene.photoId,
-    clipPath: renderResult.outPath,
+    clipPath,
     duration: durationSec,
     cameraMotion: motion,
     engineUsed: "depth_parallax",
+    enginePhase: "phase2-inpaint",
     fallback: false,
-    runwayPrompt: "" // depth engine doesn't use prompts; field kept for upload compat
+    runwayPrompt: ""
   };
+}
+
+/* ============================================================
+   Phase 2: disocclusion inpaint pass
+   ============================================================
+   For each rendered frame:
+     1. Read its disocclusion mask.
+     2. If the mask is empty (or near-empty), skip — no holes to fill,
+        save a Replicate call.
+     3. Otherwise feed frame + mask (as data: URLs) to LaMa, download
+        the cleaned frame, overwrite frame-NNN.png in place.
+   Runs INPAINT_CONCURRENCY frames in parallel to keep total scene
+   latency bounded — fully serial would be 5-10 min per scene.
+*/
+async function inpaintFrames({ framesDir, totalFrames, sceneIndex }) {
+  const indices = Array.from({ length: totalFrames }, (_, i) => i);
+
+  // Worker pool — pulls indices off a shared cursor, runs inpaint for
+  // each, surfaces errors so we can log but continue (a single failed
+  // inpaint = stretched edge for one frame, not a render failure).
+  let cursor = 0;
+  let skipped = 0;
+  let inpainted = 0;
+  let failed = 0;
+  const workers = Array.from({ length: Math.min(INPAINT_CONCURRENCY, totalFrames) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= indices.length) return;
+      const padded = String(i).padStart(4, "0");
+      const framePath = path.join(framesDir, `frame-${padded}.png`);
+      const maskPath = path.join(framesDir, `mask-${padded}.png`);
+
+      // Cheap mask check: count white pixels. If below threshold,
+      // skip the Replicate call — there's nothing meaningful to fill.
+      try {
+        const { data: maskRaw, info: maskInfo } = await sharp(maskPath).raw().toBuffer({ resolveWithObject: true });
+        const totalPx = maskInfo.width * maskInfo.height;
+        let whiteCount = 0;
+        for (let p = 0; p < maskRaw.length; p++) {
+          if (maskRaw[p] > 200) whiteCount++;
+        }
+        const gapFraction = whiteCount / totalPx;
+        if (gapFraction < INPAINT_MIN_GAP_FRACTION) {
+          skipped++;
+          continue;
+        }
+
+        // Inpaint via LaMa — frame + mask as data URLs, no external upload.
+        const imageDataUrl = await fileToDataUrl(framePath);
+        const maskDataUrl = await fileToDataUrl(maskPath);
+        const cleanedUrl = await inpaintImage({ imageUrl: imageDataUrl, maskUrl: maskDataUrl });
+        const cleanedRes = await fetch(cleanedUrl);
+        if (!cleanedRes.ok) throw new Error(`download cleaned frame failed: HTTP ${cleanedRes.status}`);
+        const cleanedBuf = Buffer.from(await cleanedRes.arrayBuffer());
+        await fs.writeFile(framePath, cleanedBuf);
+        inpainted++;
+      } catch (err) {
+        failed++;
+        console.warn(`[depth:inpaint] scene ${sceneIndex + 1} frame ${i} failed (${err.message}). Keeping raw frame.`);
+      }
+    }
+  });
+  await Promise.all(workers);
+
+  console.info(
+    `[depth:inpaint] scene ${sceneIndex + 1}: ${inpainted} inpainted, ${skipped} skipped (no gaps), ${failed} failed of ${totalFrames} frames`
+  );
 }
 
 /* ============================================================

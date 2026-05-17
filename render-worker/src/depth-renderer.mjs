@@ -62,10 +62,15 @@ const FAR = 100;
      dimensions       — { width, height } of the output video
      frameRate        — int (24, 30, 60)
      durationSec      — float
-     outPath          — where to write the MP4
+     outPath          — where to write the MP4 (skipped if writeFramesDir is set)
      vertexStep?      — int (default 4); lower = more vertices, smoother boundaries
+     writeFramesDir?  — string: when set, also writes frame-NNN.png +
+                        mask-NNN.png per frame to this dir. Used by Phase 2
+                        inpainting pipeline to fill disocclusion gaps before
+                        stitching the final clip. Masks are PNG: white = no
+                        source data (inpaint here), black = keep original.
    Returns:
-     { outPath, framesRendered, durationSec }
+     { outPath, framesRendered, durationSec, framesDir? }
 */
 export async function renderDepthClip({
   photoPath,
@@ -75,7 +80,8 @@ export async function renderDepthClip({
   frameRate = 24,
   durationSec,
   outPath,
-  vertexStep = DEFAULT_STEP
+  vertexStep = DEFAULT_STEP,
+  writeFramesDir = null
 }) {
   const { width, height } = dimensions;
   if (!width || !height) throw new Error("renderDepthClip: dimensions.width/height required");
@@ -123,7 +129,11 @@ export async function renderDepthClip({
     preserveDrawingBuffer: true
   });
   renderer.setSize(width, height, false);
-  renderer.setClearColor(0x000000, 1.0);
+  // Magenta clear so disocclusion gaps (areas with no source pixels after
+  // camera move) are detectable in post: any pixel still pure magenta
+  // (255, 0, 255) after render = needs inpainting. The mesh texture covers
+  // all original pixels, so magenta only survives in genuine gaps.
+  renderer.setClearColor(0xff00ff, 1.0);
 
   // ---- Build the depth-displaced mesh ---------------------------------
   // Mesh is a (meshW x meshH) grid. Each vertex sits at its 2D image
@@ -197,43 +207,48 @@ export async function renderDepthClip({
   const initialFov = cameraPath[0]?.fov ?? DEFAULT_FOV;
   const camera = new THREE.PerspectiveCamera(initialFov, aspect, NEAR, FAR);
 
-  // ---- ffmpeg pipe -----------------------------------------------------
-  // We pipe raw RGBA bytes per frame to ffmpeg stdin. ffmpeg encodes to
-  // libx264 at the requested framerate. No intermediate PNG files = no
-  // disk I/O, ~3x faster than writing frames first.
+  // ---- Output mode selection ------------------------------------------
+  // Two modes:
+  //   (A) Default: pipe raw RGBA to ffmpeg stdin, write MP4. Fast.
+  //   (B) Phase 2 inpaint: write per-frame frame.png + mask.png so the
+  //       orchestrator can run an inpaint pass before stitching.
   await fs.mkdir(path.dirname(outPath), { recursive: true });
+  if (writeFramesDir) await fs.mkdir(writeFramesDir, { recursive: true });
 
   const totalFrames = Math.max(1, Math.round(frameRate * durationSec));
-  const ffArgs = [
-    "-y",
-    "-loglevel", "error",
-    "-f", "rawvideo",
-    "-pixel_format", "rgba",
-    "-video_size", `${width}x${height}`,
-    "-framerate", String(frameRate),
-    "-i", "pipe:0",
-    // WebGL origin is bottom-left; flip to standard video top-left orientation.
-    "-vf", "vflip",
-    "-c:v", "libx264",
-    "-pix_fmt", "yuv420p",
-    "-preset", "veryfast",
-    "-crf", "20",
-    "-movflags", "+faststart",
-    outPath
-  ];
-  const ff = spawn("ffmpeg", ffArgs, { stdio: ["pipe", "ignore", "pipe"] });
+
+  let ff = null;
   let ffErr = "";
-  ff.stderr.on("data", (chunk) => { ffErr += chunk.toString(); });
-  const ffDone = new Promise((resolve, reject) => {
-    ff.on("close", (code) => {
-      if (code !== 0) reject(new Error(`ffmpeg exited ${code}: ${ffErr.slice(0, 400)}`));
-      else resolve();
+  let ffDone = null;
+  if (!writeFramesDir) {
+    const ffArgs = [
+      "-y",
+      "-loglevel", "error",
+      "-f", "rawvideo",
+      "-pixel_format", "rgba",
+      "-video_size", `${width}x${height}`,
+      "-framerate", String(frameRate),
+      "-i", "pipe:0",
+      "-vf", "vflip",
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-preset", "veryfast",
+      "-crf", "20",
+      "-movflags", "+faststart",
+      outPath
+    ];
+    ff = spawn("ffmpeg", ffArgs, { stdio: ["pipe", "ignore", "pipe"] });
+    ff.stderr.on("data", (chunk) => { ffErr += chunk.toString(); });
+    ffDone = new Promise((resolve, reject) => {
+      ff.on("close", (code) => {
+        if (code !== 0) reject(new Error(`ffmpeg exited ${code}: ${ffErr.slice(0, 400)}`));
+        else resolve();
+      });
+      ff.on("error", reject);
     });
-    ff.on("error", reject);
-  });
+  }
 
   // ---- Render loop -----------------------------------------------------
-  // Single readPixels buffer reused across frames.
   const pixelBuf = Buffer.alloc(width * height * 4);
   const pixelView = new Uint8Array(pixelBuf.buffer);
 
@@ -245,20 +260,53 @@ export async function renderDepthClip({
       renderer.render(scene, camera);
       gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixelView);
 
-      // Backpressure: if ffmpeg's stdin buffer is full, wait until
-      // drain. Otherwise we accumulate frames in memory unbounded.
-      const wroteOk = ff.stdin.write(pixelBuf);
-      if (!wroteOk) {
-        await new Promise((resolve) => ff.stdin.once("drain", resolve));
+      if (writeFramesDir) {
+        // Phase 2 path: write a frame PNG + a disocclusion mask PNG. The
+        // mask is white at any pixel that's still pure magenta (no source
+        // data) and black everywhere else. Inpainter fills the white.
+        // We flip Y here (gl bottom-left → image top-left) so the saved
+        // PNG matches what ffmpeg would produce in the direct-pipe path.
+        const padded = String(frame).padStart(4, "0");
+        const framePath = path.join(writeFramesDir, `frame-${padded}.png`);
+        const maskPath = path.join(writeFramesDir, `mask-${padded}.png`);
+
+        // Build mask buffer in parallel: 1 byte per pixel, 255 where
+        // magenta survived. Threshold leaves room for tiny shader-AA
+        // bleed at gap edges (R>240, G<20, B>240).
+        const maskBuf = Buffer.alloc(width * height);
+        for (let p = 0; p < width * height; p++) {
+          const o = p * 4;
+          const r = pixelView[o];
+          const g = pixelView[o + 1];
+          const b = pixelView[o + 2];
+          maskBuf[p] = (r > 240 && g < 20 && b > 240) ? 255 : 0;
+        }
+
+        // Flip Y for both frame + mask via sharp (faster than manual
+        // memmove and keeps the data path identical).
+        await sharp(pixelBuf, { raw: { width, height, channels: 4 } })
+          .flip()
+          .png()
+          .toFile(framePath);
+        await sharp(maskBuf, { raw: { width, height, channels: 1 } })
+          .flip()
+          .png()
+          .toFile(maskPath);
+      } else {
+        // Default fast path — pipe raw bytes to ffmpeg.
+        const wroteOk = ff.stdin.write(pixelBuf);
+        if (!wroteOk) {
+          await new Promise((resolve) => ff.stdin.once("drain", resolve));
+        }
       }
     }
   } finally {
-    // Always close ffmpeg stdin so the process can exit cleanly even on
-    // mid-loop errors.
-    try { ff.stdin.end(); } catch (_) {}
+    if (ff) {
+      try { ff.stdin.end(); } catch (_) {}
+    }
   }
 
-  await ffDone;
+  if (ffDone) await ffDone;
 
   // Three.js cleanup so this process can render many clips without leak.
   geometry.dispose();
@@ -270,10 +318,44 @@ export async function renderDepthClip({
   // collection takes care of it when the variable goes out of scope.
 
   return {
-    outPath,
+    outPath: writeFramesDir ? null : outPath,
     framesRendered: totalFrames,
-    durationSec
+    durationSec,
+    framesDir: writeFramesDir || null
   };
+}
+
+/* ============================================================
+   Stitch frames-NNN.png into an MP4 clip (Phase 2 helper).
+   ============================================================
+   After the inpaint pass replaces each frame.png with its cleaned
+   version, this builds the final clip via ffmpeg's image2 demuxer.
+   Same encoding params as the Phase 1 direct-pipe path so output
+   quality is comparable.
+*/
+export async function stitchFramesToMp4({ framesDir, outPath, frameRate = 24 }) {
+  await fs.mkdir(path.dirname(outPath), { recursive: true });
+  return new Promise((resolve, reject) => {
+    const ff = spawn("ffmpeg", [
+      "-y",
+      "-loglevel", "error",
+      "-framerate", String(frameRate),
+      "-i", path.join(framesDir, "frame-%04d.png"),
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-preset", "veryfast",
+      "-crf", "20",
+      "-movflags", "+faststart",
+      outPath
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    ff.stderr.on("data", (c) => { err += c.toString(); });
+    ff.on("close", (code) => {
+      if (code !== 0) reject(new Error(`stitchFramesToMp4 ffmpeg exited ${code}: ${err.slice(0, 400)}`));
+      else resolve({ outPath });
+    });
+    ff.on("error", reject);
+  });
 }
 
 /* ============================================================
