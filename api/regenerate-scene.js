@@ -240,12 +240,18 @@ async function enforceTierGuard(request, manifest) {
   const requestedEngine = String(manifest.engine || "remotion").toLowerCase();
   const available = Array.isArray(state.available_engines) ? state.available_engines : ["remotion"];
   if (!available.includes(requestedEngine)) {
+    const engineLabel =
+      requestedEngine === "depth" ? "Cinematic Depth" :
+      requestedEngine === "runway" ? "Cinematic AI" :
+      requestedEngine === "remotion" ? "Quick Reel" :
+      requestedEngine;
     return {
       ok: false,
       status: 402,
-      error: `AI regenerate requires the Cinematic AI plan or higher. You're on ${state.tier}. Try the "Replace with Ken Burns" option instead — it's free on any plan.`,
+      error: `${engineLabel} regen isn't included in your current plan (${state.tier}). Try the "Replace with Ken Burns" option instead — it's free on any plan.`,
       upgradeRequired: true,
-      currentTier: state.tier
+      currentTier: state.tier,
+      requestedEngine
     };
   }
 

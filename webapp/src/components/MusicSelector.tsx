@@ -1,13 +1,17 @@
-// EstateMotion — MusicSelector
+// EstateMotion — MusicSelector (v2: cleaned up).
 //
-// Per-row preview button + a single bottom-of-the-list <audio controls>
-// element that always reflects the most recently-previewed track. The
-// inline native player is the bulletproof fallback: even if our custom
-// play button hits a CORS/autoplay edge case, the user can scrub and
-// hit play on the native widget.
+// Layout rationale (vs v1):
+//   v1 had a big grouped list with per-row Play + Use buttons + three
+//   different chip variants (default / selected / In use) + a permanent
+//   <audio controls> widget at the bottom. Functional but visually noisy.
 //
-// Source of truth for the catalog is webapp/src/lib/music-catalog.ts.
-// MP3 files live in webapp/public/music/ (served at /music/<filename>).
+//   v2 condenses to a single-line-per-track row: one tap = play, one tap
+//   on the row body = select. Default per style is shown inline (gold
+//   left rail). The bottom audio player only appears WHILE actively
+//   previewing — gone the rest of the time. Same data, half the chrome.
+//
+// Same store contract: selectedMusicTrackId in store; null = use style
+// default. Same catalog: MUSIC_CATALOG / defaultTrackForStyle / etc.
 
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
@@ -44,188 +48,185 @@ export default function MusicSelector() {
   const effectiveTrack =
     MUSIC_CATALOG.find((t) => t.id === effectiveTrackId) ?? styleDefault;
 
-  // The track currently loaded into the inline preview player. Starts as
-  // the effective track so the player has something to play if the user
-  // just hits the native play button.
-  const [previewTrack, setPreviewTrack] = useState<MusicTrack>(effectiveTrack);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
+  // Audio playback state. Only one preview at a time. The persistent
+  // <audio> tag lives below the list and ONLY mounts when previewingId
+  // is set — keeping the chrome out of view when nothing is playing.
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
-  // Keep the inline player in sync with the effective track. If the user
-  // changes the selected track via the Use button, the preview snaps to
-  // that track (paused). This is the expected UX — pick a track, hear it.
+  // Cleanup playback when the screen unmounts.
   useEffect(() => {
-    setPreviewTrack(effectiveTrack);
-    setPreviewError(null);
-    if (audioRef.current) {
-      audioRef.current.pause();
-      setIsPlaying(false);
-    }
-  }, [effectiveTrack.id]);
+    return () => { audioRef.current?.pause(); };
+  }, []);
 
-  const handleRowPreview = (track: MusicTrack) => {
-    const el = audioRef.current;
-    if (!el) return;
+  const handlePreview = (track: MusicTrack) => {
     setPreviewError(null);
-    // If this row's track is already playing, pause it. Otherwise switch
-    // the player to this track and play.
-    if (previewTrack.id === track.id && isPlaying) {
-      el.pause();
+    // Tapping the play button on the row currently previewing pauses + closes.
+    if (previewingId === track.id) {
+      audioRef.current?.pause();
+      setPreviewingId(null);
       return;
     }
-    setPreviewTrack(track);
-    // Setting src triggers a load. We need to wait a tick before play.
-    // Doing it inline (not in useEffect) keeps the play() inside the
-    // user-gesture context that browsers require for autoplay.
-    el.src = previewUrlFor(track);
-    el.currentTime = 0;
-    el.load();
-    const playPromise = el.play();
-    if (playPromise && typeof playPromise.then === "function") {
-      playPromise.catch((err) => {
-        console.error("[music-preview] play() rejected", err, "for", previewUrlFor(track));
-        setPreviewError(
-          `Preview blocked or file missing. Use the player controls below to retry.`
-        );
-      });
-    }
+    setPreviewingId(track.id);
+    // Audio element renders on next paint; play() happens in the
+    // <audio onLoadedMetadata> handler below to stay inside the
+    // user-gesture context.
   };
 
   const handleSelect = (track: MusicTrack) => {
+    // Picking the current style's default stores null so style changes
+    // re-track the default. Picking anything else stores the explicit id.
     setMusicTrack(track.id === styleDefault.id ? null : track.id);
   };
+
+  const previewTrack = previewingId
+    ? MUSIC_CATALOG.find((t) => t.id === previewingId) ?? null
+    : null;
 
   const groups = tracksGroupedByStyle();
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold tracking-tightish">Music</h3>
-          <p className="text-xs text-ink-muted mt-0.5">
-            {selectedMusicTrackId
-              ? <>Picked from library: <span className="text-ink">{effectiveTrack.label}</span></>
-              : <>Style default: <span className="text-ink">{styleDefault.label}</span> (for {STYLE_LABELS[selectedStyleId]})</>}
-          </p>
-        </div>
+    <div className="flex flex-col gap-3">
+      {/* Header line — current selection at a glance + reset link. */}
+      <div className="flex items-baseline justify-between gap-3 text-xs">
+        <span className="text-ink-muted">
+          In use:{" "}
+          <span className="text-ink font-medium">{effectiveTrack.label}</span>
+          {!selectedMusicTrackId && (
+            <span className="text-ink-muted"> — style default for {STYLE_LABELS[selectedStyleId]}</span>
+          )}
+        </span>
         {selectedMusicTrackId && (
           <button
             type="button"
             onClick={() => setMusicTrack(null)}
-            className="text-xs text-ink-muted hover:text-gold underline-offset-2 hover:underline"
+            className="text-ink-muted hover:text-gold underline-offset-2 hover:underline"
           >
-            Reset to style default
+            Reset to default
           </button>
         )}
       </div>
 
-      <div className="flex flex-col gap-3">
-        {groups.map(({ style, tracks }) => (
-          <div key={style} className="rounded-lg border border-edge bg-surface-input/30">
-            <div className="px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-ink-muted font-mono border-b border-edge/60">
+      {/* Track list — single panel, grouped by style with thin dividers. */}
+      <div className="rounded-lg border border-edge bg-surface-input/30 overflow-hidden">
+        {groups.map(({ style, tracks }, gi) => (
+          <div key={style}>
+            <div className="px-3 py-1.5 text-[9px] uppercase tracking-[0.2em] text-ink-muted font-mono bg-surface-input/40 border-b border-edge/40">
               {STYLE_LABELS[style]}
             </div>
-            <ul className="divide-y divide-edge/40">
+            <ul>
               {tracks.map((track) => {
                 const isEffective = effectiveTrackId === track.id;
-                const isPreviewing = previewTrack.id === track.id && isPlaying;
+                const isPreviewing = previewingId === track.id;
                 return (
                   <li
                     key={track.id}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 transition-colors",
-                      isEffective ? "bg-gold/8" : "hover:bg-surface-input/60"
+                      "group flex items-center gap-3 px-3 py-2.5 border-b border-edge/40 last:border-b-0 transition-colors cursor-pointer",
+                      isEffective
+                        ? "bg-gold/8 border-l-2 border-l-gold"
+                        : "hover:bg-surface-input/60 border-l-2 border-l-transparent"
                     )}
+                    onClick={() => handleSelect(track)}
                   >
+                    {/* Play / pause — stops propagation so it doesn't also select. */}
                     <button
                       type="button"
-                      aria-label={isPreviewing ? "Pause preview" : "Play preview"}
-                      onClick={() => handleRowPreview(track)}
+                      aria-label={isPreviewing ? "Pause preview" : "Preview track"}
+                      onClick={(e) => { e.stopPropagation(); handlePreview(track); }}
                       className={cn(
-                        "h-8 w-8 shrink-0 rounded-full border flex items-center justify-center transition-colors",
+                        "h-7 w-7 shrink-0 rounded-full flex items-center justify-center transition-colors",
                         isPreviewing
-                          ? "border-gold bg-gold text-paper"
-                          : "border-edge bg-surface-input text-ink hover:border-gold hover:text-gold"
+                          ? "bg-gold text-paper"
+                          : "bg-surface-input border border-edge text-ink-soft hover:text-gold hover:border-gold"
                       )}
                     >
                       {isPreviewing ? (
-                        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="2" y="1" width="2" height="8"/><rect x="6" y="1" width="2" height="8"/></svg>
+                        <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor"><rect x="2" y="1" width="2" height="8"/><rect x="6" y="1" width="2" height="8"/></svg>
                       ) : (
-                        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
+                        <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
                       )}
                     </button>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-ink truncate">{track.label}</span>
-                        {track.isStyleDefault && (
-                          <span className="text-[9px] uppercase tracking-[0.15em] text-gold/80 font-mono">default</span>
-                        )}
-                        {isEffective && !track.isStyleDefault && (
-                          <span className="text-[9px] uppercase tracking-[0.15em] text-gold font-mono">selected</span>
-                        )}
+                      <div className="text-sm font-medium text-ink truncate leading-tight">
+                        {track.label}
                       </div>
-                      <div className="text-xs text-ink-muted truncate">{track.vibe} · {formatDuration(track.durationSec)}</div>
+                      <div className="text-[11px] text-ink-muted truncate leading-tight mt-0.5">
+                        {track.vibe}
+                      </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleSelect(track)}
-                      disabled={isEffective}
-                      className={cn(
-                        "h-8 px-3 rounded-md text-xs font-semibold shrink-0 transition-colors",
-                        isEffective
-                          ? "bg-gold/10 text-gold cursor-default"
-                          : "bg-surface-input text-ink hover:text-gold border border-edge hover:border-gold"
+                    <div className="shrink-0 text-[10px] font-mono text-ink-muted tabular-nums">
+                      {formatDuration(track.durationSec)}
+                    </div>
+
+                    {/* Status indicator: single dot — gold = in use, hidden otherwise.
+                        Eliminates the v1 default/selected/In-use triple-chip noise. */}
+                    <div className="shrink-0 w-3 flex justify-center">
+                      {isEffective && (
+                        <span
+                          className="inline-block w-1.5 h-1.5 rounded-full bg-gold"
+                          aria-label="Currently in use"
+                          title="Currently in use"
+                        />
                       )}
-                    >
-                      {isEffective ? "In use" : "Use"}
-                    </button>
+                    </div>
                   </li>
                 );
               })}
             </ul>
+            {gi < groups.length - 1 && <div aria-hidden="true" className="h-0" />}
           </div>
         ))}
       </div>
 
-      {/* Bulletproof preview player. Always present in the DOM so the
-          browser owns the audio state and the user has reliable controls
-          if our custom button hits any edge case. The src is bound to
-          whatever track was most recently previewed (or the effective
-          track on first render). */}
-      <div className="rounded-lg border border-edge bg-surface-input/30 px-3 py-3">
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <div className="text-xs text-ink-muted truncate">
-            Preview: <span className="text-ink font-medium">{previewTrack.label}</span>
-          </div>
-          <div className="text-[10px] uppercase tracking-[0.15em] text-ink-muted font-mono shrink-0">
-            {formatDuration(previewTrack.durationSec)}
-          </div>
+      {/* Mini preview player — ONLY appears while previewing. Slim, native
+          controls, plus a close X so it never lingers when the user is
+          done listening. */}
+      {previewTrack && (
+        <div className="rounded-lg border border-edge bg-surface-input/30 px-3 py-2 flex items-center gap-3">
+          <audio
+            ref={audioRef}
+            src={previewUrlFor(previewTrack)}
+            autoPlay
+            onLoadedMetadata={() => {
+              audioRef.current?.play().catch((err) => {
+                console.error("[music-preview] play() rejected", err);
+                setPreviewError("Couldn't play preview. Tap the play button again.");
+                setPreviewingId(null);
+              });
+            }}
+            onEnded={() => setPreviewingId(null)}
+            onError={() => {
+              const url = previewUrlFor(previewTrack);
+              console.error("[music-preview] <audio> error for", url);
+              setPreviewError(`Couldn't load ${url}.`);
+              setPreviewingId(null);
+            }}
+            controls
+            className="flex-1 h-8"
+          />
+          <button
+            type="button"
+            aria-label="Close preview"
+            onClick={() => {
+              audioRef.current?.pause();
+              setPreviewingId(null);
+            }}
+            className="h-7 w-7 shrink-0 rounded-md text-ink-muted hover:text-ink hover:bg-surface-input flex items-center justify-center"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M1 1l8 8M9 1l-8 8" />
+            </svg>
+          </button>
         </div>
-        <audio
-          ref={audioRef}
-          controls
-          preload="metadata"
-          src={previewUrlFor(previewTrack)}
-          onPlay={() => { setIsPlaying(true); setPreviewError(null); }}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
-          onError={() => {
-            setIsPlaying(false);
-            const url = previewUrlFor(previewTrack);
-            console.error("[music-preview] <audio> error for", url);
-            setPreviewError(`Couldn't load ${url}. Check that the file deployed to /music/.`);
-          }}
-          className="w-full"
-        />
-        {previewError && (
-          <div className="mt-2 text-[11px] text-red-300">
-            {previewError}
-          </div>
-        )}
-      </div>
+      )}
+
+      {previewError && (
+        <div className="text-[11px] text-red-300 px-1">{previewError}</div>
+      )}
     </div>
   );
 }

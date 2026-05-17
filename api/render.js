@@ -372,12 +372,28 @@ async function enforceTierGuard(request, manifest) {
   const requestedEngine = String(manifest.engine || "remotion").toLowerCase();
   const available = Array.isArray(state.available_engines) ? state.available_engines : ["remotion"];
   if (!available.includes(requestedEngine)) {
+    // Engine label for the error message — name the actual engine the
+    // user asked for instead of hard-coding 'Cinematic AI'. Previously
+    // every entitlement failure said 'Cinematic AI requires...' even
+    // when the request was for Cinematic Depth, which made the message
+    // wrong on the highest tier (cinematic_4k) where Cinematic AI is
+    // already unlocked but Depth wasn't in the engines list.
+    const engineLabel =
+      requestedEngine === "depth" ? "Cinematic Depth" :
+      requestedEngine === "runway" ? "Cinematic AI" :
+      requestedEngine === "remotion" ? "Quick Reel" :
+      requestedEngine;
+    const minTier =
+      requestedEngine === "depth" || requestedEngine === "runway"
+        ? "Cinematic AI ($149) or Cinematic AI 4K ($299)"
+        : "any paid";
     return {
       ok: false,
       status: 402,
-      error: `Cinematic AI requires the Cinematic AI plan or higher. You're on ${state.tier}.`,
+      error: `${engineLabel} isn't included in your current plan (${state.tier}). Upgrade to ${minTier} to unlock it, or pick a different engine.`,
       upgradeRequired: true,
-      currentTier: state.tier
+      currentTier: state.tier,
+      requestedEngine
     };
   }
 
