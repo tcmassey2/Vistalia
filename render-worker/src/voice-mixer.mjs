@@ -23,7 +23,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { runFFmpeg } from "./ffmpeg-runner.mjs";
-import { resolveVoice } from "./voices.mjs";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 const DEFAULT_MODEL = process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2_5";
@@ -33,7 +32,7 @@ const SYNTH_TIMEOUT_MS = 25000;
 // Music volume during narration. 0.30 ≈ -10dB, broadcast voiceover level.
 const DUCK_LEVEL = 0.3;
 
-export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir, jobId, onProgress, preRollSeconds = 0, manifest = null }) {
+export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir, jobId, onProgress }) {
   if (!process.env.ELEVENLABS_API_KEY) {
     return { masterMp4, narrationApplied: false, reason: "ELEVENLABS_API_KEY not set" };
   }
@@ -47,19 +46,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
     return { masterMp4, narrationApplied: false, reason: "No narrationLine fields on any scene" };
   }
 
-  // v23: resolve voice through the catalog so the slug ("luxury-warm",
-  // "viral-energetic", etc.) maps to the right ElevenLabs ID + per-voice
-  // tuned settings. Style bumped from 0.18 → 0.35-0.55 across the catalog.
-  const styleSlug = String(
-    manifest?.selectedStyle || manifest?.template?.style || "luxury"
-  ).trim().toLowerCase();
-  const voice = resolveVoice({
-    voiceId: brandKit?.voiceId,
-    styleSlug,
-    fallbackElevenLabsId: FALLBACK_VOICE_ID
-  });
-  const voiceId = voice.elevenLabsId;
-  console.info(`[voice] using ${voice.label} (slug=${voice.slug}) — style=${voice.settings.style}`);
+  const voiceId = (brandKit?.voiceId || "").trim() || FALLBACK_VOICE_ID;
 
   // ============================================================
   // STEP 1 — synthesize each narration line via ElevenLabs (parallel)
@@ -74,7 +61,6 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
       await synthesizeToFile({
         text: scene.narrationLine.trim(),
         voiceId,
-        voiceSettings: voice.settings,
         outPath: mp3Path
       });
       synthesized[index] = { mp3Path, scene };
@@ -93,12 +79,8 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
   onProgress?.({ phase: "Building narration track", fraction: 0.7 });
 
   const leadInSec = 0.35;
-  const sceneStarts = []; // start time of each scene in seconds (within the FULL master timeline)
-  // v23: preRollSeconds accounts for the address opener card (3.5s) that
-  // sits BEFORE the first photo scene in the master MP4. Without this
-  // offset, narration would play 3.5s too early, landing on the address
-  // card instead of scene 1.
-  let cursor = preRollSeconds;
+  const sceneStarts = []; // start time of each scene in seconds
+  let cursor = 0;
   for (const sc of photoScenes) {
     sceneStarts.push(cursor);
     cursor += Number(sc.duration || 3);
@@ -210,18 +192,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
    Helpers
    ============================================================ */
 
-// v23: voiceSettings is a per-voice tuned object from the catalog.
-// Falls back to the prior hardcoded defaults if not supplied (regen path
-// uses the legacy callsite without the settings arg).
-const LEGACY_VOICE_SETTINGS = {
-  stability: 0.55,
-  similarity_boost: 0.85,
-  style: 0.40, // bumped from 0.18 — same as Sarah/luxury-warm settings
-  use_speaker_boost: true
-};
-
-async function synthesizeToFile({ text, voiceId, outPath, voiceSettings }) {
-  const settings = voiceSettings || LEGACY_VOICE_SETTINGS;
+async function synthesizeToFile({ text, voiceId, outPath }) {
   const response = await fetchWithTimeout(
     `${ELEVENLABS_BASE}/text-to-speech/${encodeURIComponent(voiceId)}`,
     {
@@ -234,7 +205,12 @@ async function synthesizeToFile({ text, voiceId, outPath, voiceSettings }) {
       body: JSON.stringify({
         text,
         model_id: DEFAULT_MODEL,
-        voice_settings: settings
+        voice_settings: {
+          stability: 0.55,
+          similarity_boost: 0.85,
+          style: 0.18,
+          use_speaker_boost: true
+        }
       })
     },
     SYNTH_TIMEOUT_MS

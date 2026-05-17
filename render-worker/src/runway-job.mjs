@@ -16,24 +16,8 @@ import { spawn } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { deriveAspectVariants, buildSocialShorts } from "./aspect-variants.mjs";
 import { applyVoiceNarration } from "./voice-mixer.mjs";
-import { applyTransitionSfx } from "./sfx-mixer.mjs";
-import { buildAddressCardClip } from "./address-card.mjs";
-import { getBrollSuggestions, prepareBrollClips } from "./broll-library.mjs";
-import { getBpmForMusic, beatGridFromBpm, snapScenesToBeats } from "./beat-detect.mjs";
-import { validateMasterMp4 } from "./output-validator.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
 import { runFFmpeg, timed } from "./ffmpeg-runner.mjs";
-import { buildColorGradeFilter, describeColorGrade } from "./color-grade.mjs";
-import { preprocessPhotosForRender } from "./photo-preprocess.mjs";
-import {
-  shouldRunPhotoPreprocess,
-  shouldApplyV23LUT,
-  shouldPrependAddressCard,
-  shouldMixTransitionSfx,
-  shouldSnapBeats,
-  shouldAutoStrictMls,
-  isLegacyRenderMode
-} from "./legacy-mode.mjs";
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -65,21 +49,18 @@ const NON_PHOTO_TYPES = new Set(["intro", "outro", "stat", "card", "title", "sta
                  for short cinematic clips.
    BUFSIZE_MB — bitrate buffer cap. ffmpeg defaults to unbounded which
                 under high-detail-frame stress can grow indefinitely.
-
-   v23 — color grade moved to per-style 3D LUTs. See ./color-grade.mjs.
+   COLOR_GRADE — unchanged from v18.
 */
 const ENCODE_PRESET = "superfast";
 const ENCODE_CRF_MASTER = "19";
 const ENCODE_CRF_DERIVED = "20";
 const X264_PARAMS = "rc-lookahead=10:ref=2:bframes=2:keyint=60:scenecut=0";
 const BUFSIZE = "2M";
+const COLOR_GRADE =
+  "eq=contrast=1.08:saturation=0.95:gamma=1.03,colorbalance=rs=0.05:bs=-0.025,unsharp=5:5:0.6:3:3:0.3";
 
 export async function renderRunwayJob(body, options = {}) {
-  // `manifest` is `let` (not const) because the photo-preprocess pass below
-  // returns a mutated version with normalized photo URLs that downstream
-  // code (photoScenes filter, generateClip, generateKenBurnsFallback) needs
-  // to see.
-  let { manifest, requestedFormat } = body || {};
+  const { manifest, requestedFormat } = body || {};
   validateRunwayManifest(manifest);
 
   if (!process.env.RUNWAY_API_KEY) {
@@ -88,18 +69,6 @@ export async function renderRunwayJob(body, options = {}) {
 
   const jobId = options.jobId || createJobId(manifest);
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "estatemotion-runway-"));
-
-  // v23: photo preprocessing pass (gray-world WB + gentle exposure).
-  // Skipped automatically for regenerate-scene calls — those reuse the
-  // original render's already-preprocessed photo URLs from Supabase, so
-  // re-processing would compound the corrections AND waste 30-60s of
-  // download/process/upload. The skip is detected by whether the manifest
-  // already carries a photoPreprocess marker from a prior pass.
-  // v23 photo preprocess + beat-snap REMOVED from canonical pipeline
-  // (refinement, post-launch). Photos go to Runway as uploaded; scene
-  // durations come from the edit plan. The pre-pass changes added
-  // unpredictability without proven quality lift on real listings.
-
   const photoScenes = manifest.scenes
     .filter((scene) => !NON_PHOTO_TYPES.has(String(scene.type || "photo").toLowerCase()))
     .slice(0, MAX_SCENES);
@@ -149,12 +118,6 @@ export async function renderRunwayJob(body, options = {}) {
     photoScenes,
     async (scene, index) => {
       let result;
-      // v23: per-scene engine + reason tracking. Stamped onto the result
-      // object so uploadPerSceneClips can persist it to the audit log.
-      let engineUsed = "cinematic_ai";
-      let fallbackReason = null;
-      const sceneStartedAt = Date.now();
-
       // The Hallucination Guard decision is logged with reasoning so we can
       // tune thresholds based on real-world data. Every Ken-Burns-by-design
       // scene gets a line in the logs explaining WHY.
@@ -167,34 +130,19 @@ export async function renderRunwayJob(body, options = {}) {
             `[runway] guard:${guardLevel} scene ${index + 1} (${scene.roomType || "unknown"}) ` +
             `→ Ken Burns. risk=${guardDecision.risk}/100, reason="${guardDecision.reason}"`
           );
-          engineUsed = "ken_burns";
-          fallbackReason = `hallucination_guard:${guardDecision.reason}`;
-        } else if (complianceMode) {
-          engineUsed = "ken_burns";
-          fallbackReason = "compliance_mode";
         }
         // Skip Runway entirely for this scene — guaranteed shape preservation.
         result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
       } else {
         try {
           result = await generateClip(scene, manifest, tempDir, index);
-          engineUsed = "cinematic_ai";
         } catch (error) {
           if (error.code === "RUNWAY_DAILY_CAP") throw error; // surface to user
           console.warn(`[runway] scene ${index + 1} failed (${error.message}). Falling back to Ken Burns.`);
           result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
           fallbackCount++;
-          engineUsed = "ken_burns";
-          fallbackReason = `runway_error:${(error.message || "unknown").slice(0, 120)}`;
         }
       }
-      // Stamp the per-scene metadata onto the result so the audit-log path
-      // can persist it. uploadPerSceneClips reads these fields.
-      result.engineUsed = engineUsed;
-      result.fallbackReason = fallbackReason;
-      result.guardRisk = guardDecision.risk ?? null;
-      result.guardLevel = guardLevel;
-      result.durationMs = Date.now() - sceneStartedAt;
       scenesCompleted++;
       const phaseText = complianceMode
         ? `MLS-safe render: scene ${scenesCompleted}/${photoScenes.length}`
@@ -226,11 +174,7 @@ export async function renderRunwayJob(body, options = {}) {
   const finalMp4 = path.join(tempDir, `${jobId}.mp4`);
   const thumbnailPath = path.join(tempDir, `${jobId}.png`);
 
-  // v23: stitchClipsAndOverlays now returns addressCardIncluded so the
-  // downstream voice/SFX/validation steps know whether to apply a 3.5s
-  // pre-roll offset. The address card may be skipped if the hero image
-  // fails to download or manifest.disableAddressCard is set.
-  const { normalizedClips, addressCardIncluded } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options);
+  const { normalizedClips } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options);
 
   // Voice narration — synthesize per-scene narration via ElevenLabs and mix
   // it into the master with music ducking. Wrapped in fail-soft try/catch
@@ -250,11 +194,8 @@ export async function renderRunwayJob(body, options = {}) {
           masterMp4: finalMp4,
           scenes: manifest.scenes,
           brandKit: manifest.brandKit || {},
-          manifest,
           tempDir,
           jobId,
-          // No pre-roll — address card removed from canonical pipeline.
-          preRollSeconds: 0,
           onProgress: (info) => {
             options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
           }
@@ -270,9 +211,6 @@ export async function renderRunwayJob(body, options = {}) {
   }
   // If narration was applied, the mixed file replaces our master going
   // forward. Otherwise the original (silent or music-only) master is used.
-  // v23 transition SFX REMOVED from canonical pipeline. Synthesized
-  // whoosh/impact cues weren't reliably elevating output and added an
-  // ffmpeg pass that could fail silently.
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
 
   options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
@@ -312,40 +250,6 @@ export async function renderRunwayJob(body, options = {}) {
   } catch (err) {
     console.warn(`[runway] social shorts failed entirely (${err.message}). Continuing without shorts.`);
     shorts = [];
-  }
-
-  // v23: validation gate — ffprobe the master before upload. Catches
-  // "rendered successfully but file is corrupt" failures so we never
-  // ship a broken video to the user. Throws on hard fail with code
-  // OUTPUT_VALIDATION_FAILED, which the caller surfaces as a job failure.
-  options.onProgress?.({ phase: "Validating final video", progress: 92 });
-  try {
-    const expectedSec = (() => {
-      const sceneSec = (manifest.scenes || [])
-        .filter((s) => String(s.type || "photo").toLowerCase() === "photo")
-        .reduce((acc, s) => acc + Number(s.duration || 5), 0);
-      const cardSec = 0; // address card removed from canonical pipeline
-      const outroSec = 5; // composited outro card duration (see buildBrandOutroClip)
-      return sceneSec + cardSec + outroSec;
-    })();
-    // v23 hotfix: `dimensions` was a local inside stitchClipsAndOverlays —
-    // doesn't exist in this scope. Recompute from manifest via the pure
-    // runwayDimensions() helper (same source the stitcher used).
-    const validateDims = runwayDimensions(manifest);
-    await validateMasterMp4({
-      filePath: variants.vertical?.path || finalMp4,
-      expectedDurationSec: expectedSec,
-      expectedDimensions: validateDims,
-      label: "runway"
-    });
-  } catch (err) {
-    if (err.code === "OUTPUT_VALIDATION_FAILED") {
-      // Mark this as a structured job failure so the API can return a
-      // distinct status to the client.
-      err.jobPhase = "validation";
-      throw err;
-    }
-    throw err;
   }
 
   options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
@@ -398,19 +302,6 @@ export async function renderRunwayJob(body, options = {}) {
     scenes: scenesMeta
   }).catch(() => {});
 
-  // Render-complete email — fire-and-forget POST to the Vercel notify
-  // endpoint. Worker doesn't hold Resend keys; Vercel does. Same secret
-  // guards both directions.
-  notifyRenderComplete({
-    userId: manifest?.project?.userId || "",
-    jobId,
-    mp4Url: upload?.formats?.vertical?.mp4Url || "",
-    thumbnailUrl: upload?.thumbnailUrl || "",
-    listingTitle: manifest?.project?.address || manifest?.project?.title || ""
-  }).catch((err) => {
-    console.warn("[runway] notify-render-complete failed:", err.message || err);
-  });
-
   return {
     status: "complete",
     mock: false,
@@ -443,49 +334,6 @@ export async function renderRunwayJob(body, options = {}) {
    Per-scene Runway generation
    ================================================================= */
 
-/* ----------------------------------------------------------------
-   Per-tier Runway model resolver (v23 follow-up)
-   ----------------------------------------------------------------
-   Cinematic AI 4K customers pay $299/mo and get Runway's premium model
-   (Gen-4.5) by default. Everyone else uses Gen-4 Turbo. The resolution
-   order is:
-     1. manifest.runwayConfig.model      (explicit per-render override)
-     2. process.env.RUNWAY_MODEL          (env-level override — for testing)
-     3. tier-based default (4k → gen4.5, all others → gen4_turbo)
-
-   Why gate Gen-4.5 behind the 4K tier:
-   - Gen-4.5 costs ~2.5x more per credit than Gen-4 Turbo
-   - On the $149 Cinematic AI tier, default Gen-4.5 would push Runway
-     spend to ~$190/mo per active customer — negative gross margin
-   - The $299 4K tier absorbs that cost and still leaves room
-   - Below $299: opt-out of premium AI, accept Gen-4 Turbo (still
-     industry-best quality for the price)
-
-   Override knob: set process.env.RUNWAY_PREMIUM_MODEL to swap out the
-   premium model name (e.g. when Gen-5 launches). Defaults to "gen4.5".
-*/
-function resolveRunwayModel(manifest) {
-  const config = manifest?.runwayConfig || {};
-  if (config.model) return config.model;
-  if (process.env.RUNWAY_MODEL) return process.env.RUNWAY_MODEL;
-  const tier = String(manifest?.userTier || "").toLowerCase().trim();
-  if (tier === "cinematic_4k") {
-    return process.env.RUNWAY_PREMIUM_MODEL || "gen4.5";
-  }
-  return "gen4_turbo";
-}
-
-// Detect Runway error responses that mean "this model isn't available
-// for this account" — usually a 400 or 403 mentioning "model" or "access".
-// When that happens on Gen-4.5 we silently fall back to Gen-4 Turbo so
-// the render still completes (worst case: customer gets a Turbo render
-// they thought would be 4.5; we log it for billing reconciliation).
-function isModelUnavailableError(httpStatus, errBody) {
-  if (httpStatus !== 400 && httpStatus !== 403 && httpStatus !== 404) return false;
-  const lower = String(errBody || "").toLowerCase();
-  return /model|access|not.*available|unsupported|invalid.*model/.test(lower);
-}
-
 export async function generateClip(scene, manifest, tempDir, sceneIndex) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   const imageUrl = pickImageUrl(scene, photo);
@@ -494,12 +342,11 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
   if (!prompt) throw new Error(`Scene ${sceneIndex + 1} missing runwayPrompt. Regenerate edit plan with engine=runway.`);
 
   const config = manifest.runwayConfig || {};
-  // v23.1: per-tier model resolution. cinematic_4k → gen4.5, else gen4_turbo.
-  // Falls back to gen4_turbo automatically if gen4.5 is unavailable on this
-  // Runway account (so a misconfigured account doesn't black-hole renders).
-  const requestedModel = resolveRunwayModel(manifest);
-  const fallbackModel = "gen4_turbo";
-  const ratio = ratioForRunway(config.ratio, requestedModel);
+  // Default Gen-4 Turbo for new renders. Better shape preservation, fewer
+  // morphed surfaces. The ratio resolver picks the right pixel-pair based
+  // on which model we're hitting (Gen-4 uses 1280:720, Gen-3 uses 1280:768).
+  const model = config.model || process.env.RUNWAY_MODEL || "gen4_turbo";
+  const ratio = ratioForRunway(config.ratio, model);
   const duration = clamp(Number(scene.duration || 5) > 5.5 ? 10 : 5, 5, 10);
 
   // Submit task — with 429 / 5xx resilience.
@@ -510,10 +357,9 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
   //      until the user upgrades. No point retrying. Surface a clear
   //      error so the frontend can prompt for an upgrade.
   //   3. 5xx — transient Runway side. Retry with backoff.
-  let modelUsed = requestedModel;
-  let submitResponse = await submitRunwayTaskWithRetry({
+  const submitResponse = await submitRunwayTaskWithRetry({
     body: {
-      model: requestedModel,
+      model,
       promptImage: imageUrl,
       promptText: prompt,
       ratio,
@@ -524,32 +370,6 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
     sceneIndex,
     maxAttempts: 5
   });
-
-  // Fallback path: requested premium model but it's not available on this
-  // account. Re-submit with Gen-4 Turbo so the render completes.
-  if (!submitResponse.ok && requestedModel !== fallbackModel) {
-    const errBody = await safeText(submitResponse);
-    if (isModelUnavailableError(submitResponse.status, errBody)) {
-      console.warn(
-        `[runway] scene ${sceneIndex + 1}: ${requestedModel} not available ` +
-        `(HTTP ${submitResponse.status}). Falling back to ${fallbackModel}.`
-      );
-      modelUsed = fallbackModel;
-      submitResponse = await submitRunwayTaskWithRetry({
-        body: {
-          model: fallbackModel,
-          promptImage: imageUrl,
-          promptText: prompt,
-          ratio: ratioForRunway(config.ratio, fallbackModel),
-          duration,
-          watermark: false,
-          ...(config.seed != null ? { seed: Number(config.seed) } : {})
-        },
-        sceneIndex,
-        maxAttempts: 5
-      });
-    }
-  }
 
   if (!submitResponse.ok) {
     const errBody = await safeText(submitResponse);
@@ -581,12 +401,7 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
     duration,
     transition: scene.transition || "crossfade",
     overlay: scene.overlay || null,
-    runwayTaskId: taskId,
-    // v23.1: track which model actually ran (may differ from requested if
-    // the premium model fell back to Turbo). Surfaced via per-scene audit
-    // for cost reconciliation + UI badge ("Generated with Gen-4.5 Premium").
-    modelRequested: requestedModel,
-    modelUsed
+    runwayTaskId: taskId
   };
 }
 
@@ -730,10 +545,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // tipped Render Standard's 2GB ceiling. Per-clip overlay is ~50MB peak
   // and runs serially, never accumulating.
   const watermarkFilter = buildWatermarkDrawtext(brand, dimensions);
-  // v23: per-style 3D LUTs (Kodak 2383 / teal-orange / Rec.709 / desat film).
-  // Falls back to the legacy math grade if the style's .cube is missing.
-  const colorGrade = buildColorGradeFilter(manifest, { verboseLog: true });
-  console.info(`[runway] color grade: ${describeColorGrade(manifest)}`);
+  const colorGrade = COLOR_GRADE;
   // Pre-render the small corner headshot ONCE. Reused as a 2nd input on
   // every normalize call below. Falls back to null if the user has no
   // headshot URL or the pre-render fails — in that case we use -vf and
@@ -753,28 +565,6 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   for (let i = 0; i < clipResults.length; i++) {
     const clip = clipResults[i];
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
-
-    // BUG FIX (regen double-bake): when the regenerate-scene flow downloads
-    // the 23 already-normalized scene clips from Supabase Storage, those
-    // clips ALREADY have the color grade + watermark + corner headshot baked
-    // in from the original render. Re-running the normalize chain on them
-    // would stack a second corner headshot on top of the first, re-grade an
-    // already-graded image, and add a second watermark. We pass-through
-    // copy them instead — same wall-clock as a few hundred ms vs ~5 seconds
-    // of re-encode per clip, AND preserves the original visual.
-    if (clip.preNormalized) {
-      await runFFmpeg(
-        ["-y", "-threads", "1", "-i", clip.clipPath, "-c", "copy", normalized],
-        { timeoutMs: 30000, label: `runway:normalize-${clip.sceneIndex}-passthrough` }
-      );
-      normalizedClips.push({ ...clip, clipPath: normalized });
-      options.onProgress?.({
-        phase: `Polishing scene ${i + 1}/${clipResults.length}`,
-        progress: NORMALIZE_PROGRESS_START + Math.floor(((i + 1) / clipResults.length) * NORMALIZE_PROGRESS_RANGE)
-      });
-      continue;
-    }
-
     const baseFilters = [
       `fps=30`,
       `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=lanczos`,
@@ -851,13 +641,6 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     logoMaxHeight
   });
 
-  // v23 address card opener + B-roll insertion REMOVED from canonical
-  // pipeline. Renders open on scene 1 and play through the photos
-  // straight, no synthetic content injected. Outro card from
-  // buildBrandOutroClip still gets appended by the stitch functions.
-  const stitchClips = [...normalizedClips];
-  const addressCardIncluded = false;
-
   // Step 3: stitch.
   // ============================================================================
   // CRITICAL DESIGN DECISION: simple concat is the DEFAULT, not the fallback.
@@ -877,61 +660,31 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // ============================================================================
   const stitched = path.join(tempDir, "stitched.mp4");
   options.onProgress?.({ phase: "Stitching final video", progress: 81 });
-
-  // v23 false-stuck fix: stitchWithSimpleConcat / stitchWithCrossfades don't
-  // emit any progress during their work — they're a single ffmpeg call that
-  // takes 60-180s on a 24-clip render. The frontend's 90s heartbeat detector
-  // fired "appears stuck" warnings on every render that legitimately ran past
-  // 90s in stitch. Solve it by emitting a heartbeat ping every 25s that
-  // creeps progress from 81→84% while the stitch ffmpeg call is running.
-  // The ceiling stops short of 86% so the real "Aspect variants" phase has
-  // somewhere to advance to. Always cleared in the finally block.
-  let stitchProgress = 81;
-  const stitchHeartbeat = setInterval(() => {
-    if (stitchProgress < 84) {
-      stitchProgress += 0.4;
-      options.onProgress?.({
-        phase: "Stitching final video",
-        progress: Math.min(84, stitchProgress)
+  const useCrossfades = Boolean(manifest?.runwayConfig?.useCrossfades);
+  if (useCrossfades) {
+    try {
+      await stitchWithCrossfades({
+        clips: normalizedClips,
+        outroClip,
+        output: stitched,
+        crossfadeDurationSec: 0.5
       });
-    }
-  }, 25000);
-
-  try {
-    // v23.2: crossfades hard-forced off. Was an OOM trap that crashed
-    // every render below Pro 4GB and stitched 3-8min on Pro+. Hard cuts
-    // ship reliably and look cleaner. Legacy manifests with
-    // useCrossfades:true now silently get hard cuts. To re-enable
-    // (e.g. after we move to larger workers), restore the line:
-    //   const useCrossfades = Boolean(manifest?.runwayConfig?.useCrossfades);
-    const useCrossfades = false;
-    if (useCrossfades) {
-      try {
-        await stitchWithCrossfades({
-          clips: stitchClips,
-          outroClip,
-          output: stitched,
-          crossfadeDurationSec: 0.5
-        });
-      } catch (err) {
-        console.warn(`[runway] xfade stitch failed (${err.message}). Falling back to simple concat.`);
-        await stitchWithSimpleConcat({
-          clips: stitchClips,
-          outroClip,
-          output: stitched,
-          tempDir
-        });
-      }
-    } else {
+    } catch (err) {
+      console.warn(`[runway] xfade stitch failed (${err.message}). Falling back to simple concat.`);
       await stitchWithSimpleConcat({
-        clips: stitchClips,
+        clips: normalizedClips,
         outroClip,
         output: stitched,
         tempDir
       });
     }
-  } finally {
-    clearInterval(stitchHeartbeat);
+  } else {
+    await stitchWithSimpleConcat({
+      clips: normalizedClips,
+      outroClip,
+      output: stitched,
+      tempDir
+    });
   }
 
   // v20: corner headshot is baked into each clip during normalize above —
@@ -982,11 +735,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   ], { timeoutMs: 30000, label: "runway:thumbnail" });
 
   // Return the normalized clips so the caller can upload them for regen support.
-  // v23: addressCardIncluded tells the caller whether the 3.5s opener
-  // actually made it into the stitch. The caller uses this to decide
-  // whether to apply a 3.5s pre-roll offset on voice/SFX/validation.
-  // It's truthy only if the card was generated AND prepended to stitchClips.
-  return { normalizedClips, addressCardIncluded: false };
+  return { normalizedClips };
 }
 
 // Crossfade-stitch all normalized clips together.
@@ -1505,21 +1254,7 @@ export async function uploadPerSceneClips({ manifest, jobId, normalizedClips, cl
       cameraMotion: original.cameraMotion || "",
       duration: Number(clip.duration || original.duration || 5),
       runwayPrompt: original.runwayPrompt || "",
-      wasFallback: Boolean(original.fallback),
-      // v23: per-scene engine + reason tracking. Surfaced in the UI as
-      // "X of Y scenes used cinematic AI" + per-scene drill-down. Also
-      // powers offline Hallucination Guard tuning.
-      engineUsed: original.engineUsed || (original.fallback ? "ken_burns" : "cinematic_ai"),
-      fallbackReason: original.fallbackReason || null,
-      guardRisk: original.guardRisk ?? null,
-      guardLevel: original.guardLevel || null,
-      runwayTaskId: original.runwayTaskId || null,
-      durationMs: original.durationMs ?? null,
-      // v23.1: which Runway model actually ran this scene. Tracks Gen-4.5
-      // premium tier usage + auto-fallback events. Cost-reconciliation +
-      // "Generated with Gen-4.5 Premium" UI badge will read from here.
-      modelRequested: original.modelRequested || null,
-      modelUsed: original.modelUsed || null
+      wasFallback: Boolean(original.fallback)
     });
   }
   return sceneMeta;
@@ -1905,33 +1640,6 @@ function slug(value) {
   return String(value || "render").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "render";
 }
 
-// POST to the Vercel /api/notify-render-complete endpoint to fire the
-// "your video is ready" email. Worker → Vercel → Resend. Worker doesn't
-// hold Resend keys; Vercel does. Auth uses the same shared secret as the
-// render webhook. Configure NOTIFY_BASE_URL on the worker to point at
-// the Vercel domain (e.g. https://estatemotion.ai).
-async function notifyRenderComplete({ userId, jobId, mp4Url, thumbnailUrl, listingTitle }) {
-  const baseUrl = process.env.NOTIFY_BASE_URL || process.env.APP_URL || "";
-  if (!baseUrl || !userId || !jobId || !mp4Url) return;
-  const secret = process.env.RENDER_WEBHOOK_SECRET || process.env.RENDER_WORKER_SECRET || "";
-  const url = `${baseUrl.replace(/\/$/, "")}/api/notify-render-complete`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
-  try {
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(secret ? { Authorization: `Bearer ${secret}` } : {})
-      },
-      body: JSON.stringify({ userId, jobId, mp4Url, thumbnailUrl, listingTitle }),
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /* =================================================================
    Hallucination Guard — content-aware Runway-vs-Ken-Burns routing
    =================================================================
@@ -2005,19 +1713,6 @@ const ROOM_BASE_RISK = {
 // legacy protectHighRiskRooms boolean.
 function resolveGuardLevel(manifest) {
   const raw = String(manifest?.hallucinationGuard || "").toLowerCase();
-
-  // v23.1: MLS style auto-upgrades to strict guard. Suppressed in legacy
-  // mode so the pre-v23 behavior (MLS users get whatever guard they
-  // explicitly chose) returns. User can still set hallucinationGuard
-  // explicitly in either mode.
-  const styleSlug = String(
-    manifest?.selectedStyle || manifest?.template?.style || ""
-  ).trim().toLowerCase();
-  const isMlsStyle = styleSlug === "mls" || styleSlug === "mls-clean" || styleSlug === "mls clean" || styleSlug.includes("mls");
-  if (isMlsStyle && raw !== "off" && shouldAutoStrictMls()) {
-    return "strict";
-  }
-
   if (["off", "balanced", "strict"].includes(raw)) return raw;
   // Legacy: protectHighRiskRooms true → balanced, false → off.
   // (Default for new clients: "balanced" — see the next line.)

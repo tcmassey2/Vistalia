@@ -9,20 +9,10 @@ export function getRenderDimensions(format = "vertical") {
   return { width: 1080, height: 1920 };
 }
 
-// v23: address opener card duration (3.5s by default). Set
-// manifest.disableAddressCard to skip it.
-const ADDRESS_CARD_SECONDS = 3.5;
-
-function addressCardFramesForManifest(manifest = {}) {
-  if (manifest?.disableAddressCard) return 0;
-  return secondsToFrames(ADDRESS_CARD_SECONDS);
-}
-
 export function getRenderDurationFrames(manifest = {}) {
   const stylePack = stylePackForManifest(manifest);
   const sceneFrames = scenesFromManifest(manifest).reduce((sum, scene) => sum + secondsToFrames(scene.duration || 3), 0);
-  const addressCardFrames = addressCardFramesForManifest(manifest);
-  return Math.max(300, addressCardFrames + sceneFrames + secondsToFrames(stylePack.outroDuration));
+  return Math.max(300, sceneFrames + secondsToFrames(stylePack.outroDuration));
 }
 
 export function EstateMotionRender({ manifest = {}, format = "vertical" }) {
@@ -34,30 +24,11 @@ export function EstateMotionRender({ manifest = {}, format = "vertical" }) {
   const music = manifest.music || manifest.creative?.musicTrack || {};
   const dimensions = getRenderDimensions(format);
   const endCardFrames = secondsToFrames(stylePack.outroDuration);
-  const addressCardFrames = addressCardFramesForManifest(manifest);
-  // v23: hero photo is the first photo scene in the manifest. We use it as
-  // the slow-zoom backdrop for the address opener.
-  const heroPhoto =
-    scenes.find((s) => String(s.type || "photo").toLowerCase() === "photo") || null;
   let cursor = 0;
 
   return (
     <AbsoluteFill style={{ backgroundColor: stylePack.background, fontFamily: "Inter, Arial, sans-serif" }}>
       {music.url ? <Audio src={music.url} volume={stylePack.musicVolume} /> : null}
-      {addressCardFrames > 0 && heroPhoto ? (
-        <Sequence from={cursor} durationInFrames={addressCardFrames + stylePack.overlapFrames}>
-          <AddressOpenerCard
-            project={project}
-            brandKit={brandKit}
-            heroScene={heroPhoto}
-            duration={addressCardFrames}
-            accentColor={template.accentColor || brandKit.accentColor || "#C7A76C"}
-            stylePack={stylePack}
-            dimensions={dimensions}
-          />
-        </Sequence>
-      ) : null}
-      {(() => { cursor += addressCardFrames; return null; })()}
       {scenes.map((scene, index) => {
         const duration = secondsToFrames(scene.duration || stylePack.defaultSceneDuration);
         const from = cursor;
@@ -99,196 +70,6 @@ export function EstateMotionRender({ manifest = {}, format = "vertical" }) {
         />
       </Sequence>
       {!music.url && stylePack.showMusicFallback ? <MusicFallbackBadge music={music} stylePack={stylePack} /> : null}
-    </AbsoluteFill>
-  );
-}
-
-/* ============================================================
-   AddressOpenerCard — v23 animated address/price reveal
-   ============================================================
-   First-impression card that runs for ~3.5s before scene 1. Layers:
-     1. Hero photo as background with slow Ken Burns zoom (1.00 → 1.08)
-     2. Dark vignette + bottom-to-top gradient for legibility
-     3. Animated typography:
-        - "JUST LISTED" / style label in accent color, fades in 0-12f
-        - Property address, character-by-character reveal 8-50f
-        - Price in accent color, fades + rises in 40-66f
-        - Beds/baths/sqft inline row, fades in 60-78f
-   The card is consciously simple — every render gets it, so it has to
-   feel TIMELESS, not trendy.
-*/
-function AddressOpenerCard({ project, brandKit, heroScene, duration, accentColor, stylePack, dimensions }) {
-  const frame = useCurrentFrame();
-  const heroImage = heroScene?.durableUrl || heroScene?.durable_url || heroScene?.imageUrl || heroScene?.uri || "";
-
-  // Slow zoom on the hero. Goes from 1.00 → 1.08 over the full duration
-  // for a cinematic "settling in" feel. Stops short of obvious zoom.
-  const heroScale = interpolate(frame, [0, duration], [1.0, 1.08], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp"
-  });
-  // Subtle drift so the zoom doesn't feel mechanical.
-  const heroDriftX = interpolate(frame, [0, duration], [0, 14], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-
-  // Label animation — fade + slight rise.
-  const labelOpacity = interpolate(frame, [0, 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const labelY = interpolate(frame, [0, 18], [22, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-
-  // Address type-on. We reveal the address character-by-character between
-  // frames 8 and 50 (≈1.4s). Pacing feels brisk but not jittery.
-  const address = String(project.address || project.title || "Featured listing");
-  const addressRevealEnd = Math.min(50, duration - 24);
-  const charsRevealed = Math.floor(
-    interpolate(frame, [8, addressRevealEnd], [0, address.length], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp"
-    })
-  );
-  const visibleAddress = address.slice(0, charsRevealed);
-  const cursorOn = (frame % 24) < 12 && charsRevealed < address.length;
-
-  // Price pop-in after address completes.
-  const priceStart = addressRevealEnd + 4;
-  const priceOpacity = interpolate(frame, [priceStart, priceStart + 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const priceY = interpolate(frame, [priceStart, priceStart + 18], [16, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-
-  // Stats row last.
-  const statsStart = priceStart + 18;
-  const statsOpacity = interpolate(frame, [statsStart, statsStart + 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-
-  // Card-wide exit fade at the very end so transition into scene 1 is smooth.
-  const cardExit = interpolate(frame, [duration - 10, duration], [1, 0.92], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-
-  const facts = [
-    project.beds ? `${project.beds} BD` : "",
-    project.baths ? `${project.baths} BA` : "",
-    project.squareFeet ? `${project.squareFeet} SQFT` : ""
-  ].filter(Boolean);
-
-  const isVertical = dimensions.height > dimensions.width;
-  const addressFont = isVertical
-    ? Math.min(96, Math.max(60, Math.round(1080 / Math.max(8, address.length / 1.6))))
-    : 78;
-
-  return (
-    <AbsoluteFill style={{ background: stylePack.background, color: "white", overflow: "hidden", opacity: cardExit }}>
-      {/* Hero photo backdrop, slow zoom + tiny drift */}
-      {heroImage ? (
-        <AbsoluteFill style={{ overflow: "hidden" }}>
-          <div style={{
-            position: "absolute",
-            inset: 0,
-            transform: `scale(${heroScale}) translateX(${heroDriftX}px)`,
-            transformOrigin: "55% 50%",
-            transition: "none"
-          }}>
-            <Img src={heroImage} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-          </div>
-        </AbsoluteFill>
-      ) : null}
-
-      {/* Dark gradient overlay for text legibility */}
-      <AbsoluteFill style={{
-        background: `linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.20) 38%, rgba(0,0,0,0.10) 60%, rgba(0,0,0,0.78) 100%)`
-      }} />
-
-      {/* Subtle accent vignette on left edge — gives the typography a stage */}
-      <AbsoluteFill style={{
-        background: `radial-gradient(circle at 8% 75%, ${accentColor}33, transparent 38%)`
-      }} />
-
-      {/* Top label — "JUST LISTED" or style-pack default */}
-      <div style={{
-        position: "absolute",
-        left: isVertical ? 64 : 96,
-        top: isVertical ? 168 : 96,
-        right: isVertical ? 64 : 96,
-        opacity: labelOpacity,
-        transform: `translateY(${labelY}px)`
-      }}>
-        <span style={{
-          display: "inline-block",
-          color: accentColor,
-          fontSize: 22,
-          fontWeight: 900,
-          letterSpacing: 6,
-          textTransform: "uppercase",
-          padding: "10px 20px",
-          border: `1.5px solid ${accentColor}`,
-          background: "rgba(0,0,0,0.32)",
-          backdropFilter: "blur(2px)"
-        }}>
-          {project.justListed ? "Just Listed" : (stylePack.label || "Now Showing")}
-        </span>
-      </div>
-
-      {/* Address + price + stats — bottom-anchored stack */}
-      <div style={{
-        position: "absolute",
-        left: isVertical ? 64 : 96,
-        right: isVertical ? 64 : 96,
-        bottom: isVertical ? 220 : 132
-      }}>
-        {/* Address with type-on reveal */}
-        <h1 style={{
-          fontFamily: stylePack.headlineFont,
-          fontSize: addressFont,
-          lineHeight: 1.0,
-          margin: 0,
-          fontWeight: 900,
-          letterSpacing: stylePack.headlineFont?.includes("serif") ? "-0.01em" : "-0.02em",
-          textShadow: "0 4px 22px rgba(0,0,0,0.55)",
-          maxWidth: isVertical ? 940 : 1380
-        }}>
-          {visibleAddress}
-          {cursorOn ? <span style={{ color: accentColor, opacity: 0.9 }}>|</span> : null}
-        </h1>
-
-        {/* Price — fades in after address completes */}
-        {project.price ? (
-          <div style={{
-            marginTop: 22,
-            opacity: priceOpacity,
-            transform: `translateY(${priceY}px)`
-          }}>
-            <span style={{
-              fontFamily: stylePack.headlineFont,
-              fontSize: Math.round(addressFont * 0.62),
-              fontWeight: 900,
-              color: accentColor,
-              letterSpacing: "-0.01em",
-              textShadow: "0 3px 18px rgba(0,0,0,0.55)"
-            }}>
-              {project.price}
-            </span>
-          </div>
-        ) : null}
-
-        {/* Stats row — beds/baths/sqft */}
-        {facts.length ? (
-          <div style={{
-            marginTop: 18,
-            display: "flex",
-            gap: 22,
-            opacity: statsOpacity,
-            flexWrap: "wrap"
-          }}>
-            {facts.map((fact) => (
-              <span key={fact} style={{
-                fontSize: 24,
-                fontWeight: 800,
-                letterSpacing: 3,
-                textTransform: "uppercase",
-                padding: "10px 16px",
-                background: "rgba(255,255,255,0.10)",
-                border: "1px solid rgba(255,255,255,0.18)",
-                color: "white",
-                backdropFilter: "blur(4px)"
-              }}>{fact}</span>
-            ))}
-          </div>
-        ) : null}
-      </div>
     </AbsoluteFill>
   );
 }

@@ -44,33 +44,7 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     narration_applied: Boolean(narration?.applied),
     narration_voice_id: narration?.voiceId || null,
     status: "completed",
-    // v23: prompt version stamp — propagated from create-edit-plan.js's
-    // PROMPT_VERSION constant onto the manifest. Lets us correlate quality
-    // complaints with specific prompt revisions when tuning later.
-    prompt_version: manifest?.promptVersion || manifest?.editPlan?.promptVersion || null,
-    // v23: render config snapshot — captures the toggle state used for this
-    // render so we can replay or diff against future renders. JSONB column.
-    render_config: {
-      selectedStyle: manifest?.selectedStyle || null,
-      complianceMode: Boolean(manifest?.complianceMode),
-      hallucinationGuard: manifest?.hallucinationGuard || null,
-      protectHighRiskRooms: Boolean(manifest?.protectHighRiskRooms),
-      twilightHero: Boolean(manifest?.creative?.twilightHero),
-      injectBroll: manifest?.creative?.injectBroll !== false,
-      disableAddressCard: Boolean(manifest?.disableAddressCard),
-      userTier: manifest?.userTier || null,
-      // v23.1: which Runway model the tier-based resolver picked. Surfaced
-      // here at the render-level (per-scene model usage lives on the
-      // scenes[] array). Lets analytics queries answer "what % of 4K-tier
-      // renders actually got Gen-4.5 vs fell back to Turbo".
-      runwayModelRequested: manifest?.runwayConfig?.model
-        || (String(manifest?.userTier || "").toLowerCase() === "cinematic_4k"
-            ? (process.env.RUNWAY_PREMIUM_MODEL || "gen4.5")
-            : "gen4_turbo")
-    },
     // Per-scene metadata for regenerate-scene flow. JSONB column.
-    // v23: per-scene now includes engineUsed / fallbackReason / guardRisk
-    // / guardLevel / runwayTaskId / durationMs (added in 11. above).
     scenes: Array.isArray(scenes) ? scenes : []
   };
 
@@ -128,54 +102,6 @@ export async function updateRenderAudit({ jobId, patch }) {
     }
   } catch (err) {
     console.warn("[EstateMotion audit-log] update threw:", err.message || err);
-  }
-}
-
-// Upsert in-flight job state to public.render_jobs so the Vercel side can
-// serve status polls even when this worker instance doesn't have the job
-// in its memory Map (e.g., after a restart, or when horizontally scaled).
-// Fire-and-forget — never blocks the render. Workers that opt in get
-// cleaner status-poll behavior; workers that don't still work via the
-// existing in-memory path + library-recovery fallback.
-const WORKER_INSTANCE_ID = process.env.RENDER_INSTANCE_ID || `worker-${Date.now().toString(36)}`;
-let renderJobsTableMissing = false;
-export async function upsertRenderJob({ jobId, userId, status, phase, progress, engine, mp4Url, thumbnailUrl, error }) {
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return;
-  if (renderJobsTableMissing) return;
-  if (!jobId) return;
-  const row = {
-    job_id: jobId,
-    user_id: userId || null,
-    status: status || "rendering",
-    phase: phase || "Render in progress",
-    progress: Math.max(0, Math.min(100, Math.round(Number(progress) || 0))),
-    engine: engine || null,
-    mp4_url: mp4Url || null,
-    thumbnail_url: thumbnailUrl || null,
-    worker_instance_id: WORKER_INSTANCE_ID,
-    error: error || null
-  };
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/render_jobs?on_conflict=job_id`, {
-      method: "POST",
-      headers: {
-        apikey: SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal,resolution=merge-duplicates"
-      },
-      body: JSON.stringify(row)
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      if (res.status === 404 && /PGRST205|Could not find the table/i.test(text)) {
-        renderJobsTableMissing = true;
-        console.warn(`[render_jobs] table missing — run supabase/migrations/09_render_jobs_queue.sql to enable horizontal-scaling status fallback. Skipping until worker restart.`);
-      }
-      // Other errors are silent — single-instance topology doesn't depend on this.
-    }
-  } catch {
-    // Network blip — drop the update; next progress event will catch up.
   }
 }
 
