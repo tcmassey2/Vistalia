@@ -19,7 +19,8 @@
     "@supabase/supabase-js": "^2.45.4",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "remotion": "^4.0.229"
+    "remotion": "^4.0.229",
+    "sharp": "^0.33.5"
   },
   "optionalDependencies": {
     "gl": "^8.1.6",
