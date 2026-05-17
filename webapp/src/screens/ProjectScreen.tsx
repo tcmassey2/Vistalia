@@ -5,6 +5,8 @@ import { createEditPlan, submitRender, pollRender, lookupProperty, fetchLibrary,
 import { events, track } from "../lib/analytics";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
+import { resolveTrack } from "../lib/music-catalog";
+import MusicSelector from "../components/MusicSelector";
 
 const STYLES: Array<{
   id: StyleId;
@@ -111,6 +113,12 @@ export default function ProjectScreen() {
             </button>
           ))}
         </div>
+      </Section>
+
+      {/* Music selector — each style ships with a default track, but the
+          full library is here for users who want a different feel. */}
+      <Section title="Music" subtitle="Default picks for each style — swap any time.">
+        <MusicSelector />
       </Section>
 
       {/* Render — one canonical pipeline. Pick the engine, pick the
@@ -1918,6 +1926,8 @@ function RenderControls() {
   const branding = useStore((s) => s.branding);
   const organization = useStore((s) => s.organization);
   const selectedStyleId = useStore((s) => s.selectedStyleId);
+  const selectedMusicTrackId = useStore((s) => s.selectedMusicTrackId);
+  const crossfadesEnabled = useStore((s) => s.crossfadesEnabled);
   const renderEngine = useStore((s) => s.renderEngine);
   const renderSafety = useStore((s) => s.renderSafety);
   const renderJob = useStore((s) => s.renderJob);
@@ -2020,14 +2030,18 @@ function RenderControls() {
         introCard: planResult.editPlan.introCard,
         outroCard: planResult.editPlan.outroCard,
         musicMood: planResult.editPlan.musicMood,
+        // Music selector: explicit track filename overrides the style
+        // default in the worker's pickMusicUrl. Resolved here so the
+        // payload always carries a concrete filename instead of the
+        // worker having to re-derive it.
+        musicTrack: resolveTrack(selectedMusicTrackId, selectedStyleId).filename,
         selectedStyle: styleLabel,
         runwayConfig: {
           ...(planResult.editPlan.runwayConfig || {}),
-          // v23.2: crossfades removed from UI. Worker hard-forces false
-          // regardless of manifest value. Hard cuts ship reliably; xfade
-          // was a 3-8 min stitch that OOM-killed renders on anything
-          // below Pro 4GB.
-          useCrossfades: false
+          // Crossfades default on (xfade is the product). Manifest still
+          // honors an explicit useCrossfades:false if MLS regions reject
+          // blended frames.
+          useCrossfades: crossfadesEnabled
         },
         brandKit: branding,
         organizationId: organization?.id || null,

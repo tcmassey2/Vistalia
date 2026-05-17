@@ -57,6 +57,9 @@ interface AppState {
   listing: ListingDetails;
   branding: AgentBranding;
   selectedStyleId: StyleId;
+  // Music selector: null = use the style's default track. Otherwise the id
+  // of a specific track from MUSIC_CATALOG (see lib/music-catalog.ts).
+  selectedMusicTrackId: string | null;
   renderEngine: RenderEngine;
   // Default OFF — narration adds 30-60s to render time and gates on
   // ElevenLabs availability. Agents can opt in once they trust the basics.
@@ -116,6 +119,7 @@ interface AppState {
   updatePhoto: (id: string, patch: Partial<Photo>) => void;
   // AI photo curation removed — photos render in upload (or drag-reordered) order.
   setStyle: (id: StyleId) => void;
+  setMusicTrack: (trackId: string | null) => void;
   setEngine: (e: RenderEngine) => void;
   setNarrationEnabled: (enabled: boolean) => void;
   setCrossfadesEnabled: (enabled: boolean) => void;
@@ -252,6 +256,9 @@ const emptyProject = () => ({
   listing: { ...emptyListing },
   branding: loadStoredBranding(),
   selectedStyleId: "cinematic-luxury" as StyleId,
+  // null = use the style's default track. The MusicSelector flips this to
+  // a specific track id when the user picks something other than the default.
+  selectedMusicTrackId: null as string | null,
   renderEngine: "remotion" as RenderEngine,
   // v23.2: was false (which silently disabled narration on every render
   // since launch — nobody knew to turn it on). Now defaults true. The
@@ -426,7 +433,11 @@ export const useStore = create<AppState>((set, get) => ({
       photos: get().photos.map((p) => (p.id === id ? { ...p, ...patch } : p))
     });
   },
-  setStyle: (id) => set({ selectedStyleId: id, editPlan: null }),
+  setStyle: (id) =>
+    // Changing styles also resets music selection — the new style's default
+    // takes over until the user picks something else.
+    set({ selectedStyleId: id, selectedMusicTrackId: null, editPlan: null }),
+  setMusicTrack: (trackId) => set({ selectedMusicTrackId: trackId }),
   setEngine: (e) => set({ renderEngine: e, editPlan: null }),
   setNarrationEnabled: (enabled) => set({ narrationEnabled: enabled, editPlan: null }),
   setCrossfadesEnabled: (enabled) => set({ crossfadesEnabled: enabled }),

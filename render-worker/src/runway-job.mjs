@@ -1509,9 +1509,27 @@ function ratioForRunway(ratio, model = "gen4_turbo") {
 // /render-worker/music/{slug}.mp3. See render-worker/music/README.md for
 // the curated track recommendations and how to drop them in.
 function pickMusicUrl(manifest) {
-  const mood = String(manifest.musicMood || manifest.selectedStyle || "").toLowerCase();
+  // Resolve absolute paths for the bundled music directory.
+  const musicDir = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "music");
+  const candidate = (name) => [
+    path.join(musicDir, `${name}.mp3`),
+    path.join(musicDir, `${name}.m4a`)
+  ];
+
+  // 0. Music selector: if the manifest explicitly names a track filename
+  //    (set by the webapp's MusicSelector component from the typed catalog),
+  //    use exactly that file. Strip any leading path so a malicious or
+  //    misformed payload can't escape the music dir.
+  const explicitTrack = String(manifest?.musicTrack || "").trim();
+  if (explicitTrack) {
+    const safeName = path.basename(explicitTrack);
+    const explicitPath = path.join(musicDir, safeName);
+    if (existsSync(explicitPath)) return explicitPath;
+    console.warn(`[music] manifest.musicTrack="${safeName}" not found on disk — falling back to style default.`);
+  }
 
   // Determine which style "slot" this mood belongs to.
+  const mood = String(manifest.musicMood || manifest.selectedStyle || "").toLowerCase();
   let slot;
   if (mood.includes("social") || mood.includes("upbeat") || mood.includes("modern") || mood.includes("viral")) {
     slot = "social";
@@ -1522,13 +1540,6 @@ function pickMusicUrl(manifest) {
   } else {
     slot = "luxury"; // default for "Cinematic Luxury" or unrecognized
   }
-
-  // Resolve absolute paths for the bundled music directory.
-  const musicDir = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "music");
-  const candidate = (name) => [
-    path.join(musicDir, `${name}.mp3`),
-    path.join(musicDir, `${name}.m4a`)
-  ];
 
   // 1. Slot-specific local file (luxury/social/mls/investor).
   for (const localPath of candidate(slot)) {

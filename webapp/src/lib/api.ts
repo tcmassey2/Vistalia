@@ -152,6 +152,10 @@ export interface RenderManifest {
   introCard: { headline: string; subline: string };
   outroCard: { headline: string; subline: string };
   musicMood: string;
+  // Music selector: explicit track filename (matches one of the .mp3 files in
+  // render-worker/music/). Optional; worker falls back to style default if
+  // missing or unrecognized.
+  musicTrack?: string;
   selectedStyle: string;
   runwayConfig?: {
     model?: string;
