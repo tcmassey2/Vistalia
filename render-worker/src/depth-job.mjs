@@ -75,11 +75,17 @@ const INPAINT_MIN_GAP_FRACTION = Number(process.env.DEPTH_INPAINT_MIN_GAP || 0.0
    either engine interchangeably.
 */
 export async function renderDepthJob(body, options = {}) {
+  // Pre-flight: fail fast with a SINGLE clear line so the frontend
+  // surfaces it cleanly instead of a wall of text. Most common cause
+  // of 'render failed at 13%' on a fresh depth deploy is missing env.
   if (!ENABLE_FLAG) {
     throw new Error(
-      "Depth engine is not yet enabled on this worker. " +
-      "Set ENABLE_DEPTH_ENGINE=true in the worker env to unlock. " +
-      "(Intentional gate — flip after smoke:gl + smoke:depth pass on the worker.)"
+      "Cinematic Depth isn't enabled on this render worker yet. The worker admin needs to set ENABLE_DEPTH_ENGINE=true and REPLICATE_API_TOKEN. For now, switch the engine to Quick Reel or Cinematic AI."
+    );
+  }
+  if (!process.env.REPLICATE_API_TOKEN) {
+    throw new Error(
+      "Cinematic Depth needs a Replicate API token. The worker admin needs to set REPLICATE_API_TOKEN. For now, switch the engine to Quick Reel or Cinematic AI."
     );
   }
 

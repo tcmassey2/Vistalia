@@ -123,9 +123,13 @@ export function resolveTrack(
 }
 
 // Public URL the browser uses to preview a track. Files live in
-// webapp/public/music/ which Vite serves at /music/<filename>.
+// webapp/public/music/ which Vite emits to <BASE_URL>music/<filename>.
+// The deployed app runs under /app/ (vite.config.ts: base: "/app/"), so a
+// root-absolute "/music/..." misses the file. import.meta.env.BASE_URL
+// resolves to "/app/" in production and "/" in dev, so this works in both.
 export function previewUrlFor(track: MusicTrack): string {
-  return `/music/${track.filename}`;
+  const base = import.meta.env?.BASE_URL ?? "/";
+  return `${base}music/${track.filename}`;
 }
 
 // Tracks grouped by style, in the order they should appear in the picker.
