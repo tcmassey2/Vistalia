@@ -3,6 +3,7 @@ import { useStore } from "../lib/store";
 import { fetchLibrary } from "../lib/api";
 import { buildSamplePhotos, SAMPLE_LISTING, SAMPLE_PROJECT_TITLE } from "../lib/samples";
 import type { LibraryEntry } from "../lib/types";
+import { engineLabel } from "../lib/engine-labels";
 import LibraryDetailModal from "./LibraryDetailModal";
 import PlanStatusBanner from "../components/PlanStatusBanner";
 
@@ -234,7 +235,7 @@ export default function DashboardScreen() {
 function LibraryCard({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => void }) {
   const date = new Date(entry.createdAt);
   const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  const engineLabel = entry.engine === "runway" ? "Cinematic AI" : "Quick Reel";
+  const labelText = engineLabel(entry.engine);
   const heading = entry.listingAddress || entry.projectTitle || "Untitled listing";
 
   return (
@@ -256,7 +257,7 @@ function LibraryCard({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => voi
           </div>
         )}
         <span className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md bg-paper/85 text-[10px] font-mono uppercase tracking-wider text-ink-soft border border-edge">
-          {engineLabel}
+          {labelText}
         </span>
         {entry.narrationApplied && (
           <span className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-gold/90 text-paper text-[10px] font-bold tracking-wider">

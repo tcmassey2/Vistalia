@@ -3,6 +3,7 @@ import { useStore } from "../lib/store";
 import { createOrganization, fetchOrgRoster, fetchOrgAuditLog } from "../lib/api";
 import type { OrgAuditLogEntry, OrgRosterMember } from "../lib/types";
 import { cn } from "../lib/cn";
+import { engineLabel } from "../lib/engine-labels";
 
 /**
  * BrokerageScreen — the brokerage admin surface.
@@ -344,7 +345,7 @@ function AuditRow({ entry }: { entry: OrgAuditLogEntry }) {
           {entry.listingAddress || entry.projectTitle || "Untitled listing"}
         </div>
         <div className="text-xs text-ink-muted truncate">
-          {[entry.agentDisplayName || entry.agentEmail, entry.engine === "runway" ? "Cinematic AI" : "Quick Reel"]
+          {[entry.agentDisplayName || entry.agentEmail, engineLabel(entry.engine)]
             .filter(Boolean)
             .join(" · ")}
           {entry.narrationApplied && <span className="text-gold ml-2">· narrated</span>}

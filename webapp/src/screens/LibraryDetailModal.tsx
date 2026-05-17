@@ -3,6 +3,7 @@ import type { LibraryEntry, LibrarySceneEntry, Photo } from "../lib/types";
 import { useStore } from "../lib/store";
 import { pollRender, submitRegenerateScene, type RegenerateMode, type RenderManifest } from "../lib/api";
 import { cn } from "../lib/cn";
+import { engineLabel, isAiVideoEngine } from "../lib/engine-labels";
 
 /**
  * Library detail modal — shown when an agent clicks a render in their
@@ -53,9 +54,12 @@ export default function LibraryDetailModal({
   const heading = entry.listingAddress || entry.projectTitle || "Untitled listing";
   const date = new Date(entry.createdAt);
   const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  const engineLabel = entry.engine === "runway" ? "Cinematic AI" : "Quick Reel";
+  const labelText = engineLabel(entry.engine);
   const hasScenes = Array.isArray(entry.scenes) && entry.scenes.length > 0;
-  const isRunwayRender = entry.engine === "runway";
+  // Per-scene regen + hallucination guard UI only apply to AI video engines
+  // (runway / depth). Quick Reel renders are deterministic Ken Burns and
+  // don't have a 'regenerate this scene' concept.
+  const isRunwayRender = isAiVideoEngine(entry.engine);
 
   return (
     <div
@@ -70,7 +74,7 @@ export default function LibraryDetailModal({
         <div className="flex items-start justify-between gap-4 px-6 sm:px-8 pt-6 sm:pt-8 pb-4">
           <div className="min-w-0 flex-1">
             <p className="text-[10px] uppercase tracking-widest text-gold font-mono mb-1.5">
-              {engineLabel} · {dateLabel}
+              {labelText} · {dateLabel}
             </p>
             <h2 className="text-2xl sm:text-3xl font-semibold tracking-tighter2 truncate">
               {heading}
@@ -330,7 +334,8 @@ function humanizeReason(reason: string): string {
 function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
   const [open, setOpen] = useState(false);
   const cfg = entry.renderConfig || {};
-  const isRunway = entry.engine === "runway";
+  // Diagnostic panel applies to any AI engine (runway or depth).
+  const isRunway = isAiVideoEngine(entry.engine);
 
   const rows: Array<{ label: string; value: string; ok: boolean | null }> = [
     {

@@ -6,6 +6,7 @@ import { events, track } from "../lib/analytics";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
 import { resolveTrack } from "../lib/music-catalog";
+import { isAiVideoEngine } from "../lib/engine-labels";
 import MusicSelector from "../components/MusicSelector";
 
 const STYLES: Array<{
@@ -1857,20 +1858,28 @@ function blobToBase64(blob: Blob): Promise<string> {
    ============================================================ */
 function EngineToggle({ engine, onChange }: { engine: RenderEngine; onChange: (e: RenderEngine) => void }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       <EngineCard
         active={engine === "remotion"}
         title="Quick Reel"
-        description="Cinematic camera moves on your photos. Fast, reliable, zero AI artifacts."
-        meta="~90 seconds • included with every plan"
+        description="Cinematic Ken Burns motion on your photos. Fast, reliable, zero AI artifacts."
+        meta="~90 seconds • every plan"
         onClick={() => onChange("remotion")}
+      />
+      <EngineCard
+        active={engine === "depth"}
+        title="Cinematic Depth"
+        betaTag
+        description="Real 3D camera moves built from photo depth. Dolly, parallax, orbit — geometric not generated, no shape morphing."
+        meta="3–5 minutes • new engine"
+        onClick={() => onChange("depth")}
       />
       <EngineCard
         active={engine === "runway"}
         title="Cinematic AI"
         proTag
-        description="Real image-to-video motion. Light shifts, parallax depth, the works — powered by Runway."
-        meta="3–5 minutes • Cinematic AI plan or higher"
+        description="Image-to-video generation via Runway Gen-4. Light shifts and ambient motion; can morph shapes on busy scenes."
+        meta="3–5 minutes • Cinematic AI plan"
         onClick={() => onChange("runway")}
       />
     </div>
@@ -1883,6 +1892,7 @@ function EngineCard({
   description,
   meta,
   proTag,
+  betaTag,
   onClick
 }: {
   active: boolean;
@@ -1890,6 +1900,7 @@ function EngineCard({
   description: string;
   meta: string;
   proTag?: boolean;
+  betaTag?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -1907,6 +1918,11 @@ function EngineCard({
         {proTag && (
           <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold text-paper">
             PRO
+          </span>
+        )}
+        {betaTag && (
+          <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded border border-gold text-gold">
+            BETA
           </span>
         )}
       </div>
@@ -2635,9 +2651,14 @@ function ActiveRenderPanel() {
 
   if (!renderJob) return null;
 
-  const isRunway = renderJob.engine === "runway";
-  const engineLabel = isRunway ? "Cinematic AI" : "Quick Reel";
-  const engineSubLabel = isRunway ? "Runway · 4K · ~3 min" : "Cinematic motion · ~90 sec";
+  const isRunway = isAiVideoEngine(renderJob.engine);
+  const isDepth = String(renderJob.engine || "").toLowerCase() === "depth";
+  const engineLabel = isDepth ? "Cinematic Depth" : (renderJob.engine === "runway" ? "Cinematic AI" : "Quick Reel");
+  const engineSubLabel = isDepth
+    ? "Depth parallax · ~3 min"
+    : renderJob.engine === "runway"
+      ? "Runway · 4K · ~3 min"
+      : "Cinematic motion · ~90 sec";
 
   // ETA — keep it stable. Recompute once a second, not on every frame.
   // Read displayed via ref so it doesn't trigger re-renders.
@@ -2745,7 +2766,7 @@ function ActiveRenderPanel() {
 function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: number } | null): { title: string; detail: string } {
   if (!renderJob) return { title: "Preparing", detail: "" };
   const raw = String(renderJob.phase || "").toLowerCase();
-  const isRunway = renderJob.engine === "runway";
+  const isRunway = isAiVideoEngine(renderJob.engine);
 
   if (raw.includes("direct") || raw.includes("tour")) {
     return {
@@ -2768,7 +2789,7 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
   if (raw.includes("submit") && raw.includes("clip")) {
     return {
       title: "Composing AI motion for every photo",
-      detail: "Runway is generating cinematic camera moves for each scene in parallel."
+      detail: "Generating cinematic camera moves for each scene in parallel."
     };
   }
   // "Rendering scene N/M"
@@ -2859,7 +2880,7 @@ function useStableEta({ startedAt, isRunway }: { startedAt: number; isRunway: bo
 }
 
 function PhaseChips({ renderJob, barFillRef }: { renderJob: { engine?: string; progress?: number; status?: string }; barFillRef: RefObject<HTMLDivElement> }) {
-  const isRunway = renderJob.engine === "runway";
+  const isRunway = isAiVideoEngine(renderJob.engine);
   const stages = isRunway
     ? [
         { label: "Direct", endsAt: 14 },
