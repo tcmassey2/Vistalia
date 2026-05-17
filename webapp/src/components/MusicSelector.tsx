@@ -1,16 +1,13 @@
 // EstateMotion — MusicSelector
 //
-// Shows the bundled music library. Each track is a row with label, vibe,
-// duration, a preview play/pause button, and a "Use this track" affordance.
-// The currently selected track (or the style default when no manual pick
-// is set) is visually marked.
+// Per-row preview button + a single bottom-of-the-list <audio controls>
+// element that always reflects the most recently-previewed track. The
+// inline native player is the bulletproof fallback: even if our custom
+// play button hits a CORS/autoplay edge case, the user can scrub and
+// hit play on the native widget.
 //
-// Why no API endpoint:
-//   The catalog is bundled into the webapp at build time (see
-//   lib/music-catalog.ts). Audio files live in webapp/public/music/
-//   so the browser plays them with <audio src="/music/<filename>"/>.
-//   The worker reads its own copy from render-worker/music/ and uses
-//   manifest.musicTrack to pick which file to mix.
+// Source of truth for the catalog is webapp/src/lib/music-catalog.ts.
+// MP3 files live in webapp/public/music/ (served at /music/<filename>).
 
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
@@ -42,59 +39,64 @@ export default function MusicSelector() {
   const selectedMusicTrackId = useStore((s) => s.selectedMusicTrackId);
   const setMusicTrack = useStore((s) => s.setMusicTrack);
 
-  // The "effective" track currently in use — explicit pick if present,
-  // otherwise the style default.
   const styleDefault = defaultTrackForStyle(selectedStyleId);
   const effectiveTrackId = selectedMusicTrackId ?? styleDefault.id;
+  const effectiveTrack =
+    MUSIC_CATALOG.find((t) => t.id === effectiveTrackId) ?? styleDefault;
 
-  // Audio preview: only one track plays at a time. We hold a single
-  // <audio> instance and swap its src.
+  // The track currently loaded into the inline preview player. Starts as
+  // the effective track so the player has something to play if the user
+  // just hits the native play button.
+  const [previewTrack, setPreviewTrack] = useState<MusicTrack>(effectiveTrack);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [previewingId, setPreviewingId] = useState<string | null>(null);
 
+  // Keep the inline player in sync with the effective track. If the user
+  // changes the selected track via the Use button, the preview snaps to
+  // that track (paused). This is the expected UX — pick a track, hear it.
   useEffect(() => {
-    // Construct the audio element once, lazily — avoids SSR issues.
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-      audioRef.current.preload = "none";
-      audioRef.current.addEventListener("ended", () => setPreviewingId(null));
-      audioRef.current.addEventListener("pause", () => {
-        // Browser pause (tab change, etc.) — drop the preview marker.
-        if (audioRef.current?.paused) setPreviewingId((id) => id);
-      });
+    setPreviewTrack(effectiveTrack);
+    setPreviewError(null);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      setIsPlaying(false);
     }
-    // Tear down on unmount: stop playback if the screen unmounts so audio
-    // doesn't leak between routes.
-    return () => {
-      audioRef.current?.pause();
-    };
-  }, []);
+  }, [effectiveTrack.id]);
 
-  const handlePreview = (track: MusicTrack) => {
+  const handleRowPreview = (track: MusicTrack) => {
     const el = audioRef.current;
     if (!el) return;
-    if (previewingId === track.id) {
+    setPreviewError(null);
+    // If this row's track is already playing, pause it. Otherwise switch
+    // the player to this track and play.
+    if (previewTrack.id === track.id && isPlaying) {
       el.pause();
-      setPreviewingId(null);
       return;
     }
+    setPreviewTrack(track);
+    // Setting src triggers a load. We need to wait a tick before play.
+    // Doing it inline (not in useEffect) keeps the play() inside the
+    // user-gesture context that browsers require for autoplay.
     el.src = previewUrlFor(track);
     el.currentTime = 0;
-    el.play().then(() => setPreviewingId(track.id)).catch(() => {
-      // Autoplay blocked or file missing — surface nothing; user can retry.
-      setPreviewingId(null);
-    });
+    el.load();
+    const playPromise = el.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      playPromise.catch((err) => {
+        console.error("[music-preview] play() rejected", err, "for", previewUrlFor(track));
+        setPreviewError(
+          `Preview blocked or file missing. Use the player controls below to retry.`
+        );
+      });
+    }
   };
 
   const handleSelect = (track: MusicTrack) => {
-    // If the user picks the current style's default, we store null so the
-    // selection automatically follows future style changes. Picking any
-    // other track stores the explicit id.
     setMusicTrack(track.id === styleDefault.id ? null : track.id);
   };
 
   const groups = tracksGroupedByStyle();
-  const effectiveTrack = MUSIC_CATALOG.find((t) => t.id === effectiveTrackId) ?? styleDefault;
 
   return (
     <div className="flex flex-col gap-4">
@@ -103,8 +105,8 @@ export default function MusicSelector() {
           <h3 className="text-sm font-semibold tracking-tightish">Music</h3>
           <p className="text-xs text-ink-muted mt-0.5">
             {selectedMusicTrackId
-              ? <>Playing <span className="text-ink">{effectiveTrack.label}</span> — picked from the library.</>
-              : <>Using <span className="text-ink">{styleDefault.label}</span> — the default for the {STYLE_LABELS[selectedStyleId]} style.</>}
+              ? <>Picked from library: <span className="text-ink">{effectiveTrack.label}</span></>
+              : <>Style default: <span className="text-ink">{styleDefault.label}</span> (for {STYLE_LABELS[selectedStyleId]})</>}
           </p>
         </div>
         {selectedMusicTrackId && (
@@ -127,7 +129,7 @@ export default function MusicSelector() {
             <ul className="divide-y divide-edge/40">
               {tracks.map((track) => {
                 const isEffective = effectiveTrackId === track.id;
-                const isPreviewing = previewingId === track.id;
+                const isPreviewing = previewTrack.id === track.id && isPlaying;
                 return (
                   <li
                     key={track.id}
@@ -139,7 +141,7 @@ export default function MusicSelector() {
                     <button
                       type="button"
                       aria-label={isPreviewing ? "Pause preview" : "Play preview"}
-                      onClick={() => handlePreview(track)}
+                      onClick={() => handleRowPreview(track)}
                       className={cn(
                         "h-8 w-8 shrink-0 rounded-full border flex items-center justify-center transition-colors",
                         isPreviewing
@@ -148,10 +150,8 @@ export default function MusicSelector() {
                       )}
                     >
                       {isPreviewing ? (
-                        // pause glyph
                         <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="2" y="1" width="2" height="8"/><rect x="6" y="1" width="2" height="8"/></svg>
                       ) : (
-                        // play glyph
                         <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
                       )}
                     </button>
@@ -188,6 +188,43 @@ export default function MusicSelector() {
             </ul>
           </div>
         ))}
+      </div>
+
+      {/* Bulletproof preview player. Always present in the DOM so the
+          browser owns the audio state and the user has reliable controls
+          if our custom button hits any edge case. The src is bound to
+          whatever track was most recently previewed (or the effective
+          track on first render). */}
+      <div className="rounded-lg border border-edge bg-surface-input/30 px-3 py-3">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="text-xs text-ink-muted truncate">
+            Preview: <span className="text-ink font-medium">{previewTrack.label}</span>
+          </div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-ink-muted font-mono shrink-0">
+            {formatDuration(previewTrack.durationSec)}
+          </div>
+        </div>
+        <audio
+          ref={audioRef}
+          controls
+          preload="metadata"
+          src={previewUrlFor(previewTrack)}
+          onPlay={() => { setIsPlaying(true); setPreviewError(null); }}
+          onPause={() => setIsPlaying(false)}
+          onEnded={() => setIsPlaying(false)}
+          onError={() => {
+            setIsPlaying(false);
+            const url = previewUrlFor(previewTrack);
+            console.error("[music-preview] <audio> error for", url);
+            setPreviewError(`Couldn't load ${url}. Check that the file deployed to /music/.`);
+          }}
+          className="w-full"
+        />
+        {previewError && (
+          <div className="mt-2 text-[11px] text-red-300">
+            {previewError}
+          </div>
+        )}
       </div>
     </div>
   );

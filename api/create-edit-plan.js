@@ -30,19 +30,33 @@ const RENDER_ENGINES = ["remotion", "runway"];
 // to. Every template ENDS with a hallucination-blocking constraint clause —
 // real estate is one of the few AI-video use cases where any element morphing
 // or imagined feature is a legal liability, not just an aesthetic problem.
+// Motion prompts — REWRITTEN v23.3 for stronger camera moves.
+//
+// The previous version asked for "subtle 6-8% zoom" and "slow deliberate"
+// motion. Runway Gen-4 read those modifiers as "barely move" and produced
+// micro-drift + low-frequency shake instead of a real camera move (the
+// model's prior wants motion; if you ask for almost-none, it adds noise).
+//
+// Real-estate cinematographers don't write "subtle" — they write camera
+// commands: dolly forward, track right, crane up, orbit clockwise. Gen-4
+// responds dramatically better to that vocabulary AND to an explicit
+// motion intensity ("strong 15% push", "confident dolly") versus hedging.
+//
+// The fidelity clause downstream still prevents object hallucination, so
+// asking for real motion here doesn't open the floodgates on morphing.
 const RUNWAY_MOTION_PROMPTS = {
   push_in:
-    "Slow cinematic camera push toward the focal subject. Subtle 6-8% zoom. Smooth, deliberate motion.",
+    "Smooth dolly push forward into the room, 15% zoom over the shot. Confident architectural-tour move toward the focal subject. Locked tripod, no handheld jitter.",
   pull_out:
-    "Slow cinematic camera pull-back revealing the full space. Subtle 6-8% reverse zoom. Smooth motion.",
+    "Smooth dolly pull-back revealing the full space, 15% reverse zoom. Confident architectural-tour move opening from the focal subject to the whole room. Locked tripod, no handheld jitter.",
   lateral_pan:
-    "Smooth horizontal camera pan from left to right across the space. No vertical drift. Steady pace.",
+    "Smooth horizontal tracking shot left to right across the space, steady gimbal pace. Camera physically translates, not just rotates. No vertical drift, no handheld jitter.",
   vertical_reveal:
-    "Slow vertical camera tilt from lower foreground upward, revealing the full space. Cinematic reveal.",
+    "Smooth vertical tilt-up from lower foreground revealing the full height of the space. Confident cinematic reveal. Locked tripod, no handheld jitter.",
   parallax_zoom:
-    "Cinematic parallax push with subtle depth separation between foreground and background elements. 6-8% zoom. Soft.",
+    "Smooth dolly push with clear parallax separation between foreground and background, 15% zoom. Architectural-tour move with depth. Locked tripod, no handheld jitter.",
   detail_sweep:
-    "Slow detail-focused camera move across an architectural feature. Tight framing. Soft, deliberate motion."
+    "Smooth slow tracking move across the architectural feature, 10% lateral travel. Tight framing on the detail. Locked tripod, no handheld jitter."
 };
 
 // Universal anti-hallucination constraint appended to every Runway prompt.
@@ -60,12 +74,15 @@ const RUNWAY_MOTION_PROMPTS = {
 //                      minor for individual clause tweaks.
 //
 // Changelog (last 5 versions):
+//   v23.3 — Stronger motion prompts (dolly/track/crane vocab + 15% zoom).
+//           Was producing shake because "subtle slow deliberate" hedging
+//           pushed Gen-4 below its motion floor.
 //   v23.2 — Universal NO-NEW-FANS clause + living-room + outdoor constraints
 //   v23.1 — MLS auto-strict guard, softer LUTs, model-driven photo tour order
 //   v23.0 — Prompt versioning + B-roll integration + voice catalog
 //   v22.0 — Hallucination Guard balanced/strict tiers + kitchen lockout
 //   v21.0 — Per-room constraints expanded (named appliances)
-export const PROMPT_VERSION = "v23.2";
+export const PROMPT_VERSION = "v23.3";
 
 // v23.2 — Universal anti-hallucination clause now leads with the most
 // common failure mode (phantom ceiling fans) AND covers ALL rooms, not
@@ -75,7 +92,7 @@ export const PROMPT_VERSION = "v23.2";
 // per-room callouts, because the model has been seen to invent fans in
 // scenes our heuristic didn't tag with a fan-bearing roomType.
 const RUNWAY_CONSTRAINT_CLAUSE =
-  "STRICT FIDELITY: photorealistic, only the described camera motion. " +
+  "STRICT FIDELITY: photorealistic, exactly the camera move described above with natural cinematic motion. " +
   "NO NEW CEILING FANS anywhere — if no fan visible in the source, do not add one. NO fan blades. NO new fixtures, no new lights, no new vents on any ceiling. " +
   "Every appliance, door, wall, window, fixture keeps its EXACT shape, design, count, and position. " +
   "Fridges keep their doors. Walls stay put — no new partitions or panels. " +
