@@ -406,14 +406,13 @@ function lerp(a, b, t) {
 }
 
 /* ============================================================
-   Camera path presets — first cut, matches the existing scene.cameraMotion
+   Camera path presets — matches the existing scene.cameraMotion
    vocabulary so depth-job.mjs can drop these in without changing the
-   edit plan. Strength values are deliberately moderate; v1 prioritizes
-   "no shake, no morphing" over "biggest move possible."
+   edit plan. Base values are moderate; per-room overrides + per-style
+   intensity scaling let us push more aggressive moves selectively.
    ============================================================ */
 
 export const CAMERA_PRESETS = {
-  // Slow dolly forward — camera approaches the focal subject.
   push_in: {
     description: "Dolly push forward, 12% travel toward the scene",
     keyframes: [
@@ -421,7 +420,6 @@ export const CAMERA_PRESETS = {
       { t: 1,   position: [0, 0,  0.78], target: [0, 0, 0], fov: 50 }
     ]
   },
-  // Reverse of push_in.
   pull_out: {
     description: "Dolly pull back, 12% travel away from the scene",
     keyframes: [
@@ -429,8 +427,6 @@ export const CAMERA_PRESETS = {
       { t: 1,   position: [0, 0,  1.00], target: [0, 0, 0], fov: 50 }
     ]
   },
-  // Lateral camera dolly with parallax separation (foreground shifts
-  // faster than background — that's the whole point of depth-based).
   lateral_pan: {
     description: "Lateral dolly left-to-right with parallax",
     keyframes: [
@@ -438,7 +434,6 @@ export const CAMERA_PRESETS = {
       { t: 1,   position: [ 0.18, 0, 0.95], target: [ 0.18, 0, 0], fov: 50 }
     ]
   },
-  // Slight tilt-up reveal — camera target rises while position stays.
   vertical_reveal: {
     description: "Tilt-up reveal, camera target rises from lower frame",
     keyframes: [
@@ -446,7 +441,6 @@ export const CAMERA_PRESETS = {
       { t: 1,   position: [0,  0.00, 0.95], target: [0,  0.20, 0], fov: 50 }
     ]
   },
-  // Push with parallax emphasis — slightly off-axis approach.
   parallax_zoom: {
     description: "Off-axis dolly push for visible parallax",
     keyframes: [
@@ -454,18 +448,156 @@ export const CAMERA_PRESETS = {
       { t: 1,   position: [ 0.08, 0, 0.80], target: [0, 0, 0], fov: 50 }
     ]
   },
-  // Slow lateral move across a detail — tight FOV to stay on the feature.
   detail_sweep: {
     description: "Lateral move across an architectural detail, narrow FOV",
     keyframes: [
       { t: 0,   position: [-0.10, 0, 0.85], target: [-0.10, 0, 0], fov: 42 },
       { t: 1,   position: [ 0.10, 0, 0.85], target: [ 0.10, 0, 0], fov: 42 }
     ]
+  },
+  // Orbit — slight arc around the focal subject. Only safe with strong
+  // foreground depth (set ROOM_PROFILES.<room>.preferredMotion to opt in).
+  orbit: {
+    description: "Slight orbit around focal subject (~10°)",
+    keyframes: [
+      { t: 0,   position: [-0.20, 0, 0.95], target: [0, 0, 0], fov: 50 },
+      { t: 1,   position: [ 0.20, 0, 0.95], target: [0, 0, 0], fov: 50 }
+    ]
   }
 };
 
-// Resolve a scene's cameraMotion string to a keyframe array.
-export function cameraPathFor(motion) {
-  const preset = CAMERA_PRESETS[motion] ?? CAMERA_PRESETS.push_in;
-  return preset.keyframes;
+/* ============================================================
+   Per-room camera profiles (Phase 3)
+   ============================================================
+   Each room type picks a default cameraMotion best-suited to what
+   typically anchors the shot:
+     - kitchen        → slow push toward the island/counter
+     - primary bdrm   → wide lateral pan revealing scale
+     - exterior       → slow pull-back so the whole house comes in
+     - bathroom       → tight detail sweep across fixtures
+     - living         → lateral pan with parallax
+     - outdoor/pool   → vertical reveal (sky → landscape)
+     - amenity        → push-in to highlight the feature
+     - detail         → detail sweep with narrow FOV
+
+   The edit plan still chooses the cameraMotion per scene; this only
+   kicks in when the manifest doesn't specify one (or specifies a
+   generic 'push_in' that the room profile can refine).
+*/
+export const ROOM_PROFILES = {
+  exterior:  { preferredMotion: "pull_out",        intensityMultiplier: 1.10 },
+  kitchen:   { preferredMotion: "push_in",         intensityMultiplier: 1.00 },
+  living:    { preferredMotion: "lateral_pan",     intensityMultiplier: 1.00 },
+  bedroom:   { preferredMotion: "lateral_pan",     intensityMultiplier: 0.95 },
+  bathroom:  { preferredMotion: "detail_sweep",    intensityMultiplier: 0.85 },
+  outdoor:   { preferredMotion: "vertical_reveal", intensityMultiplier: 1.05 },
+  amenity:   { preferredMotion: "push_in",         intensityMultiplier: 1.00 },
+  detail:    { preferredMotion: "detail_sweep",    intensityMultiplier: 0.90 }
+};
+
+/* ============================================================
+   Per-style intensity scaling (Phase 3)
+   ============================================================
+   Multiplied with the room intensityMultiplier to scale camera
+   translation magnitude. Style picker drives the personality:
+     - Luxury  → slower, more restrained (0.85)
+     - Social  → bolder, faster, bigger moves (1.20)
+     - MLS     → minimal motion (0.65) — compliance-safe
+     - Investor → neutral (1.00) — moderate professional
+*/
+export const STYLE_INTENSITY = {
+  "cinematic-luxury": 0.85,
+  "modern-social":    1.20,
+  "mls-clean":        0.65,
+  "investor-tour":    1.00
+};
+
+/* ============================================================
+   Resolve a scene's cameraMotion → keyframes, applying per-room
+   preference + per-style intensity scaling.
+   ============================================================
+   The keyframes returned are scaled COPIES so caller mutations
+   never leak back into CAMERA_PRESETS.
+*/
+/* ============================================================
+   Flat-depth detection (Phase 3)
+   ============================================================
+   Some scenes — wide exteriors with no clear foreground, distant
+   landscape shots, top-down photos — produce nearly-flat depth maps.
+   Parallax through a flat scene looks identical to a basic Ken Burns
+   move while still costing depth + WebGL compute (and sometimes
+   inpaint compute too).
+
+   This helper reads the depth PNG, computes the normalized variance
+   of its pixel values, and returns { isFlat, variance } so the
+   orchestrator can choose to skip the depth pipeline entirely and
+   route the scene to Ken Burns instead.
+
+   Threshold tuning:
+     variance < 0.005 → almost certainly flat (sky, single wall, etc.)
+     variance < 0.015 → looks flat — parallax adds little
+     variance > 0.020 → meaningful depth — parallax helps
+
+   The threshold can be overridden via DEPTH_FLAT_THRESHOLD env.
+*/
+export async function isDepthFlat(depthPath, threshold = null) {
+  const t = threshold ?? Number(process.env.DEPTH_FLAT_THRESHOLD || 0.015);
+  // Resize to a small thumbnail for fast variance computation.
+  const { data, info } = await sharp(depthPath)
+    .resize(128, 128, { fit: "fill" })
+    .greyscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const n = info.width * info.height;
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += data[i];
+  const mean = sum / n / 255;
+  let sumSq = 0;
+  for (let i = 0; i < n; i++) {
+    const norm = data[i] / 255;
+    sumSq += (norm - mean) ** 2;
+  }
+  const variance = sumSq / n;
+  return { isFlat: variance < t, variance, threshold: t };
+}
+
+export function cameraPathFor(motion, options = {}) {
+  const { roomType = null, styleId = null, useRoomPreference = true } = options;
+
+  // Resolve which preset to use. If a room profile prefers a different
+  // motion and we're allowed to override, swap.
+  let chosenMotion = motion;
+  if (useRoomPreference && roomType && ROOM_PROFILES[roomType]?.preferredMotion) {
+    // Only override the generic 'push_in' default. If the edit plan
+    // explicitly picked something other than push_in, trust it.
+    if (motion === "push_in") {
+      chosenMotion = ROOM_PROFILES[roomType].preferredMotion;
+    }
+  }
+  const preset = CAMERA_PRESETS[chosenMotion] ?? CAMERA_PRESETS.push_in;
+
+  // Compute intensity multiplier from room + style.
+  const roomMul = (roomType && ROOM_PROFILES[roomType]?.intensityMultiplier) ?? 1.0;
+  const styleMul = (styleId && STYLE_INTENSITY[styleId]) ?? 1.0;
+  const intensity = roomMul * styleMul;
+
+  // Scale keyframe positions/targets around the unit camera axis. The
+  // camera default position is at z≈1 looking at origin; we scale the
+  // DELTA from that center so smaller intensity = less travel, larger
+  // = more.
+  const baseZ = 1.0;
+  const baseTarget = [0, 0, 0];
+  return preset.keyframes.map((kf) => ({
+    ...kf,
+    position: [
+      kf.position[0] * intensity,
+      kf.position[1] * intensity,
+      baseZ + (kf.position[2] - baseZ) * intensity
+    ],
+    target: [
+      baseTarget[0] + (kf.target[0] - baseTarget[0]) * intensity,
+      baseTarget[1] + (kf.target[1] - baseTarget[1]) * intensity,
+      baseTarget[2] + (kf.target[2] - baseTarget[2]) * intensity
+    ]
+  }));
 }

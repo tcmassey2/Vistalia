@@ -40,7 +40,8 @@ import os from "node:os";
 import path from "node:path";
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { renderDepthClip, stitchFramesToMp4, cameraPathFor } from "./depth-renderer.mjs";
+import { renderDepthClip, stitchFramesToMp4, cameraPathFor, isDepthFlat } from "./depth-renderer.mjs";
+import { generateKenBurnsFallback } from "./runway-job.mjs";
 import { estimateDepth, inpaintImage, fileToDataUrl } from "./replicate-client.mjs";
 import sharp from "sharp";
 import {
@@ -313,8 +314,41 @@ async function renderOneScene({ scene, manifest, tempDir, dims, frameRate, scene
   const depthPath = path.join(tempDir, `s${padIdx}-depth.png`);
   await downloadTo(depthUrl, depthPath);
 
+  // ----------------------------------------------------------------
+  // Flat-depth check: if the photo has near-uniform depth (wide exterior
+  // with no foreground, distant landscape, etc.) parallax adds nothing
+  // and we just burn compute. Auto-route those scenes to Ken Burns.
+  // ----------------------------------------------------------------
+  const flatness = await isDepthFlat(depthPath);
+  if (flatness.isFlat) {
+    console.info(
+      `[depth] scene ${sceneIndex + 1} (${scene.photoId}, room=${scene.roomType}) has flat depth ` +
+      `(variance=${flatness.variance.toFixed(4)}, threshold=${flatness.threshold}). ` +
+      `Routing to Ken Burns — depth parallax wouldn't add visible motion.`
+    );
+    await fs.unlink(depthPath).catch(() => {});
+    // Fall back to the existing runway-job Ken Burns generator, which is
+    // engine-agnostic and uses ffmpeg zoompan. Same path the Runway engine
+    // uses when a scene is high-risk for hallucination.
+    const fallback = await generateKenBurnsFallback(scene, manifest, tempDir, sceneIndex);
+    await fs.unlink(photoPath).catch(() => {});
+    return {
+      ...fallback,
+      engineUsed: "ken_burns",
+      engineSource: "depth_flat_detected",
+      depthVariance: flatness.variance,
+      enginePhase: "flat-fallback"
+    };
+  }
+
+  // Per-room camera profile + per-style intensity scaling (Phase 3).
   const motion = String(scene.cameraMotion || "push_in").toLowerCase().replace(/[^a-z_]/g, "");
-  const cameraPath = cameraPathFor(motion);
+  const styleId = manifest?.selectedStyleId || manifest?.template?.style || null;
+  const cameraPath = cameraPathFor(motion, {
+    roomType: scene.roomType,
+    styleId,
+    useRoomPreference: true
+  });
   const durationSec = Math.max(2, Math.min(10, Number(scene.duration || 5)));
   const clipPath = path.join(tempDir, `s${padIdx}-clip.mp4`);
 
