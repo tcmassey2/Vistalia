@@ -99,9 +99,13 @@ export async function renderDepthJob(body, options = {}) {
     );
   }
 
-  const { manifest, jobId } = body;
+  // server.mjs passes the manifest as `body` (the whole payload) and the
+  // jobId via `options.jobId`. Mirror runway-job's pattern: read jobId
+  // from options first, fall back to a freshly minted one for ad-hoc
+  // calls (smoke tests, local CLI, regen).
+  const manifest = body?.manifest || body;
   if (!manifest) throw new Error("renderDepthJob: missing manifest");
-  if (!jobId) throw new Error("renderDepthJob: missing jobId");
+  const jobId = options.jobId || makeFallbackJobId(manifest);
 
   const photoScenes = (manifest.scenes || []).filter(
     (s) => String(s.type || "photo").toLowerCase() === "photo"
@@ -558,6 +562,16 @@ function pickMusicUrl(manifest) {
     if (existsSync(localPath)) return localPath;
   }
   return null;
+}
+
+// Fallback jobId for ad-hoc renderDepthJob calls (smoke tests, local
+// CLI, direct invocations). Production calls always get a jobId from
+// server.mjs via options.jobId.
+function makeFallbackJobId(manifest) {
+  const projectId =
+    manifest?.project?.id || manifest?.project?.title || manifest?.projectTitle || "estate-motion";
+  const safe = String(projectId).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "depth";
+  return `depth-${safe}-${Date.now()}`;
 }
 
 export const DEPTH_ENGINE_ENABLED = ENABLE_FLAG;
