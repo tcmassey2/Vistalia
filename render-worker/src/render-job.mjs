@@ -113,39 +113,15 @@ export async function renderEstateMotionJob({ manifest, requestedFormat = "verti
   }
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : mp4Path;
 
-  options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
-  const wants4K = Boolean(manifest?.export4K || String(manifest?.exportFormat || "").toLowerCase().includes("4k"));
-  let variants = {};
-  try {
-    variants = await deriveAspectVariants({
-      masterMp4: masterForVariants,
-      tempDir,
-      jobId,
-      upscale4K: wants4K
-    });
-  } catch (err) {
-    console.warn(`[remotion] aspect variants failed entirely (${err.message}). Falling back to vertical-only.`);
-    variants = { vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } } };
-  }
-  // Guarantee at least vertical exists — without it there's nothing to ship.
-  if (!variants.vertical?.path) {
-    variants.vertical = { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } };
-  }
-
-  options.onProgress?.({ phase: "Cutting social shorts", progress: 90 });
-  let shorts = [];
-  try {
-    shorts = await buildSocialShorts({
-      masterMp4: masterForVariants,
-      scenes: manifest.scenes,
-      tempDir,
-      jobId,
-      count: 3
-    });
-  } catch (err) {
-    console.warn(`[remotion] social shorts failed entirely (${err.message}). Continuing without shorts.`);
-    shorts = [];
-  }
+  // ONE-MASTER simplification (see runway-job.mjs for rationale).
+  // Ship a single vertical 9:16 master per render. No 16:9/1:1 variants,
+  // no social shorts, no 4K upscale. deriveAspectVariants +
+  // buildSocialShorts stay in tree as future-tier features.
+  options.onProgress?.({ phase: "Finalizing master", progress: 88 });
+  const variants = {
+    vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } }
+  };
+  const shorts = [];
 
   options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
   // Per-file upload progress so the bar advances 94 → 99 as each file

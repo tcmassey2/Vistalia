@@ -122,52 +122,15 @@ export default function LibraryDetailModal({
           <RenderDetailsPanel entry={entry} />
         </div>
 
-        {/* Format bundle */}
+        {/* Single-master download row (replaces the old multi-variant
+            + social-shorts bundle). One render = one 9:16 master mp4. */}
         <div className="px-6 sm:px-8 mt-6">
-          <div className="flex items-baseline justify-between mb-2.5">
-            <h3 className="text-sm font-semibold tracking-tightish">Your full bundle</h3>
-            <span className="text-xs text-ink-muted">{entry.formatsCount} format{entry.formatsCount === 1 ? "" : "s"} · all from one render</span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <DeliverablePill
-              label="9:16"
-              sublabel="Reels · TikTok · Shorts"
-              url={inferredUrls.vertical}
-            />
-            <DeliverablePill
-              label="1:1"
-              sublabel="Instagram feed"
-              url={inferredUrls.square}
-            />
-            <DeliverablePill
-              label="16:9"
-              sublabel="YouTube · Zillow · MLS"
-              url={inferredUrls.wide}
-            />
-          </div>
+          <DeliverablePill
+            label="Download master (9:16)"
+            sublabel="Vertical · Reels / TikTok / Shorts ready"
+            url={inferredUrls.vertical}
+          />
         </div>
-
-        {/* Social shorts */}
-        {entry.socialShortCount > 0 && (
-          <div className="px-6 sm:px-8 mt-6">
-            <div className="flex items-baseline justify-between mb-2.5">
-              <h3 className="text-sm font-semibold tracking-tightish">Hero shorts</h3>
-              <span className="text-xs text-ink-muted">{entry.socialShortCount} reel-ready cuts</span>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {Array.from({ length: entry.socialShortCount }).map((_, i) => {
-                const shortUrl = inferredUrls.shorts[i];
-                return (
-                  <ShortPill
-                    key={i}
-                    clipNumber={i + 1}
-                    url={shortUrl}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {/* Per-scene regenerate — only relevant for runway renders that have
             persisted scene data. Renders before worker v16 won't have the
