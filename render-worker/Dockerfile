@@ -90,5 +90,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # on a headless container, then exec's node server.mjs. See the
 # script itself for why xvfb-run wasn't enough.
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-CMD ["/usr/local/bin/docker-entrypoint.sh"]
+RUN chmod 755 /usr/local/bin/docker-entrypoint.sh \
+  && sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh
+# Invoke via `sh` explicitly so a missing executable bit, a CRLF line
+# ending from a Windows/Mac sandbox edit, or a shebang mismatch can't
+# prevent the script from running. The above sed strips CRLF as a
+# belt-and-suspenders; the `sh ...` invocation makes the +x optional.
+CMD ["sh", "/usr/local/bin/docker-entrypoint.sh"]
