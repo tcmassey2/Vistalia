@@ -31,7 +31,21 @@ export default function AuthScreen() {
   // When the site key is empty, the widget renders nothing and this stays
   // empty — Supabase accepts the request without it.
   const [captchaToken, setCaptchaToken] = useState("");
+  // Bumped after every failed submit so the HCaptcha widget gets
+  // remounted with a fresh iframe — otherwise hCaptcha returns the
+  // SAME token from its internal cache and Supabase 422s with
+  // 'captcha protection: request disallowed (already-seen-response)'.
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const captchaRequired = Boolean(env().HCAPTCHA_SITE_KEY);
+
+  // Reset both the local token AND force the widget to re-render.
+  // Call after any failed submit OR after a successful submit that
+  // doesn't navigate away (so the next captcha-required action gets
+  // a fresh challenge).
+  const resetCaptcha = () => {
+    setCaptchaToken("");
+    setCaptchaResetKey((k) => k + 1);
+  };
   // 2FA challenge state. When sign-in returns with the user enrolled in
   // TOTP, we flip to mode='totp' and stash the factorId here for the
   // verify call.
@@ -70,7 +84,7 @@ export default function AuthScreen() {
         track(events.signupStarted);
         await signUp(email, password, captchaToken || undefined);
         track(events.signupCompleted);
-        setCaptchaToken(""); // single-use token; force re-challenge on retry
+        resetCaptcha(); // single-use token; force re-challenge on retry
         setPendingConfirmEmail(email);
         setInfo("Check your email to confirm. We've sent the link to " + email + ".");
         setMode("signin");
@@ -82,7 +96,7 @@ export default function AuthScreen() {
           throw new Error("Please complete the CAPTCHA below to continue.");
         }
         await signIn(email, password, captchaToken || undefined);
-        setCaptchaToken("");
+        resetCaptcha();
         // Check whether this account has 2FA enrolled. If so, the session
         // is at aal1 — we need a TOTP challenge to upgrade to aal2 before
         // the dashboard route is allowed. signOut() if the challenge is
@@ -110,7 +124,7 @@ export default function AuthScreen() {
           throw new Error("Please complete the CAPTCHA below to continue.");
         }
         await requestPasswordReset(email, captchaToken || undefined);
-        setCaptchaToken("");
+        resetCaptcha();
         setInfo(
           "If an account exists for " + email + ", a password-reset link is on its way. Check your inbox."
         );
@@ -125,6 +139,12 @@ export default function AuthScreen() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Authentication failed.";
       setError(humanizeAuthError(message));
+      // CRITICAL: reset captcha on failure too. Supabase consumed the
+      // token whether or not auth succeeded — keeping it in state means
+      // the next attempt sends the burned token and gets the misleading
+      // 'already-seen-response' error instead of the real password-wrong
+      // message.
+      if (captchaRequired) resetCaptcha();
     } finally {
       setBusy(false);
     }
@@ -141,11 +161,12 @@ export default function AuthScreen() {
     setBusy(true);
     try {
       await resendConfirmationEmail(pendingConfirmEmail, captchaToken || undefined);
-      setCaptchaToken("");
+      resetCaptcha();
       setInfo("Confirmation email re-sent to " + pendingConfirmEmail + ".");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Resend failed.";
       setError(humanizeAuthError(message));
+      if (captchaRequired) resetCaptcha();
     } finally {
       setBusy(false);
     }
@@ -221,8 +242,13 @@ export default function AuthScreen() {
                   <span className="text-xs text-ink-soft">Email</span>
                   <input
                     type="email"
+                    name="email"
+                    id="auth-email"
                     required
                     autoComplete="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="h-11 px-3.5 bg-surface-input border border-edge rounded-lg text-ink placeholder:text-ink-dim focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/15 transition-colors"
@@ -249,6 +275,8 @@ export default function AuthScreen() {
                   </div>
                   <input
                     type="password"
+                    name="password"
+                    id="auth-password"
                     required
                     minLength={8}
                     autoComplete={mode === "signup" || mode === "reset" ? "new-password" : "current-password"}
@@ -287,7 +315,11 @@ export default function AuthScreen() {
                   which forces a fresh challenge each time. */}
               {captchaRequired && (mode === "signup" || mode === "signin" || mode === "forgot") && (
                 <HCaptcha
-                  key={mode} // remount on mode switch → fresh challenge
+                  // Remount on mode switch OR after any failed/successful
+                  // submit (captchaResetKey bumps). Forces a fresh iframe
+                  // so hCaptcha can't cache and replay the burned token —
+                  // root cause of 'already-seen-response' on retry.
+                  key={`${mode}-${captchaResetKey}`}
                   onVerify={(token) => setCaptchaToken(token)}
                   onExpire={() => setCaptchaToken("")}
                 />
