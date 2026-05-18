@@ -78,23 +78,17 @@ RUN node -e "require('@remotion/renderer').ensureBrowser().then(() => console.lo
 
 ENV PORT=8787
 ENV NODE_ENV=production
-# DISPLAY=:99 points the gl npm package at the Xvfb virtual framebuffer
-# we launch via xvfb-run in CMD below. Without Xvfb, createGL() returns
-# null on the headless container because there's no X server for ANGLE
-# to attach to. Cinematic Depth (which needs headless WebGL) requires
-# this to function; Runway + Quick Reel don't read DISPLAY.
-ENV DISPLAY=:99
 EXPOSE 8787
 
 # Health check — Render.com uses this to decide if the container is alive.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||8787)+'/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"
 
-# xvfb-run starts a virtual X server on display :99 with a 1920x1080
-# RGBA screen, exports DISPLAY=:99 for the child process, then exec's
-# node server.mjs. The -a flag auto-picks a free display number if :99
-# is somehow taken. -s gives Xvfb its arguments. xvfb-run is the
-# idiomatic way to run X-dependent programs without a real GPU/display
-# and works fine for long-running services — it just keeps the X server
-# alive for the lifetime of the child process.
-CMD ["xvfb-run", "-a", "-s", "-screen 0 1920x1080x24", "node", "server.mjs"]
+# Custom entrypoint: starts Xvfb deterministically on :99, sets the
+# Mesa software-rendering env vars (LIBGL_ALWAYS_SOFTWARE=1, GL
+# version override) that the gl npm package needs to create a context
+# on a headless container, then exec's node server.mjs. See the
+# script itself for why xvfb-run wasn't enough.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+CMD ["/usr/local/bin/docker-entrypoint.sh"]
