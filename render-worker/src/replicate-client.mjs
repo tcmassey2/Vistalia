@@ -115,6 +115,17 @@ async function runPrediction({ model, input, label }) {
    Depth estimation
    ============================================================ */
 // Returns a URL to the depth-map PNG (grayscale, 0=near, 255=far).
+//
+// chenxwh/depth-anything-v2 returns:
+//   { color_depth: "<url>", grey_depth: "<url>" }
+// where grey_depth is the single-channel depth PNG our renderer needs
+// (color_depth is a viridis-colorized debug view, not usable for mesh
+// vertex displacement because each pixel is RGB not depth).
+//
+// Other depth models on Replicate return different shapes:
+//   - LiheYoung/depth-anything: bare string URL
+//   - cjwbw/midas: { depth_map: "<url>" } or array
+// So we accept all the common shapes and prefer grey_depth when present.
 export async function estimateDepth({ imageUrl }) {
   if (!imageUrl) throw new Error("estimateDepth: imageUrl required");
   const output = await runPrediction({
@@ -127,9 +138,19 @@ export async function estimateDepth({ imageUrl }) {
     },
     label: "depth-anything-v2"
   });
-  // Different model versions return either a string URL or an object
-  // with { depth_map: url }. Normalize.
+
   if (typeof output === "string") return output;
+  // chenxwh/depth-anything-v2 — grayscale is grey_depth (US spelling
+  // also accepted as gray_depth, just in case the model version renames).
+  if (output?.grey_depth) return output.grey_depth;
+  if (output?.gray_depth) return output.gray_depth;
+  // Fallback to color_depth ONLY if grey isn't present. Note: the depth
+  // renderer expects a single-channel PNG; color_depth is RGB and will
+  // produce a less accurate mesh, but it's better than failing.
+  if (output?.color_depth) {
+    console.warn("[depth] grey_depth missing in Replicate output — falling back to color_depth. Mesh accuracy may degrade.");
+    return output.color_depth;
+  }
   if (output?.depth_map) return output.depth_map;
   if (Array.isArray(output) && output[0]) return output[0];
   throw new Error(`estimateDepth: unexpected output shape: ${JSON.stringify(output).slice(0, 200)}`);
