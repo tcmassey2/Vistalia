@@ -214,44 +214,19 @@ export async function renderRunwayJob(body, options = {}) {
   // forward. Otherwise the original (silent or music-only) master is used.
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
 
-  options.onProgress?.({ phase: "Deriving aspect variants", progress: 86 });
-  const wants4K = Boolean(
-    manifest?.runwayConfig?.is4K ||
-    manifest?.runwayConfig?.upscale4K ||
-    manifest?.export4K ||
-    String(manifest?.exportFormat || "").toLowerCase().includes("4k")
-  );
-  let variants = {};
-  try {
-    variants = await deriveAspectVariants({
-      masterMp4: masterForVariants,
-      tempDir,
-      jobId,
-      upscale4K: wants4K
-    });
-  } catch (err) {
-    console.warn(`[runway] aspect variants failed entirely (${err.message}). Falling back to vertical-only.`);
-    variants = { vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } } };
-  }
-  if (!variants.vertical?.path) {
-    variants.vertical = { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } };
-  }
-
-  options.onProgress?.({ phase: "Cutting social shorts", progress: 90 });
-  let shorts = [];
-  try {
-    shorts = await buildSocialShorts({
-      // Use the narrated master (if any) so social shorts also have voice.
-      masterMp4: masterForVariants,
-      scenes: manifest.scenes,
-      tempDir,
-      jobId,
-      count: 3
-    });
-  } catch (err) {
-    console.warn(`[runway] social shorts failed entirely (${err.message}). Continuing without shorts.`);
-    shorts = [];
-  }
+  // ONE-MASTER simplification: previously this step produced 9:16 +
+  // 16:9 + 1:1 variants + a 4K upscale + 3 social shorts (~8 files).
+  // Troy's call to simplify: ship a single vertical 9:16 master per
+  // render. Saves 30-90s of compute, cuts upload bandwidth, removes
+  // a long tail of per-variant failure modes. Users who want a
+  // different aspect can re-render with exportFormat changed.
+  // deriveAspectVariants + buildSocialShorts modules retained in
+  // tree for the future-tier 'Pro Pack' SKU, but no longer called.
+  options.onProgress?.({ phase: "Finalizing master", progress: 88 });
+  const variants = {
+    vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } }
+  };
+  const shorts = [];
 
   options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });
   // Per-file upload progress so the bar moves through 94 → 99 as each
