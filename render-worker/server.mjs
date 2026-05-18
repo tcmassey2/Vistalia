@@ -48,6 +48,17 @@ const server = http.createServer(async (request, response) => {
     sendJson(response, 200, {
       version: "2026.05.17-depth-engine-phase1",
       depthEngineEnabled: DEPTH_ENGINE_ENABLED,
+      // Diagnostic surface for the depth engine env vars. Tells you AT A
+      // GLANCE whether the values Render injected actually parsed as
+      // truthy. If depthEngineEnabled is false but the raw value below
+      // looks correct, that's a process-restart issue (Render didn't pick
+      // up the change). If the raw value is empty, the env isn't set on
+      // this service.
+      env: {
+        ENABLE_DEPTH_ENGINE_raw: process.env.ENABLE_DEPTH_ENGINE ?? null,
+        ENABLE_DEPTH_INPAINT_raw: process.env.ENABLE_DEPTH_INPAINT ?? null,
+        REPLICATE_API_TOKEN_present: Boolean(process.env.REPLICATE_API_TOKEN)
+      },
       bootedAt: BOOTED_AT,
       uptimeSec: Math.round(process.uptime()),
       activeJobs: jobs.size,

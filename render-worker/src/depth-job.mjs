@@ -55,12 +55,22 @@ import { writeRenderAudit } from "./audit-log.mjs";
 import { runFFmpeg } from "./ffmpeg-runner.mjs";
 import { existsSync } from "node:fs";
 
-const ENABLE_FLAG = process.env.ENABLE_DEPTH_ENGINE === "true";
+// Tolerant truthy-env parser. Accepts any of: "true", "True", "TRUE",
+// "1", "yes", "y", "on" (case-insensitive, with surrounding whitespace
+// trimmed). The strict `=== "true"` check we had before silently failed
+// when Render's UI saved the value as "True" instead of "true" — produced
+// the misleading 'engine not enabled' error on tiers that should work.
+function envIsTrue(name) {
+  const raw = String(process.env[name] || "").trim().toLowerCase();
+  return raw === "true" || raw === "1" || raw === "yes" || raw === "y" || raw === "on";
+}
+
+const ENABLE_FLAG = envIsTrue("ENABLE_DEPTH_ENGINE");
 // Phase 2 opt-in: per-frame LaMa inpaint of disocclusion gaps. Adds
 // ~$0.40-0.50 + 2-6 min latency per render (depending on parallelism
 // and how many scenes have meaningful disocclusion). Disabled by
 // default until end-to-end quality is validated.
-const ENABLE_INPAINT = process.env.ENABLE_DEPTH_INPAINT === "true";
+const ENABLE_INPAINT = envIsTrue("ENABLE_DEPTH_INPAINT");
 // How many inpaints to run concurrently per scene. Higher = faster but
 // more Replicate rate-limit risk. 4 is a safe starting point.
 const INPAINT_CONCURRENCY = Number(process.env.DEPTH_INPAINT_CONCURRENCY || 4);
