@@ -24,6 +24,6 @@
   },
   "optionalDependencies": {
     "gl": "^8.1.6",
-    "three": "^0.170.0"
+    "three": "0.158.0"
   }
 }

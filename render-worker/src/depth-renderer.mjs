@@ -143,6 +143,27 @@ export async function renderDepthClip({
   const gl = createGL(width, height, { preserveDrawingBuffer: true, antialias: true });
   if (!gl) throw new Error("renderDepthClip: failed to create headless WebGL context (gl package)");
 
+  // WebGL 2 method stubs. The `gl` npm package implements WebGL 1 only,
+  // but some Three.js code paths assume WebGL 2 even when handed a
+  // WebGL 1 context. Stubbing the most-commonly-called WebGL 2 methods
+  // as no-ops prevents 'X is not a function' crashes — Three's basic
+  // 2D-textured-plane rendering doesn't actually need any of these,
+  // so no-ops are functionally correct for our pipeline. We rely on
+  // the three@0.158 pin (last version with full WebGL 1 fallback
+  // paths) to avoid the bulk of WebGL 2 calls in the first place;
+  // these stubs are belt-and-suspenders.
+  const webgl2Stubs = [
+    "texImage3D", "texSubImage3D", "texStorage3D",
+    "copyTexSubImage3D", "compressedTexImage3D", "compressedTexSubImage3D",
+    "texStorage2D", "drawArraysInstanced", "drawElementsInstanced",
+    "vertexAttribDivisor", "createVertexArray", "bindVertexArray",
+    "deleteVertexArray", "getFragDataLocation", "uniformBlockBinding",
+    "bindBufferBase", "bindBufferRange", "drawBuffers", "renderbufferStorageMultisample"
+  ];
+  for (const name of webgl2Stubs) {
+    if (typeof gl[name] !== "function") gl[name] = () => {};
+  }
+
   // Three.js renderer wrapped around the headless context. We have to
   // shim a tiny bit of canvas-like state because Three pokes at it.
   const fakeCanvas = {
