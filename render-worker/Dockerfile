@@ -1,23 +1,19 @@
-# EstateMotion render worker — Remotion + (future) Runway/FFmpeg pipeline.
-# Tested on Render.com Standard plan (2GB RAM, 1 CPU). Starter plan WILL OOM.
+# EstateMotion render worker — Remotion + Runway Gen-4 Turbo pipeline.
+# v24: stripped back to lean v22-era image. Depth engine code is in
+# the repo but not routed by server.mjs, so we don't need its heavy
+# system deps (X11 dev libs, xvfb, build-essential, Mesa).
+# Render Pro 4GB plan recommended. Smaller plans WILL OOM on Gen-4 renders.
 
 FROM node:20-bookworm-slim
 
 WORKDIR /app
 
 # System deps:
-#   - Chromium runtime libraries (Remotion downloads Chromium itself but needs
-#     these shared libs to run it headless)
-#   - ffmpeg for stitching Runway clips and applying transitions/audio in the
-#     Cinematic AI tier
-#   - fonts so Remotion text overlays render correctly without falling back to
-#     blank squares
-#   - ca-certificates for HTTPS to Supabase, OpenAI, and Runway
-#   - X11 dev libs + pkg-config + build-essential + python3 so the `gl`
-#     npm package (headless WebGL for Cinematic Depth engine) compiles
-#     its native binding from source on first install. Without these the
-#     npm install step fails with "Package xi was not found in the
-#     pkg-config search path" (Render.com build log signature).
+#   - Chromium runtime libraries (Remotion downloads Chromium itself but
+#     needs these shared libs to run it headless for Quick Reel renders).
+#   - ffmpeg for stitching Runway clips and audio/transitions.
+#   - fonts so Remotion text overlays render correctly.
+#   - ca-certificates for HTTPS to Supabase, OpenAI, Runway, ElevenLabs.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -44,28 +40,12 @@ RUN apt-get update \
     libcairo2 \
     libasound2 \
     libdbus-1-3 \
-    libxi-dev \
-    libxext-dev \
-    libx11-dev \
-    libglu1-mesa-dev \
-    libglew-dev \
-    pkg-config \
-    build-essential \
-    python3 \
-    xvfb \
-    xauth \
-    mesa-utils \
   && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies first (cached layer when only source changes).
-# Using `npm install` instead of `npm ci` because the lock file isn't
-# regenerated for every package.json change in the sandbox where edits
-# happen. `npm install` tolerates the drift; `npm ci` errors out the
-# moment lock != package.json (which broke this build when sharp, gl,
-# and three were added to package.json without a matching lock update).
-# To restore `npm ci` later: regenerate package-lock.json locally with
-# `cd render-worker && rm -rf node_modules package-lock.json && npm install`,
-# commit the new lock, then swap this RUN back to `npm ci --omit=dev`.
+# Install dependencies. Using `npm install` rather than `npm ci` because
+# the lock file isn't regenerated in the sandbox where edits happen.
+# Tolerates lock-file drift. Regenerate the lock locally + swap to
+# `npm ci --omit=dev` if you want stricter installs.
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --no-audit --no-fund
 
@@ -84,16 +64,4 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||8787)+'/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"
 
-# Custom entrypoint: starts Xvfb deterministically on :99, sets the
-# Mesa software-rendering env vars (LIBGL_ALWAYS_SOFTWARE=1, GL
-# version override) that the gl npm package needs to create a context
-# on a headless container, then exec's node server.mjs. See the
-# script itself for why xvfb-run wasn't enough.
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod 755 /usr/local/bin/docker-entrypoint.sh \
-  && sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh
-# Invoke via `sh` explicitly so a missing executable bit, a CRLF line
-# ending from a Windows/Mac sandbox edit, or a shebang mismatch can't
-# prevent the script from running. The above sed strips CRLF as a
-# belt-and-suspenders; the `sh ...` invocation makes the +x optional.
-CMD ["sh", "/usr/local/bin/docker-entrypoint.sh"]
+CMD ["node", "server.mjs"]

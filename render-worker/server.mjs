@@ -1,23 +1,24 @@
 import http from "node:http";
 import { renderEstateMotionJob } from "./src/render-job.mjs";
 import { renderRunwayJob } from "./src/runway-job.mjs";
-import { renderDepthJob, DEPTH_ENGINE_ENABLED } from "./src/depth-job.mjs";
 import { regenerateScene } from "./src/regenerate-job.mjs";
 
-// Route to the correct render engine based on manifest.engine.
-// "remotion" (default) — Ken-Burns photo-animation via Remotion.
-// "runway"  — Runway Gen-4 Turbo image-to-video then FFmpeg stitch.
-// "depth"   — depth-based 2.5D parallax via DepthAnything V2 + headless
-//             WebGL. Gated behind ENABLE_DEPTH_ENGINE=true env on the
-//             worker. See src/DEPTH_ENGINE_README.md.
+// v24: depth engine removed from production routing. The files
+// (depth-job.mjs, depth-renderer.mjs, replicate-client.mjs) are
+// preserved in the repo for future restoration but not imported
+// here — that way the worker doesn't drag in gl/three/sharp/Xvfb
+// just to keep the depth code on disk.
+//
+// Route to the correct render engine based on manifest.engine:
+//   "remotion" (default) — Ken-Burns photo-animation via Remotion.
+//   "runway"             — Runway Gen-4 Turbo → ffmpeg stitch.
 async function dispatchRender(body, options = {}) {
   const engine = String(body?.manifest?.engine || "remotion").toLowerCase();
-  if (engine === "depth") {
-    return renderDepthJob(body, options);
-  }
   if (engine === "runway") {
     return renderRunwayJob(body, options);
   }
+  // Any other engine value (including stale 'depth' from older clients)
+  // falls through to the safe default.
   return renderEstateMotionJob(body, options);
 }
 
@@ -46,19 +47,11 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.05.17-depth-engine-phase1",
-      depthEngineEnabled: DEPTH_ENGINE_ENABLED,
-      // Diagnostic surface for the depth engine env vars. Tells you AT A
-      // GLANCE whether the values Render injected actually parsed as
-      // truthy. If depthEngineEnabled is false but the raw value below
-      // looks correct, that's a process-restart issue (Render didn't pick
-      // up the change). If the raw value is empty, the env isn't set on
-      // this service.
-      env: {
-        ENABLE_DEPTH_ENGINE_raw: process.env.ENABLE_DEPTH_ENGINE ?? null,
-        ENABLE_DEPTH_INPAINT_raw: process.env.ENABLE_DEPTH_INPAINT ?? null,
-        REPLICATE_API_TOKEN_present: Boolean(process.env.REPLICATE_API_TOKEN)
-      },
+      version: "2026.05.18-v24-restore",
+      // v24 restored the v22 Runway pipeline. Two engines are live:
+      // remotion (Ken Burns) + runway (Cinematic AI Gen-4 Turbo).
+      // depth engine code is preserved in repo but not routed.
+      engines: ["remotion", "runway"],
       bootedAt: BOOTED_AT,
       uptimeSec: Math.round(process.uptime()),
       activeJobs: jobs.size,

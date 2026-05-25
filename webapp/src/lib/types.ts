@@ -1,6 +1,6 @@
 // EstateMotion — domain types
 
-export type RenderEngine = "remotion" | "runway" | "depth";
+export type RenderEngine = "remotion" | "runway";
 
 export type ExportFormat = "vertical" | "wide" | "square";
 

@@ -1858,28 +1858,20 @@ function blobToBase64(blob: Blob): Promise<string> {
    ============================================================ */
 function EngineToggle({ engine, onChange }: { engine: RenderEngine; onChange: (e: RenderEngine) => void }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <EngineCard
         active={engine === "remotion"}
         title="Quick Reel"
-        description="Cinematic Ken Burns motion on your photos. Fast, reliable, zero AI artifacts."
+        description="Smooth Ken Burns camera motion on your photos. Fast, reliable, zero AI artifacts. Best for any listing — always works."
         meta="~90 seconds • every plan"
         onClick={() => onChange("remotion")}
-      />
-      <EngineCard
-        active={engine === "depth"}
-        title="Cinematic Depth"
-        betaTag
-        description="Real 3D camera moves built from photo depth. Dolly, parallax, orbit — geometric not generated, no shape morphing."
-        meta="3–5 minutes • new engine"
-        onClick={() => onChange("depth")}
       />
       <EngineCard
         active={engine === "runway"}
         title="Cinematic AI"
         proTag
-        description="Image-to-video generation via Runway Gen-4. Light shifts and ambient motion; can morph shapes on busy scenes."
-        meta="3–5 minutes • Cinematic AI plan"
+        description="Real AI camera motion via Runway Gen-4 Turbo. Kitchens + bathrooms auto-fall back to camera motion to avoid AI artifacts. Best for hero exteriors and living spaces."
+        meta="2–4 minutes • Cinematic AI plan"
         onClick={() => onChange("runway")}
       />
     </div>

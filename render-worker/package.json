@@ -9,9 +9,7 @@
     "start": "node server.mjs",
     "render:sample": "node render-local.mjs",
     "render:openai-plan": "node render-openai-plan.mjs",
-    "verify:async": "node verify-async-render.mjs",
-    "smoke:gl": "node scripts/smoke-gl.mjs",
-    "smoke:depth": "node scripts/smoke-depth-renderer.mjs"
+    "verify:async": "node verify-async-render.mjs"
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.229",
@@ -19,11 +17,6 @@
     "@supabase/supabase-js": "^2.45.4",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "remotion": "^4.0.229",
-    "sharp": "^0.33.5"
-  },
-  "optionalDependencies": {
-    "gl": "^8.1.6",
-    "three": "0.158.0"
+    "remotion": "^4.0.229"
   }
 }
