@@ -21,9 +21,40 @@ const OPENAI_VISION_PHOTO_LIMIT = 12;
 // = 60s. Quick Reel scenes are shorter (~2-3s each) so 30s = ~10-12 scenes.
 // MAX_PLAN_SCENES is the hard ceiling for the longest 60s render path.
 // targetSceneCountFor() picks the actual count based on manifest.targetDurationSec.
-const MAX_PLAN_SCENES = 12;
+// MAX_PLAN_SCENES drives the upper bound. v24.1 bumped from 12 to 16
+// because predicted-Ken-Burns scenes are 2.8s (not 5s) so we need more
+// of them to hit the 60s ceiling.
+const MAX_PLAN_SCENES = 16;
 const DEFAULT_TARGET_DURATION_SEC = 30;
 const MAX_TARGET_DURATION_SEC = 60;
+
+// v24.1: predict which scenes will fall back to Ken Burns at render
+// time so we can size the scene count correctly. Mirror the BALANCED
+// guard logic in render-worker/src/runway-job.mjs::decideUseKenBurns.
+// Kitchen + bathroom always fall back at risk >= 60; other rooms only
+// at risk >= 80. This is a rough estimate (the worker has the canonical
+// risk computation including visibleFeatures + prompt analysis), but
+// good enough at plan time when we just need a count.
+function predictKenBurnsFallback(roomType) {
+  const room = String(roomType || "").toLowerCase();
+  // Kitchens + bathrooms reliably fall back. ~95% of the time.
+  if (room === "kitchen" || room === "bathroom") return true;
+  // Everything else mostly runs through Runway.
+  return false;
+}
+
+// Average per-scene duration used to compute scene count for a given
+// target render length. Cinematic AI scenes that pass the guard are 5s
+// (Runway native). Predicted fallbacks are 2.8s (Quick Reel Ken Burns).
+function avgSecPerScene({ engine, hasKitchen, hasBathroom }) {
+  if (engine !== "runway") return 2.8;
+  // Mixed-engine math: assume a typical listing has ~1 kitchen + ~1
+  // bathroom scene that will fall back. The rest are 5s Runway clips.
+  // For 6 planned scenes with 2 fallbacks: (4*5 + 2*2.8)/6 = 3.93 avg.
+  // We use 4.0 as a round number — close enough that 30s targets land
+  // at 7-8 scenes and 60s targets land at 14-15 scenes.
+  return 4.0;
+}
 
 const ROOM_TYPES = ["exterior", "kitchen", "living", "bedroom", "bathroom", "outdoor", "amenity", "detail"];
 const CAMERA_MOTIONS = ["push_in", "pull_out", "lateral_pan", "vertical_reveal", "parallax_zoom", "detail_sweep"];
@@ -352,7 +383,12 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   // Always capped by available photos AND the hard MAX_PLAN_SCENES ceiling.
   const isCinematicAI = engine === "runway";
   const clampedDuration = Math.max(15, Math.min(MAX_TARGET_DURATION_SEC, Number(targetDurationSec) || DEFAULT_TARGET_DURATION_SEC));
-  const secPerScene = isCinematicAI ? 5 : 2.8;
+  // v24.1: account for mixed-engine fallbacks. Runway-only assumed 5s/scene
+  // which gave only 6 scenes at 30s — but when ~30% of scenes fall back
+  // to 2.8s Ken Burns, total duration falls short of target. avgSecPerScene
+  // assumes ~1 kitchen + ~1 bathroom fallback per listing and uses a
+  // blended 4.0s average.
+  const secPerScene = avgSecPerScene({ engine });
   const desiredScenes = Math.round(clampedDuration / secPerScene);
   const targetSceneCount = Math.min(allPhotos.length, MAX_PLAN_SCENES, Math.max(4, desiredScenes));
 
@@ -550,11 +586,11 @@ function deterministicEditPlan({ photos, listingDetails, selectedStyle, exportFo
       qualityScore: qualityScore(photo, index)
     }))
     .sort((a, b) => roomRank(a.roomType) - roomRank(b.roomType) || b.qualityScore - a.qualityScore);
-  // v24: scene count is duration-driven. 30s default = 6 scenes for
-  // Cinematic AI (5s each) or ~10-12 for Quick Reel (2.8s avg).
-  const isCinematicAI = engine === "runway";
+  // v24.1: scene count duration-driven, accounting for mixed-engine
+  // fallbacks (kitchens + bathrooms drop to 2.8s Ken Burns, rest are
+  // 5s Runway). Blended 4.0s/scene average for Cinematic AI.
   const clampedDuration = Math.max(15, Math.min(MAX_TARGET_DURATION_SEC, Number(targetDurationSec) || DEFAULT_TARGET_DURATION_SEC));
-  const secPerScene = isCinematicAI ? 5 : 2.8;
+  const secPerScene = avgSecPerScene({ engine });
   const desiredScenes = Math.min(
     MAX_PLAN_SCENES,
     Math.max(4, Math.round(clampedDuration / secPerScene))
@@ -900,13 +936,15 @@ function qualityScore(photo, index) {
 }
 
 function durationFor(roomType, style, index, engine = "remotion") {
-  // Cinematic AI: every scene is exactly one Runway Gen-4 Turbo clip.
-  // Runway returns 5s clips natively. v24 targets:
-  //   30s render = 6 Runway scenes × 5s
-  //   60s render = 12 Runway scenes × 5s
-  // The worker reads duration > 5.5 as a signal to upgrade to a 10s clip —
-  // keep us at exactly 5 so cost stays predictable.
-  if (engine === "runway") return 5;
+  // v24.1: Cinematic AI scene durations depend on whether the scene
+  // will fall back to Ken Burns. Predicted-fallback scenes (kitchens,
+  // bathrooms) get 2.8s — Ken Burns motion is more interesting at
+  // shorter durations. Runway scenes stay at 5s (the model's native
+  // clip length). This way the final video duration math works out
+  // even with mixed-engine scenes.
+  if (engine === "runway") {
+    return predictKenBurnsFallback(roomType) ? 2.8 : 5;
+  }
   const fast = /social|modern/i.test(style || "");
   if (index === 0) return fast ? 2.1 : 3.0;
   if (roomType === "kitchen" || roomType === "living") return fast ? 1.8 : 2.7;

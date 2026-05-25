@@ -675,15 +675,16 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // Step 4: optional audio mix from manifest.musicMood mapping. We honor a
   // RUNWAY_MUSIC_<MOOD>_URL env var pointing to a remote MP3. If no music
   // configured, the final video has no audio (acceptable for v1).
-  // Music level: 0.35 (~ -9 dB). Source MP3s are often mastered hot
-  // (peak near 0 dB) and at unity gain they drown out any narration the
-  // voice-mixer adds in the next step. Pre-attenuating here means:
-  //   - music alone: -9 dB → comfortable background listening level
-  //   - music under voice (ducked further by voice-mixer to 30% of this):
-  //     0.35 × 0.30 = 0.105 → ~ -20 dB → voice clearly above music
-  // Override via env MUSIC_BED_LEVEL or manifest.musicBedLevel.
+  // v24.1: dropped music bed from 0.35 to 0.22 (~ -13 dB) because the
+  // first real render had music dominating voice. Lower bed means:
+  //   - music alone (narration missing/skipped): -13 dB — quiet background
+  //   - music under voice: 0.22 × 0.30 = 0.066 → ~ -24 dB, voice
+  //     clearly cuts through at +3 dB (VOICE_WEIGHT 1.4 in voice-mixer)
+  // Trade-off: when there's no narration the video feels quieter. But
+  // it's much better than music drowning a working narration. Bump back
+  // up via env MUSIC_BED_LEVEL or manifest.musicBedLevel if needed.
   const musicBedLevel = Number(
-    manifest?.musicBedLevel ?? process.env.MUSIC_BED_LEVEL ?? 0.35
+    manifest?.musicBedLevel ?? process.env.MUSIC_BED_LEVEL ?? 0.22
   );
   const musicUrl = pickMusicUrl(manifest);
   if (musicUrl) {
@@ -1594,19 +1595,20 @@ function decideUseKenBurns(scene, guardLevel) {
     }
   }
 
-  // BALANCED (default): kitchens + bathrooms with any appliance/parallel
-  // features → KB. Other rooms only flip to KB when risk crosses 60.
+  // v24.1: split thresholds. Kitchens + bathrooms still fall back
+  // aggressively (≥60) because their failure modes are catastrophic
+  // (morphed appliances, mirror liquefaction). EVERY OTHER room only
+  // falls back at risk ≥80 — bedrooms with one fan, living rooms with
+  // one TV, exteriors with one porch light should ALL run through
+  // Runway. Previously the single threshold of 60 sent ~70% of scenes
+  // to Ken Burns even on "normal" listings.
   if (room === "kitchen" || room === "bathroom") {
-    // Kitchen base risk is 80, bathroom 60. A kitchen with ANY appliance keyword
-    // (+15 each) easily crosses the 60 line. Bathroom with a tile feature
-    // (+15) does too. So this effectively locks both with rare exception
-    // (e.g. a "kitchen detail" shot with no risky features).
     if (risk >= 60) {
       return { useKenBurns: true, risk, reason: `${room} risk≥60 (${risk})` };
     }
   }
-  if (risk >= 60) {
-    return { useKenBurns: true, risk, reason: `risk≥60 (${risk}, ${room || "unknown"})` };
+  if (risk >= 80) {
+    return { useKenBurns: true, risk, reason: `risk≥80 (${risk}, ${room || "unknown"})` };
   }
 
   return { useKenBurns: false, risk, reason: `risk ${risk} below threshold` };
