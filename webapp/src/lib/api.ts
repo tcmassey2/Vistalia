@@ -160,6 +160,12 @@ export interface RenderManifest {
   // render-worker/music/). Optional; worker falls back to style default if
   // missing or unrecognized.
   musicTrack?: string;
+  // v24.2: when true, the worker skips the music mix step entirely.
+  // Master ships with voice-only (if narration is on) or silent audio.
+  skipMusic?: boolean;
+  // v24.2: music bed level override. Multiplied with the worker's
+  // default in the mix step. 0 = silent, 1.0 = default, 1.5 = louder.
+  musicBedLevel?: number;
   selectedStyle: string;
   runwayConfig?: {
     model?: string;
