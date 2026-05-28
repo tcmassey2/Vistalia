@@ -124,6 +124,12 @@ export default function ProjectScreen() {
         <MusicSelector />
       </Section>
 
+      {/* v24.2: voice + music toggles + music volume slider. Lets agents
+          ship voice-only, music-only, both with ducking, or silent. */}
+      <Section title="Audio" subtitle="Voice narration, music bed, and how loud each plays.">
+        <AudioControls />
+      </Section>
+
       {/* Render — one canonical pipeline. Pick the engine, pick the
           hallucination-protection level, click Generate. Everything else
           (narration, music, brand kit, output formats) is automatic and
@@ -1882,6 +1888,103 @@ function EngineToggle({ engine, onChange }: { engine: RenderEngine; onChange: (e
 }
 
 /* ============================================================
+   v24.2 audio controls — voice on/off, music on/off, music volume.
+   ============================================================
+   Renders inside a top-level Section. Reads + writes the same store
+   fields used by the render manifest builder, so changes propagate
+   at the next Generate.
+*/
+function AudioControls() {
+  const narrationEnabled = useStore((s) => s.narrationEnabled);
+  const setNarrationEnabled = useStore((s) => s.setNarrationEnabled);
+  const musicEnabled = useStore((s) => s.musicEnabled);
+  const setMusicEnabled = useStore((s) => s.setMusicEnabled);
+  const musicVolume = useStore((s) => s.musicVolume);
+  const setMusicVolume = useStore((s) => s.setMusicVolume);
+
+  const volumePct = Math.round(musicVolume * 100);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => setNarrationEnabled(!narrationEnabled)}
+          className={cn(
+            "card-press text-left p-3 rounded-lg bg-surface border transition-colors",
+            narrationEnabled
+              ? "border-gold bg-surface-raised card-selected"
+              : "border-edge hover:border-edge-strong"
+          )}
+        >
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-sm font-semibold tracking-tightish">Voice narration</span>
+            <span className={cn(
+              "text-[10px] font-mono uppercase tracking-wider",
+              narrationEnabled ? "text-gold" : "text-ink-muted"
+            )}>
+              {narrationEnabled ? "ON" : "OFF"}
+            </span>
+          </div>
+          <div className="text-xs text-ink-muted">AI voice reads listing details over each scene</div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMusicEnabled(!musicEnabled)}
+          className={cn(
+            "card-press text-left p-3 rounded-lg bg-surface border transition-colors",
+            musicEnabled
+              ? "border-gold bg-surface-raised card-selected"
+              : "border-edge hover:border-edge-strong"
+          )}
+        >
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-sm font-semibold tracking-tightish">Background music</span>
+            <span className={cn(
+              "text-[10px] font-mono uppercase tracking-wider",
+              musicEnabled ? "text-gold" : "text-ink-muted"
+            )}>
+              {musicEnabled ? "ON" : "OFF"}
+            </span>
+          </div>
+          <div className="text-xs text-ink-muted">Plays your selected track throughout the video</div>
+        </button>
+      </div>
+
+      {musicEnabled && (
+        <div className="p-3 rounded-lg border border-edge bg-surface-input/30">
+          <div className="flex items-baseline justify-between mb-2">
+            <span className="text-xs font-semibold text-ink tracking-tightish">Music volume</span>
+            <span className="text-[10px] font-mono text-ink-muted tabular-nums">{volumePct}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={150}
+            step={5}
+            value={volumePct}
+            onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
+            className="w-full accent-gold"
+            aria-label="Music volume"
+          />
+          <div className="flex justify-between text-[10px] text-ink-muted mt-1 font-mono uppercase tracking-wider">
+            <span>Quiet</span>
+            <span>Default</span>
+            <span>Loud</span>
+          </div>
+          {narrationEnabled && (
+            <div className="text-[11px] text-ink-muted mt-2">
+              Music auto-ducks under voice — voice always plays clearly above the music.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
    v24 length toggle — 30s default / 60s max.
    ============================================================
    Drives manifest.targetDurationSec → edit-plan scene count.
@@ -1985,6 +2088,9 @@ function RenderControls() {
   const selectedMusicTrackId = useStore((s) => s.selectedMusicTrackId);
   const targetDurationSec = useStore((s) => s.targetDurationSec);
   const setTargetDuration = useStore((s) => s.setTargetDuration);
+  const narrationEnabled = useStore((s) => s.narrationEnabled);
+  const musicEnabled = useStore((s) => s.musicEnabled);
+  const musicVolume = useStore((s) => s.musicVolume);
   const crossfadesEnabled = useStore((s) => s.crossfadesEnabled);
   const renderEngine = useStore((s) => s.renderEngine);
   const renderSafety = useStore((s) => s.renderSafety);
@@ -2094,6 +2200,11 @@ function RenderControls() {
         // payload always carries a concrete filename instead of the
         // worker having to re-derive it.
         musicTrack: resolveTrack(selectedMusicTrackId, selectedStyleId).filename,
+        // v24.2: independent music + voice toggles. musicEnabled:false
+        // skips the music mix step entirely. musicVolume multiplies the
+        // worker's default musicBedLevel — 1.0 = unchanged, 0 = silent.
+        skipMusic: !musicEnabled,
+        musicBedLevel: 0.22 * musicVolume,
         selectedStyle: styleLabel,
         runwayConfig: {
           ...(planResult.editPlan.runwayConfig || {}),
@@ -2104,12 +2215,9 @@ function RenderControls() {
         },
         brandKit: branding,
         organizationId: organization?.id || null,
-        // Narration is always on. Worker fail-soft to music-only if
-        // ElevenLabs is unavailable. The user-facing toggle was removed
-        // because it was off by default for the entire launch (silently
-        // skipped narration on every render) and adding the toggle back
-        // creates the same misconfiguration risk.
-        skipNarration: false,
+        // v24.2: narrationEnabled is now exposed in the Audio panel.
+        // Worker still fail-soft to music-only if ElevenLabs is unavailable.
+        skipNarration: !narrationEnabled,
         // Translate the single "Render safety" picker into the worker's
         // existing fields. Worker code is unchanged; only the UI consolidated.
         //   off   → pure AI (no protection)

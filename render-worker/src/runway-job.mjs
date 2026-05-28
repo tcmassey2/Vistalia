@@ -437,39 +437,78 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
 }
 
 function buildZoompanExpr(motion, totalFrames, dim) {
-  // ffmpeg zoompan: zoom from 1.0 to 1.12 over the duration, with x/y
-  // offsets to drift the framing. Output size matches target dimensions
-  // exactly to slot into the same concat chain as Runway clips.
-  // The s= argument MUST equal the final scene dimensions or concat fails.
+  // v24.2 cinematic upgrade for Ken Burns scenes.
+  //
+  // What changed vs the linear version:
+  //   1. SMOOTHSTEP EASING. Old version used linear `1.0+0.0008*on` —
+  //      mechanical look (motion starts/stops abruptly). New version
+  //      uses `s*s*(3-2*s)` where s=on/N — slow start, full speed in
+  //      the middle, slow end. Standard cinematography easing curve.
+  //   2. BIGGER ZOOM RANGE. Max zoom bumped 1.12 → 1.20. More
+  //      perceptible motion without exposing edges (1.5× pre-scale
+  //      gives the headroom).
+  //   3. COMBINED ZOOM+PAN. Every motion type now drifts framing
+  //      slightly alongside the zoom — that's what makes real
+  //      cinematography feel like motion-through-space instead of
+  //      just zoom-in-place.
+  //   4. PRE-SCALE 1.3× → 1.5×. Better Lanczos resampling, sharper
+  //      output. Per-frame buffer goes from ~14 MB to ~19 MB —
+  //      comfortable on Pro 4 GB.
   const s = `${dim.width}x${dim.height}`;
   const fps = 30;
-  // v21 memory fix: pre-scale at 1.3× output instead of 2×. The previous
-  // 2× pre-scale held a 2160×3840×4 ≈ 33 MB frame buffer in zoompan's
-  // internal state, which OOM'd the Ken Burns fallback on Render Standard
-  // 2GB the moment Runway dropped a scene and we re-encoded the photo.
-  // Max zoompan zoom is 1.12× (see expressions below), so 1.3× headroom
-  // is plenty for crisp motion. Per-frame buffer drops to ~14 MB.
-  const PRE_W = Math.round(dim.width * 1.3);
-  const PRE_H = Math.round(dim.height * 1.3);
+  const PRE_W = Math.round(dim.width * 1.5);
+  const PRE_H = Math.round(dim.height * 1.5);
   const PRE = `scale=${PRE_W}:${PRE_H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${PRE_W}:${PRE_H}`;
+
+  // Smoothstep helper as ffmpeg expression: t = on/N, smoothstep = t*t*(3-2*t)
+  // Inline because ffmpeg expressions don't have named variables.
+  const N = totalFrames;
+  const t = `(on/${N})`;
+  const smoothT = `(${t}*${t}*(3-2*${t}))`; // 0→1 with ease-in-out
+
+  // Common framing centers
+  const cx = `iw/2-(iw/zoom/2)`;
+  const cy = `ih/2-(ih/zoom/2)`;
+
   if (motion === "pull_out") {
-    // Start zoomed in, pull back to neutral.
-    return `${PRE},zoompan=z='1.12-0.0008*on':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`;
+    // 1.20 → 1.0 over the shot. Slight downward drift to reveal sky/ceiling.
+    const zoom = `1.20-0.20*${smoothT}`;
+    const yDrift = `${cy}+5*${smoothT}`;
+    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${cx}':y='${yDrift}'`;
   }
   if (motion === "lateral_pan") {
-    return `${PRE},zoompan=z='1.08':d=${totalFrames}:s=${s}:fps=${fps}:x='if(gte(on,1),x+1.5,iw/2-(iw/zoom/2))':y='ih/2-(ih/zoom/2)'`;
+    // Hold zoom at 1.10, sweep x from -10% to +10% of crop width with easing.
+    // Smooth lateral motion that mimics a gimbal track.
+    const zoom = `1.10`;
+    const xPan = `iw/2-(iw/zoom/2)+(iw*0.10)*(${smoothT}*2-1)`;
+    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${xPan}':y='${cy}'`;
   }
   if (motion === "vertical_reveal") {
-    return `${PRE},zoompan=z='1.08':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='if(gte(on,1),y-1.2,ih*0.6)'`;
+    // Hold zoom at 1.10, sweep y from bottom-third upward. Tilt-up reveal.
+    const zoom = `1.10`;
+    const yTilt = `ih*0.65-(ih*0.30)*${smoothT}`;
+    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${cx}':y='${yTilt}'`;
   }
   if (motion === "parallax_zoom") {
-    return `${PRE},zoompan=z='1.02+0.0007*on':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)+sin(on/30)*8':y='ih/2-(ih/zoom/2)'`;
+    // Zoom 1.0 → 1.20 with slight diagonal drift for depth-feel.
+    // Diagonal motion + zoom = strongest faux-parallax with a 2D image.
+    const zoom = `1.0+0.20*${smoothT}`;
+    const xDrift = `iw/2-(iw/zoom/2)+8*${smoothT}`;
+    const yDrift = `ih/2-(ih/zoom/2)-6*${smoothT}`;
+    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${xDrift}':y='${yDrift}'`;
   }
   if (motion === "detail_sweep") {
-    return `${PRE},zoompan=z='1.12-0.0004*on':d=${totalFrames}:s=${s}:fps=${fps}:x='if(gte(on,1),x+2,0)':y='ih/2-(ih/zoom/2)'`;
+    // Tighter zoom (1.15) holding steady, slow lateral sweep across detail.
+    const zoom = `1.15`;
+    const xSweep = `iw/2-(iw/zoom/2)+(iw*0.08)*(${smoothT}*2-1)`;
+    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${xSweep}':y='${cy}'`;
   }
-  // Default: gentle push-in
-  return `${PRE},zoompan=z='1.0+0.0008*on':d=${totalFrames}:s=${s}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`;
+  // Default push_in: 1.0 → 1.20 zoom with subtle downward drift.
+  // Downward drift mimics a real dolly-in (camera approaches at eye level,
+  // floor/foreground rises in frame).
+  const zoom = `1.0+0.20*${smoothT}`;
+  const yDrift = `ih/2-(ih/zoom/2)+8*${smoothT}`;
+  return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${cx}':y='${yDrift}'`;
 }
 
 async function pollRunwayTask(taskId, sceneIndex) {
@@ -686,7 +725,10 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   const musicBedLevel = Number(
     manifest?.musicBedLevel ?? process.env.MUSIC_BED_LEVEL ?? 0.22
   );
-  const musicUrl = pickMusicUrl(manifest);
+  // v24.2: respect manifest.skipMusic (set by webapp Audio panel toggle).
+  // Even when a track is bundled, skip the mix step entirely so the
+  // master ships with only voice (or silence).
+  const musicUrl = manifest?.skipMusic ? null : pickMusicUrl(manifest);
   if (musicUrl) {
     await runFFmpeg([
       "-y",
