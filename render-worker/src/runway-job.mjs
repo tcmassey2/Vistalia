@@ -1637,20 +1637,29 @@ function decideUseKenBurns(scene, guardLevel) {
     }
   }
 
-  // v24.1: split thresholds. Kitchens + bathrooms still fall back
-  // aggressively (≥60) because their failure modes are catastrophic
-  // (morphed appliances, mirror liquefaction). EVERY OTHER room only
-  // falls back at risk ≥80 — bedrooms with one fan, living rooms with
-  // one TV, exteriors with one porch light should ALL run through
-  // Runway. Previously the single threshold of 60 sent ~70% of scenes
-  // to Ken Burns even on "normal" listings.
-  if (room === "kitchen" || room === "bathroom") {
-    if (risk >= 60) {
-      return { useKenBurns: true, risk, reason: `${room} risk≥60 (${risk})` };
-    }
+  // v24.5: dramatically softened balanced default. Troy's user-test
+  // hit 6/8 KB on a normal 8-photo listing — way too many. The new
+  // contract for BALANCED:
+  //   - Kitchens: ALWAYS fall back. The morphed-appliance failure is
+  //     the most common AND most damaging hallucination on real estate
+  //     content. Cost of falling back: one Ken Burns scene. Cost of
+  //     Runway-on-kitchen: agent loses a listing because the fridge
+  //     has the wrong door count.
+  //   - Bathrooms: fall back ONLY at risk ≥85 (was ≥60). Most
+  //     bathrooms render fine on Runway; only the heavy-mirror,
+  //     heavy-tile shots are risky.
+  //   - Everything else: fall back ONLY at risk ≥90 (was ≥80). Effectively
+  //     never trips on a normal listing — would need multi-category
+  //     keyword stacking PLUS aggressive motion. The goal is at most
+  //     ONE fallback per typical listing (the kitchen).
+  if (room === "kitchen") {
+    return { useKenBurns: true, risk, reason: `kitchen always falls back (risk ${risk})` };
   }
-  if (risk >= 80) {
-    return { useKenBurns: true, risk, reason: `risk≥80 (${risk}, ${room || "unknown"})` };
+  if (room === "bathroom" && risk >= 85) {
+    return { useKenBurns: true, risk, reason: `bathroom risk≥85 (${risk})` };
+  }
+  if (risk >= 90) {
+    return { useKenBurns: true, risk, reason: `risk≥90 (${risk}, ${room || "unknown"})` };
   }
 
   return { useKenBurns: false, risk, reason: `risk ${risk} below threshold` };

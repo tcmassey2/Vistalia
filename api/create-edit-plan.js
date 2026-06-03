@@ -31,14 +31,15 @@ const MAX_TARGET_DURATION_SEC = 60;
 // v24.1: predict which scenes will fall back to Ken Burns at render
 // time so we can size the scene count correctly. Mirror the BALANCED
 // guard logic in render-worker/src/runway-job.mjs::decideUseKenBurns.
-// Kitchen + bathroom always fall back at risk >= 60; other rooms only
-// at risk >= 80. This is a rough estimate (the worker has the canonical
-// risk computation including visibleFeatures + prompt analysis), but
-// good enough at plan time when we just need a count.
+// v24.5: balanced guard now only auto-falls-back KITCHENS. Bathrooms
+// run through Runway unless risk >= 85 (rare on plan-time data); other
+// rooms only at >= 90 (effectively never on a normal listing).
+// So plan-time prediction shrinks to: kitchens fall back, everything
+// else runs Runway. This makes avgSecPerScene math accurate for the
+// new "≤1 KB per typical listing" target.
 function predictKenBurnsFallback(roomType) {
   const room = String(roomType || "").toLowerCase();
-  // Kitchens + bathrooms reliably fall back. ~95% of the time.
-  if (room === "kitchen" || room === "bathroom") return true;
+  if (room === "kitchen") return true;
   // Everything else mostly runs through Runway.
   return false;
 }
@@ -116,7 +117,7 @@ const RUNWAY_MOTION_PROMPTS = {
 //   v23.1 — MLS auto-strict guard, softer LUTs, model-driven photo tour order
 //   v23.0 — Prompt versioning + B-roll integration + voice catalog
 //   v22.0 — Hallucination Guard balanced/strict tiers + kitchen lockout
-export const PROMPT_VERSION = "v24.3";
+export const PROMPT_VERSION = "v24.5";
 
 // v23.2 — Universal anti-hallucination clause now leads with the most
 // common failure mode (phantom ceiling fans) AND covers ALL rooms, not

@@ -330,6 +330,34 @@ export async function fetchLibrary(args: { limit?: number; offset?: number } = {
   return res.json();
 }
 
+/**
+ * Delete a single library entry. Hard-deletes the audit row + best-effort
+ * wipes the Supabase Storage folder (master + thumbnail + per-scene clips).
+ * Caller must own the entry — server scopes by agent_user_id.
+ */
+export interface DeleteLibraryEntryResponse {
+  status: "ok" | "failed";
+  deleted?: { jobId: string; auditRowId?: string };
+  storageWarnings?: string[];
+  error?: string;
+}
+
+export async function deleteLibraryEntry(jobId: string): Promise<DeleteLibraryEntryResponse> {
+  const headers = await authHeaders();
+  const res = await fetch(`/api/library?jobId=${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+    headers
+  });
+  if (res.status === 401) {
+    return { status: "failed", error: "Sign in expired." };
+  }
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    return { status: "failed", error: payload.error || `Delete failed (${res.status}).` };
+  }
+  return res.json();
+}
+
 /* ============================================================
    /api/delete-account — GDPR/CCPA self-service account deletion
    ============================================================ */

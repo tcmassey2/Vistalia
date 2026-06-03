@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import type { LibraryEntry, LibrarySceneEntry, Photo } from "../lib/types";
 import { useStore } from "../lib/store";
-import { pollRender, submitRegenerateScene, type RegenerateMode, type RenderManifest } from "../lib/api";
+import {
+  pollRender,
+  submitRegenerateScene,
+  deleteLibraryEntry,
+  type RegenerateMode,
+  type RenderManifest
+} from "../lib/api";
 import { cn } from "../lib/cn";
 import { engineLabel, isAiVideoEngine } from "../lib/engine-labels";
 
@@ -61,6 +67,35 @@ export default function LibraryDetailModal({
   // don't have a 'regenerate this scene' concept.
   const isRunwayRender = isAiVideoEngine(entry.engine);
 
+  // v24.5 delete-entry state. `confirmDelete` is the two-stage gate so the
+  // user has to deliberately confirm before the audit row + storage folder
+  // are wiped. `deleting` blocks repeated clicks. `deleteError` surfaces
+  // failures from the API.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string>("");
+
+  const handleDelete = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const result = await deleteLibraryEntry(entry.jobId);
+      if (result.status === "ok") {
+        // Reload the dashboard library so the deleted card disappears,
+        // then close the modal.
+        onUpdated?.();
+        onClose();
+        return;
+      }
+      setDeleteError(result.error || "Couldn't delete this video.");
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Couldn't delete this video.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-paper/90 backdrop-blur-sm p-4 sm:p-8 fade-up-in"
@@ -93,15 +128,25 @@ export default function LibraryDetailModal({
           </button>
         </div>
 
-        {/* Master video preview */}
+        {/* Master video preview — v24.5: height-first sizing centers the
+            9:16 vertical master inside a black pillarbox container instead
+            of stretching it to full modal width. Prior CSS used `w-full
+            max-h-[60vh]` which made the video element render at modal
+            width and the actual 9:16 frame got cropped/letterboxed
+            unpredictably on different viewports. New layout: black
+            container, video centered with object-contain, height capped
+            at 65vh so the rest of the modal stays visible without
+            scrolling. */}
         <div className="px-6 sm:px-8">
-          <video
-            src={masterUrl}
-            controls
-            playsInline
-            poster={entry.thumbnailUrl}
-            className="w-full max-h-[60vh] rounded-lg bg-black"
-          />
+          <div className="rounded-lg bg-black flex items-center justify-center overflow-hidden">
+            <video
+              src={masterUrl}
+              controls
+              playsInline
+              poster={entry.thumbnailUrl}
+              className="block w-auto h-auto max-w-full max-h-[65vh] object-contain"
+            />
+          </div>
         </div>
 
         {/* v23: Engine breakdown badge — honest disclosure of which scenes
@@ -174,10 +219,47 @@ export default function LibraryDetailModal({
             </span>
           )}
           {entry.listingPrice && (
-            <span className="text-xs text-ink-muted ml-auto">
+            <span className="text-xs text-ink-muted">
               {entry.listingPrice}
             </span>
           )}
+          {/* v24.5: delete this render. Two-stage confirm so a mis-click
+              doesn't nuke an entry the agent worked 10 minutes on. */}
+          <div className="ml-auto flex items-center gap-2">
+            {deleteError && (
+              <span className="text-[11px] text-rose-300">{deleteError}</span>
+            )}
+            {!confirmDelete ? (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(true)}
+                disabled={deleting}
+                className="text-xs text-ink-muted hover:text-rose-300 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
+              >
+                Delete video
+              </button>
+            ) : (
+              <>
+                <span className="text-[11px] text-ink-muted">Permanently delete this render?</span>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={deleting}
+                  className="px-2.5 py-1 text-[11px] rounded-md bg-surface-input border border-edge hover:border-ink-muted text-ink-muted disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-rose-500/15 border border-rose-500/40 hover:bg-rose-500/25 text-rose-200 disabled:opacity-50"
+                >
+                  {deleting ? "Deleting…" : "Delete"}
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

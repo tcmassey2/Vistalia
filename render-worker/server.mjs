@@ -47,7 +47,7 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.05.18-v24-restore",
+      version: "2026.06.03-v24.5",
       // v24 restored the v22 Runway pipeline. Two engines are live:
       // remotion (Ken Burns) + runway (Cinematic AI Gen-4 Turbo).
       // depth engine code is preserved in repo but not routed.
