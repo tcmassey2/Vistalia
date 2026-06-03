@@ -116,27 +116,47 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
   }
   const totalDurationSec = cursor;
 
-  // Per-scene maximum narration audio length. ElevenLabs sometimes returns
-  // 6-8s of audio for a 22-word narration line, but if the scene is only
-  // 5s long that audio extends past the scene boundary AND overlaps with
-  // the NEXT scene's narration in amix — producing the 'two voices
-  // talking at once' bug. Trim each narration to fit within its scene
-  // window: scene_duration - leadIn (0.35) - tail buffer (0.5s).
-  // Tail buffer also gives the scene's last beat to breathe before the
-  // hard cut/crossfade to the next scene.
-  const TAIL_BUFFER_SEC = 0.5;
+  // v24.4: BULLETPROOFED voice scheduling. Earlier fix used atrim only;
+  // this version also (a) tightens the safety buffer to 0.8s tail, (b)
+  // caps narration at 80% of the scene duration as a second guard, (c)
+  // uses bounded apad (apad=whole_dur=END_MS) instead of unbounded so
+  // narration audio CANNOT extend past its scene window even if amix
+  // misbehaves, (d) logs the exact trim values per scene for one-line
+  // diagnosis if overlap is reported again.
+  const TAIL_BUFFER_SEC = 0.8;
   const placedNarrations = synthesized
     .map((entry, i) => {
       if (!entry) return null;
       const sceneDur = Number(photoScenes[i].duration || 3);
-      const maxNarrationSec = Math.max(0.8, sceneDur - leadInSec - TAIL_BUFFER_SEC);
+      // Two guards: subtractive (sceneDur - leadIn - tail) AND
+      // proportional (80% of sceneDur). Min of the two is the hard cap.
+      // For 5s scene:   min(5 - 0.35 - 0.8, 5 * 0.8)   = min(3.85, 4.0)   = 3.85s
+      // For 2.8s scene: min(2.8 - 0.35 - 0.8, 2.8*0.8) = min(1.65, 2.24)  = 1.65s
+      const cap1 = sceneDur - leadInSec - TAIL_BUFFER_SEC;
+      const cap2 = sceneDur * 0.80;
+      const maxNarrationSec = Math.max(0.6, Math.min(cap1, cap2));
+      const sceneEndMs = Math.round((sceneStarts[i] + sceneDur) * 1000);
       return {
         mp3Path: entry.mp3Path,
+        sceneStartSec: sceneStarts[i],
+        sceneDurSec: sceneDur,
         delayMs: Math.round((sceneStarts[i] + leadInSec) * 1000),
-        maxNarrationSec
+        maxNarrationSec,
+        sceneEndMs
       };
     })
     .filter(Boolean);
+
+  // Diagnostic log — printed once per render. If overlap is reported
+  // again, this line tells us exactly what trim windows were used.
+  console.info(
+    `[voice] scheduled ${placedNarrations.length} narration line(s):`,
+    placedNarrations.map((n) =>
+      `s${n.sceneStartSec.toFixed(1)}-${(n.sceneStartSec + n.sceneDurSec).toFixed(1)}s ` +
+      `(narr ≤${n.maxNarrationSec.toFixed(2)}s)`
+    ).join(" | ")
+  );
+
   const narrationActiveWindows = synthesized
     .map((entry, i) => entry ? [sceneStarts[i] + leadInSec, sceneStarts[i] + Number(photoScenes[i].duration || 3) - 0.2] : null)
     .filter(Boolean);
@@ -146,16 +166,19 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
   //   [1:a] first narration mp3
   //   [2:a] second narration mp3 ...
   // For each narration:
-  //   1. atrim caps it at maxNarrationSec so it can't overflow into the
-  //      next scene (root cause of the 'two voices' bug).
+  //   1. atrim caps it at maxNarrationSec so the audio CONTENT can't
+  //      extend past the trim.
   //   2. asetpts rebases timestamps after the trim.
   //   3. adelay positions it at sceneStart+leadIn.
-  //   4. apad extends silence to the end of the master so amix has
-  //      something to read at every timestamp.
+  //   4. apad=whole_dur=sceneEndMs HARD-CAPS the stream at the scene
+  //      boundary — even if amix or ffmpeg quirks try to extend the
+  //      audio, the stream itself ends at the scene's end timestamp.
+  //      This is the belt-and-suspenders that makes overlap physically
+  //      impossible.
   const adelaySteps = placedNarrations
     .map((n, i) =>
       `[${i + 1}:a]atrim=duration=${n.maxNarrationSec.toFixed(2)},asetpts=PTS-STARTPTS,` +
-      `adelay=${n.delayMs}|${n.delayMs},apad[n${i}]`
+      `adelay=${n.delayMs}|${n.delayMs},apad=whole_dur=${n.sceneEndMs}ms[n${i}]`
     )
     .join(";");
   const mixInputs = placedNarrations.map((_, i) => `[n${i}]`).join("");

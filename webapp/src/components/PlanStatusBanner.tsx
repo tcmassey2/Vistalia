@@ -85,7 +85,7 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
             Your free trial wrapped — pick a plan to keep rendering.
           </div>
           <div className="text-xs text-ink-muted mt-0.5">
-            {usage.reason || "Upgrade unlocks higher quotas, Cinematic AI, and 4K exports."}
+            {usage.reason || "Upgrade unlocks higher quotas and the Cinematic AI engine."}
           </div>
         </div>
         <UpgradeButton onUpgrade={onUpgrade} primary />

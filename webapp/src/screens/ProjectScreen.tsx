@@ -194,26 +194,25 @@ function RenderQualityPanel() {
   }
 
   // Resolve what THIS render will actually use — mirrors the worker's
-  // resolveRunwayModel() logic so the user can trust what they see.
+  // engine routing so the user can trust what they see. v24+ ships
+  // Gen-4 Turbo across all Cinematic AI tiers; the 4K tier is a future
+  // addon (Runway upscale_v1) and currently delivers the same 1080p
+  // master as the standard Cinematic AI tier.
   const isQuickReel = renderEngine === "remotion";
   const is4KTier = tier === "cinematic_4k";
   const isCinematicTier = tier === "cinematic_ai" || tier === "cinematic_4k";
 
   const engineLabel = isQuickReel
     ? "Ken Burns motion (Quick Reel)"
-    : is4KTier
-      ? "Runway Gen-4.5"
-      : "Runway Gen-4 Turbo";
+    : "Runway Gen-4 Turbo";
 
   const engineSublabel = isQuickReel
-    ? "Cinematic camera moves applied to your photos. Fastest, no AI hallucinations."
-    : is4KTier
-      ? "Premium image-to-video model — best architectural fidelity in the industry."
-      : "Image-to-video AI. Strong, fast, with content-aware safety guards.";
+    ? "Smooth cinematic camera moves on your photos. Fastest, no AI hallucinations."
+    : "Image-to-video AI. Smart Ken Burns fallback on kitchens, bathrooms, and reflective rooms.";
 
-  // v23.2: 4K is currently disabled across all tiers because Gen-4.5 + 4K
-  // crashed the worker every time. Returns when we provision a larger
-  // worker class. Resolution row is now informational, not interactive.
+  // v24+: every render produces 1080p HD. 4K stays as a future paid
+  // addon (Runway upscale_v1) — see DEPTH_PIPELINE_BUILD_PLAN notes
+  // for when to wire it.
   const resolutionLabel = "1080p HD";
 
   return (
@@ -2521,7 +2520,7 @@ function RenderStatusPanel() {
           <div className="flex-1">
             <h3 className="text-sm font-semibold text-amber-400">Render finished, but upload was rejected</h3>
             <p className="text-xs text-ink-soft mt-1.5 leading-relaxed">
-              Your video rendered successfully, but Supabase Storage rejected the master MP4 — usually because the bucket's file-size limit is too small. A 2-minute video is typically 80–150MB.
+              Your video rendered successfully, but Supabase Storage rejected the master MP4 — usually because the bucket's file-size limit is too small. A 30-second 1080p video is typically 20–40 MB.
             </p>
             <div className="mt-3 p-3 bg-surface-input rounded-lg border border-edge text-xs leading-relaxed">
               <strong className="text-ink">To fix it:</strong>
@@ -2803,13 +2802,10 @@ function ActiveRenderPanel() {
   if (!renderJob) return null;
 
   const isRunway = isAiVideoEngine(renderJob.engine);
-  const isDepth = String(renderJob.engine || "").toLowerCase() === "depth";
-  const engineLabel = isDepth ? "Cinematic Depth" : (renderJob.engine === "runway" ? "Cinematic AI" : "Quick Reel");
-  const engineSubLabel = isDepth
-    ? "Depth parallax · ~3 min"
-    : renderJob.engine === "runway"
-      ? "Runway · 4K · ~3 min"
-      : "Cinematic motion · ~90 sec";
+  const engineLabel = renderJob.engine === "runway" ? "Cinematic AI" : "Quick Reel";
+  const engineSubLabel = renderJob.engine === "runway"
+    ? "Runway Gen-4 Turbo · 1080p · 30s"
+    : "Cinematic motion · 1080p · ~90 sec";
 
   // ETA — keep it stable. Recompute once a second, not on every frame.
   // Read displayed via ref so it doesn't trigger re-renders.
@@ -2966,22 +2962,19 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
       detail: "Synthesizing your narration script and ducking the music underneath."
     };
   }
-  if (raw.includes("variant") || raw.includes("aspect")) {
+  // v24+: aspect-variant + social-shorts steps removed (single 9:16
+  // master per render). Phases below cover only the steps the worker
+  // actually runs today.
+  if (raw.includes("variant") || raw.includes("aspect") || raw.includes("finaliz")) {
     return {
-      title: "Preparing every aspect ratio",
-      detail: "Deriving 1:1 and 16:9 versions from the master so you can post anywhere."
-    };
-  }
-  if (raw.includes("short") || raw.includes("cutting")) {
-    return {
-      title: "Cutting your hero shorts",
-      detail: "Selecting your three best scenes for Reels, TikTok, and Shorts."
+      title: "Finalizing your master",
+      detail: "Locking in the 9:16 vertical at 1080p."
     };
   }
   if (raw.includes("upload")) {
     return {
-      title: "Uploading your bundle",
-      detail: "Transferring your full deliverable set to permanent storage."
+      title: "Uploading your video",
+      detail: "Transferring the master MP4 to permanent storage."
     };
   }
   if (raw.includes("ready")) {

@@ -64,17 +64,17 @@ const TIERS: TierCard[] = [
   },
   {
     slug: "cinematic_4k",
-    name: "Cinematic AI 4K",
+    name: "Cinematic AI Pro",
     tagline: "For luxury teams and brokerages.",
     price: "$299",
     features: [
       "60 finished videos per month",
-      "Runway Gen-4.5 — premium AI engine",
-      "4K Ultra HD output",
-      "Twilight Magic (day-to-dusk hero shots)",
-      "Multiple aspect ratios (9:16, 1:1, 16:9)",
-      "Dedicated rendering capacity",
-      "Concierge onboarding"
+      "Runway Gen-4 Turbo — same AI engine, no daily cap",
+      "Priority rendering — front of the queue",
+      "60-second video length option",
+      "Brokerage white-label branding",
+      "Concierge onboarding",
+      "Premium chat + email support"
     ]
   }
 ];

@@ -7,9 +7,9 @@ import { engineLabel, isAiVideoEngine } from "../lib/engine-labels";
 
 /**
  * Library detail modal — shown when an agent clicks a render in their
- * dashboard. Reinforces the "one render → full bundle" differentiator
- * by surfacing every deliverable: vertical/square/wide variants, three
- * social shorts, and the thumbnail. Each is downloadable individually.
+ * dashboard. v24+ ships a single 9:16 master video per render (the
+ * variant fan-out + social shorts were removed). This modal surfaces
+ * the master mp4 + thumbnail + per-scene regen controls.
  *
  * NEW (v16): per-scene regenerate. The scenes grid lets the agent surgically
  * re-render a single bad scene without re-running all 24. Two modes:
