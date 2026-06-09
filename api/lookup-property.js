@@ -15,6 +15,9 @@
 // auto-fill per project), we'll stay on the free tier well into 4-5
 // figure ARR.
 
+import { requireUser } from "./_lib/auth.js";
+import { rateLimit } from "./_lib/rate-limit.js";
+
 const RENTCAST_BASE = "https://api.rentcast.io/v1";
 
 export default async function handler(request, response) {
@@ -36,6 +39,19 @@ export default async function handler(request, response) {
     });
     return;
   }
+
+  // v26: auth + rate limit. RentCast free tier is only 50 lookups/MONTH —
+  // a single anonymous script hammering this endpoint would exhaust the
+  // entire product's lookup budget in minutes. (Client fix in lib/api.ts
+  // ships in the same commit: lookupProperty() now sends the JWT.)
+  const auth = await requireUser(request, response);
+  if (!auth.ok) return;
+  const limited = await rateLimit(request, response, {
+    bucket: "lookup",
+    max: 15,
+    windowMs: 60 * 60 * 1000
+  });
+  if (limited) return;
 
   try {
     const address = extractAddress(request);

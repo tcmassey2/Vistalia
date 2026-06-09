@@ -71,6 +71,9 @@ const server = http.createServer(async (request, response) => {
         keyConfigured: Boolean(process.env.FAL_KEY),
         testEndpoint: "POST /test/veo"
       },
+      // v26: surface auth state so a missing worker secret is visible at a
+      // glance instead of silently failing open.
+      authConfigured: Boolean(workerSecret()),
       bootedAt: BOOTED_AT,
       uptimeSec: Math.round(process.uptime()),
       activeJobs: jobs.size,
@@ -117,6 +120,14 @@ const server = http.createServer(async (request, response) => {
   // Body: { imageUrl, prompt, aspectRatio?, duration? }
   // Returns: { status, clipServePath, gcsUri, veoOpName, durationMs }
   if (request.method === "POST" && request.url === "/test/veo") {
+    // v26: was auth-free ("gated by knowing the worker URL" — which appears
+    // in client-visible network traffic). Each call is ~$1 of fal.ai spend,
+    // so it gets the same bearer gate as production renders. test-veo.mjs
+    // sends the secret from its WORKER_SECRET env var.
+    if (!authorized(request)) {
+      sendJson(response, 401, { status: "failed", error: "Render worker authorization failed." });
+      return;
+    }
     await handleVeoSmokeTest(request, response);
     return;
   }
@@ -228,10 +239,24 @@ const server = http.createServer(async (request, response) => {
 
 server.listen(port, () => {
   console.log(`EstateMotion render worker listening on http://localhost:${port}`);
+  // v26: make missing auth LOUD. authorized() fails open by design (local
+  // dev), but in production an unset secret means anyone with the worker
+  // URL can submit Runway/Veo jobs on our API keys. /version also reports
+  // authConfigured so this is checkable from a browser.
+  if (!workerSecret()) {
+    console.warn(
+      "[server] ⚠️  NO WORKER SECRET SET (RENDER_WORKER_SECRET / RENDER_WEBHOOK_SECRET). " +
+      "All render endpoints are UNAUTHENTICATED. Set the secret on Render before going live."
+    );
+  }
 });
 
+function workerSecret() {
+  return process.env.RENDER_WORKER_SECRET || process.env.RENDER_WEBHOOK_SECRET || "";
+}
+
 function authorized(request) {
-  const secret = process.env.RENDER_WORKER_SECRET || process.env.RENDER_WEBHOOK_SECRET || "";
+  const secret = workerSecret();
   if (!secret) return true;
   return request.headers.authorization === `Bearer ${secret}`;
 }
@@ -330,6 +355,31 @@ function updateJob(jobId, patch) {
   });
 }
 
+// v26: the jobs/jobAssets Maps previously grew until worker restart — a
+// slow leak that also kept temp-file paths alive long past usefulness.
+// Prune terminal (completed/failed) jobs after 2 h; hard-cap with
+// oldest-first eviction as a backstop. Status polls for pruned jobs fall
+// back to the render_jobs Supabase table (api/render.js already handles
+// the worker-404 path), so nothing user-facing breaks.
+const JOB_RETENTION_MS = 2 * 60 * 60 * 1000;
+const JOBS_HARD_CAP = 500;
+setInterval(() => {
+  const cutoff = Date.now() - JOB_RETENTION_MS;
+  for (const [id, job] of jobs) {
+    const terminal = job.status === "completed" || job.status === "failed";
+    const updatedAt = Date.parse(job.updatedAt || "") || 0;
+    if (terminal && updatedAt < cutoff) {
+      jobs.delete(id);
+      jobAssets.delete(id);
+    }
+  }
+  while (jobs.size > JOBS_HARD_CAP) {
+    const oldest = jobs.keys().next().value;
+    jobs.delete(oldest);
+    jobAssets.delete(oldest);
+  }
+}, 10 * 60 * 1000).unref();
+
 function publishLocalAssetUrls(result = {}) {
   if (!result.storageSkipped || !result.localMp4Path) return result;
   const publicBase = (process.env.RENDER_WORKER_PUBLIC_URL || `http://localhost:${port}`).replace(/\/$/, "");
@@ -419,15 +469,19 @@ async function serveRenderAsset(request, response) {
     sendJson(response, 404, { status: "failed", error: "Rendered asset was not found. It may have expired or the worker restarted." });
     return;
   }
+  // v26: stream instead of buffering. readFile() pulled entire mp4s
+  // (often 50-150 MB) into heap on a 4 GB box that's also running ffmpeg —
+  // a couple of concurrent downloads during a render risked OOM.
   try {
-    const { default: fs } = await import("node:fs/promises");
-    const body = await fs.readFile(filePath);
+    const stat = await fs.promises.stat(filePath);
     response.writeHead(200, {
       "Content-Type": fileName === "thumbnail.png" ? "image/png" : "video/mp4",
-      "Content-Length": body.length,
+      "Content-Length": stat.size,
       "Cache-Control": "no-store"
     });
-    response.end(body);
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", () => response.destroy());
+    stream.pipe(response);
   } catch (error) {
     sendJson(response, 404, { status: "failed", error: error.message || "Rendered asset could not be read." });
   }

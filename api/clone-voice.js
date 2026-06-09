@@ -15,6 +15,9 @@
 // We surface this gating explicitly so users on a too-low tier get told
 // to upgrade rather than seeing a generic "voice clone failed" error.
 
+import { requireUser } from "./_lib/auth.js";
+import { rateLimit } from "./_lib/rate-limit.js";
+
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 const MAX_SAMPLE_BYTES = 12 * 1024 * 1024; // 12 MB cap
 const ACCEPTED_MIME_PREFIXES = ["audio/"];
@@ -30,6 +33,19 @@ export default async function handler(request, response) {
     });
     return;
   }
+
+  // v26: auth + rate limit. Voice cloning is both ElevenLabs spend AND an
+  // impersonation-abuse vector — unauthenticated cloning of arbitrary audio
+  // is exactly the thing we never want traced back to our API key. Auth
+  // applies to the diagnostic too (it reveals plan/billing details).
+  const auth = await requireUser(request, response);
+  if (!auth.ok) return;
+  const limited = await rateLimit(request, response, {
+    bucket: "clone-voice",
+    max: 5,
+    windowMs: 60 * 60 * 1000
+  });
+  if (limited) return;
 
   // GET ?diagnose=1 — health check / plan inspector
   if (request.method === "GET") {

@@ -2839,8 +2839,12 @@ function ActiveRenderPanel() {
           </span>
         </div>
 
-        {/* Hero row: big percentage + phase title */}
-        <div className="flex items-end justify-between gap-6">
+        {/* Hero row: big percentage + phase title.
+            v26: role=status + aria-live so screen readers hear phase
+            transitions ("Directing your tour" → "Rendering scenes" → …)
+            without having to re-scan the page. polite, not assertive —
+            these fire every few seconds and must not interrupt. */}
+        <div className="flex items-end justify-between gap-6" role="status" aria-live="polite">
           <div className="flex-1 min-w-0">
             <div className="text-2xl sm:text-3xl font-semibold tracking-tighter2 text-ink leading-tight">
               {friendlyPhase.title}

@@ -7,6 +7,9 @@ export const config = {
   maxDuration: 90
 };
 
+import { requireUser } from "./_lib/auth.js";
+import { rateLimit } from "./_lib/rate-limit.js";
+
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
 const DEFAULT_TIMEOUT_MS = 60000; // bumped from 35s to 60s (matches the longer function ceiling)
@@ -189,6 +192,18 @@ export default async function handler(request, response) {
     response.status(405).json({ status: "failed", error: "Use POST /api/create-edit-plan." });
     return;
   }
+
+  // v26: auth + rate limit. This is the most expensive OpenAI call in the
+  // product (Vision on up to 12 photos) and was previously open to anyone
+  // with the URL.
+  const auth = await requireUser(request, response);
+  if (!auth.ok) return;
+  const limited = await rateLimit(request, response, {
+    bucket: "edit-plan",
+    max: 20,
+    windowMs: 60 * 60 * 1000
+  });
+  if (limited) return;
 
   const body = parseBody(request.body);
   const rawPhotos = Array.isArray(body.photos) ? body.photos : [];

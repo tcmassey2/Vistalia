@@ -101,7 +101,12 @@ export default function LibraryDetailModal({
       className="fixed inset-0 z-50 grid place-items-center bg-paper/90 backdrop-blur-sm p-4 sm:p-8 fade-up-in"
       onClick={onClose}
     >
+      {/* v26: dialog semantics — without role/aria-modal, screen readers
+          treat this as ordinary page content layered on top. */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={heading}
         className="bg-surface border border-edge rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >

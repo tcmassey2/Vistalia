@@ -12,6 +12,9 @@
 // frontend uses the response as a transient blob URL — a cloned voice can
 // be tested, played back, then discarded.
 
+import { requireUser } from "./_lib/auth.js";
+import { rateLimit } from "./_lib/rate-limit.js";
+
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 // "eleven_turbo_v2_5" is the cheapest model that still sounds professional
 // on voice clones. Use multilingual_v2 if you need non-English support.
@@ -30,6 +33,18 @@ export default async function handler(request, response) {
     response.status(503).json({ status: "failed", error: "Voice synthesis is not configured." });
     return;
   }
+
+  // v26: auth + rate limit — every call here is fresh ElevenLabs spend.
+  // 30/hr covers honest "test your voice" usage (a handful of previews
+  // per session) with room to spare.
+  const auth = await requireUser(request, response);
+  if (!auth.ok) return;
+  const limited = await rateLimit(request, response, {
+    bucket: "narration",
+    max: 30,
+    windowMs: 60 * 60 * 1000
+  });
+  if (limited) return;
 
   try {
     let voiceId = "";

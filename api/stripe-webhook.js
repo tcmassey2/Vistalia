@@ -58,6 +58,19 @@ export default async function handler(request, response) {
     return response.status(400).send("Invalid JSON");
   }
 
+  // v26: idempotency. Stripe retries webhooks on any non-2xx (and sometimes
+  // on timeouts even after a 2xx). Replayed subscription.updated events
+  // re-run updateProfile — including the videos_used_this_month: 0 reset,
+  // which makes an old replayed event a quota-reset bug. Dedupe by event ID.
+  // In-memory only: fine for single-region Vercel today; a durable
+  // stripe_events table is queued for the next Supabase migration.
+  if (event.id) {
+    if (seenEvents.has(event.id)) {
+      return response.status(200).json({ received: true, duplicate: true });
+    }
+    rememberEvent(event.id);
+  }
+
   try {
     switch (event.type) {
       case "checkout.session.completed":
@@ -218,6 +231,22 @@ const TIER_LABELS = {
 
 /* -------------------- Stripe signature verification -------------------- */
 
+// v26: replay-attack tolerance. Stripe signs `${timestamp}.${body}`; without
+// checking the timestamp, a captured webhook payload verifies forever.
+// Stripe's own SDK default is 300s — match it.
+const SIGNATURE_TOLERANCE_SEC = 300;
+
+// v26: in-memory event-ID dedupe (see handler). Bounded FIFO.
+const seenEvents = new Set();
+const SEEN_EVENTS_MAX = 1000;
+function rememberEvent(id) {
+  seenEvents.add(id);
+  if (seenEvents.size > SEEN_EVENTS_MAX) {
+    const oldest = seenEvents.values().next().value;
+    seenEvents.delete(oldest);
+  }
+}
+
 function verifySignature(rawBody, signatureHeader, secret) {
   if (!signatureHeader) return false;
   const parts = String(signatureHeader).split(",").reduce((acc, part) => {
@@ -228,6 +257,11 @@ function verifySignature(rawBody, signatureHeader, secret) {
   const timestamp = parts.t;
   const signature = parts.v1;
   if (!timestamp || !signature) return false;
+  const ageSec = Math.abs(Date.now() / 1000 - Number(timestamp));
+  if (!Number.isFinite(ageSec) || ageSec > SIGNATURE_TOLERANCE_SEC) {
+    console.warn("[stripe-webhook] signature timestamp outside tolerance", { ageSec: Math.round(ageSec) });
+    return false;
+  }
   const payload = `${timestamp}.${rawBody}`;
   const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
   // Constant-time compare

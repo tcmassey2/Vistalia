@@ -1,3 +1,6 @@
+import { requireUser } from "./_lib/auth.js";
+import { rateLimit } from "./_lib/rate-limit.js";
+
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -30,6 +33,20 @@ export default async function handler(request, response) {
     response.status(200).json({ status: "fallback", reason: "OPENAI_API_KEY is not configured server-side." });
     return;
   }
+
+  // v26: auth + rate limit. NOTE: as of this writing no frontend code calls
+  // this endpoint (curation moved into create-edit-plan's Vision pass) —
+  // it's kept for the legacy app surface. If it comes back into use, the
+  // caller must send the Supabase JWT. 120/hr covers a 24-photo upload
+  // burst across several projects.
+  const auth = await requireUser(request, response);
+  if (!auth.ok) return;
+  const limitedClassify = await rateLimit(request, response, {
+    bucket: "classify",
+    max: 120,
+    windowMs: 60 * 60 * 1000
+  });
+  if (limitedClassify) return;
 
   const body = parseBody(request.body);
   const imageUrl = String(body.imageUrl || "");

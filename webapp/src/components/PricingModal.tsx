@@ -135,7 +135,11 @@ export default function PricingModal({ open, onClose }: PricingModalProps) {
       className="fixed inset-0 z-50 bg-black/72 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto"
       onClick={onClose}
     >
+      {/* v26: dialog semantics for assistive tech. */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pick a plan"
         className="relative w-full max-w-5xl bg-surface rounded-2xl border border-edge shadow-2xl my-6"
         onClick={(e) => e.stopPropagation()}
       >

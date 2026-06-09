@@ -583,7 +583,10 @@ export interface PropertyLookupResult {
 
 export async function lookupProperty(address: string): Promise<PropertyLookupResult> {
   const params = new URLSearchParams({ address });
-  const res = await fetch(`/api/lookup-property?${params}`);
+  // v26: send the JWT — the endpoint now requires auth (RentCast budget
+  // protection). Previously this was the only api.ts call without it.
+  const headers = await authHeaders();
+  const res = await fetch(`/api/lookup-property?${params}`, { headers });
   // 503 = unconfigured (no RentCast key on server); surface a usable shape
   // so the UI can show a graceful "not connected yet" instead of crashing.
   if (res.status === 503) {

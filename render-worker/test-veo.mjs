@@ -26,6 +26,12 @@
 // PREREQS (on the worker side)
 //   FAL_KEY              - your fal.ai API key (from https://fal.ai/dashboard/keys)
 //   FAL_VIDEO_MODEL      - optional, defaults to fal-ai/veo3/fast/image-to-video
+//
+// PREREQS (on YOUR side, if the worker has a secret set — production does)
+//   WORKER_SECRET        - same value as RENDER_WEBHOOK_SECRET on the worker.
+//                          v26 gated /test/veo behind worker auth so strangers
+//                          can't burn fal.ai balance. Local workers without a
+//                          secret still accept unauthenticated calls.
 
 const args = parseArgs(process.argv.slice(2));
 if (!args.image || !args.prompt) {
@@ -49,9 +55,13 @@ console.log(`POST ${workerUrl}/test/veo`);
 console.log("Body:", { ...body, prompt: body.prompt.slice(0, 80) + "..." });
 const startedAt = Date.now();
 
+const workerSecret = process.env.WORKER_SECRET || process.env.RENDER_WEBHOOK_SECRET || "";
 const res = await fetch(`${workerUrl}/test/veo`, {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: {
+    "Content-Type": "application/json",
+    ...(workerSecret ? { Authorization: `Bearer ${workerSecret}` } : {})
+  },
   body: JSON.stringify(body)
 });
 
