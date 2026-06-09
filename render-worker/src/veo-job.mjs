@@ -59,7 +59,13 @@ async function getFalClient() {
 }
 
 // Defaults.
-const DEFAULT_MODEL = "fal-ai/veo3/fast/image-to-video";
+// v26.2: bumped from veo3/fast after the June 9 bake-off. Constrained
+// prompts passed on all three tested models (Veo 3 Fast, Kling o3,
+// Seedance 1.0 Pro) on the laundry/pool failure scenes; Troy picked
+// Veo 3.1 Fast as the production engine. veo3.1/lite does not exist
+// on fal; veo3.1 (standard) exists but costs more than the $249-tier
+// COGS model assumes. FAL_VIDEO_MODEL env var still overrides.
+const DEFAULT_MODEL = "fal-ai/veo3.1/fast/image-to-video";
 const DEFAULT_RESOLUTION = "1080p";
 const DEFAULT_DURATION = "6s";
 const DEFAULT_GENERATE_AUDIO = false;
