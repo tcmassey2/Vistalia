@@ -1,278 +1,202 @@
-// EstateMotion — Veo 3.1 Fast image-to-video worker (v25).
+// EstateMotion — Veo image-to-video worker via fal.ai (v25 Phase 1b).
 //
-// Replaces the Runway Gen-4 Turbo engine. Veo 3.1 is Google's image-to-
-// video model on Vertex AI; we use the "Fast" variant which is cheaper
-// ($0.15/sec) while still scoring above Runway on the leaderboards as
-// of June 2026. Crucially for our use case, Veo 3.1 has physics-aware
-// motion that is materially better at preserving cabinets, fixtures,
-// blinds, and other repeating-geometry features that Runway warps.
+// This file replaces our previous Vertex-AI-direct implementation. The
+// direct path required a Google Cloud service-account JSON key, which
+// is blocked by Google's Secure-by-Default org policy on free-tier
+// accounts (iam.disableServiceAccountKeyCreation). Rather than fight
+// the org policy, we route Veo via fal.ai which:
+//   - accepts a single API key (FAL_KEY) instead of SA + IAM + bucket
+//   - accepts our Supabase image URL directly (no GCS upload)
+//   - returns a plain HTTPS mp4 URL (no GCS download with auth)
+//   - lets us A/B test Veo, Luma, Kling, and Seedance against each
+//     other by changing one env var (FAL_VIDEO_MODEL)
 //
-// THIS FILE IS PHASE 1 ONLY. It exports the per-scene generation
-// primitive (`generateVeoClip`) plus a tiny `runVeoSmokeTest` helper
-// the server.mjs `/test/veo` endpoint calls. It does NOT yet route
-// production renders — see runway-job.mjs which is still the production
-// path. Phase 2 will rewire the dispatcher once we've validated quality
-// on Troy's $300 Google Cloud free credit.
+// Phase 1b ships ONLY the standalone smoke test. Production routing
+// stays on Runway until Phase 2 swaps the dispatcher.
 //
 // ─── Environment ────────────────────────────────────────────────
 // Required:
-//   GOOGLE_CLOUD_PROJECT             - GCP project ID (e.g. "estatemotion-prod")
-//   GOOGLE_APPLICATION_CREDENTIALS   - path to service-account JSON file
-//                                       (Render: write env JSON to disk at boot)
-//   VEO_OUTPUT_GCS_BUCKET            - gs://bucket-name where Veo writes the mp4
+//   FAL_KEY            - your fal.ai API key (starts with fal_)
 //
 // Optional:
-//   GOOGLE_CLOUD_LOCATION            - default "global" (Veo 3.1 Fast)
-//   VEO_MODEL                        - default "veo-3.1-fast-generate-001"
-//   VEO_POLL_SECONDS                 - default 10
-//   VEO_MAX_POLL_MINUTES             - default 5 (300s) before giving up
-//
-// ─── Service-account JSON on disk ────────────────────────────────
-// Render.com (and Vercel) don't let you upload files. Standard pattern
-// is to put the service-account JSON in an env var and write it to disk
-// at boot. The bootstrap (in server.mjs) does:
-//   if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-//     fs.writeFileSync("/tmp/gcp-sa.json", process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-//     process.env.GOOGLE_APPLICATION_CREDENTIALS = "/tmp/gcp-sa.json";
-//   }
-// before requiring this module.
+//   FAL_VIDEO_MODEL    - endpoint id, default "fal-ai/veo3/fast/image-to-video"
+//                        Other options worth testing in the bake-off:
+//                          fal-ai/veo3.1/lite/image-to-video
+//                          fal-ai/veo3.1/image-to-video
+//                          fal-ai/kling-video/o3/standard/image-to-video
+//                          fal-ai/luma-dream-machine/ray-2/image-to-video
+//                          fal-ai/bytedance/seedance/v1/pro/image-to-video
+//   FAL_RESOLUTION     - "720p" or "1080p" (default "1080p")
+//   FAL_DURATION       - "4s" | "6s" | "8s" (default "6s"; our scenes
+//                        are 5s and Veo only does 4/6/8 — round up)
+//   FAL_GENERATE_AUDIO - "true" or "false" (default "false" — we have
+//                        our own music + ElevenLabs voice pipeline)
+//   FAL_SAFETY         - 1-6 (default "4"; higher = looser)
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 
-// Lazy-import @google/genai so the worker doesn't crash at boot if the
-// dep isn't installed yet (we add it in this same commit, but during
-// migration there's a window where the package isn't on disk yet).
-let _GoogleGenAI = null;
-async function getGoogleGenAI() {
-  if (_GoogleGenAI) return _GoogleGenAI;
+// Lazy-import @fal-ai/client so the worker can boot even before the
+// dep is installed (npm install runs at deploy time).
+let _fal = null;
+async function getFalClient() {
+  if (_fal) return _fal;
   try {
-    const mod = await import("@google/genai");
-    _GoogleGenAI = mod.GoogleGenAI || mod.default?.GoogleGenAI;
-    if (!_GoogleGenAI) {
-      throw new Error("@google/genai loaded but GoogleGenAI export not found.");
+    const mod = await import("@fal-ai/client");
+    _fal = mod.fal || mod.default?.fal;
+    if (!_fal) {
+      throw new Error("@fal-ai/client loaded but `fal` export not found.");
     }
-    return _GoogleGenAI;
+    return _fal;
   } catch (err) {
     const msg = err?.code === "ERR_MODULE_NOT_FOUND"
-      ? "@google/genai not installed. Run `npm install @google/genai` in render-worker/."
-      : `Failed to load @google/genai: ${err.message || err}`;
+      ? "@fal-ai/client not installed. Run `npm install @fal-ai/client` in render-worker/."
+      : `Failed to load @fal-ai/client: ${err.message || err}`;
     const wrapped = new Error(msg);
-    wrapped.code = "VEO_SDK_UNAVAILABLE";
+    wrapped.code = "FAL_SDK_UNAVAILABLE";
     throw wrapped;
   }
 }
 
-// Defaults the rest of the file uses.
-const DEFAULT_MODEL = "veo-3.1-fast-generate-001";
-const DEFAULT_LOCATION = "global";
-const DEFAULT_POLL_SECONDS = 10;
-const DEFAULT_MAX_POLL_MINUTES = 5;
-
-/* =================================================================
-   Veo client factory — single source of truth for auth + project.
-   ================================================================= */
-
-let _client = null;
-async function getVeoClient() {
-  if (_client) return _client;
-  const GoogleGenAI = await getGoogleGenAI();
-  const project = process.env.GOOGLE_CLOUD_PROJECT;
-  const location = process.env.GOOGLE_CLOUD_LOCATION || DEFAULT_LOCATION;
-  if (!project) {
-    const err = new Error(
-      "Veo: GOOGLE_CLOUD_PROJECT env var is required. Set it on the worker."
-    );
-    err.code = "VEO_CONFIG_MISSING";
-    throw err;
-  }
-  // The SDK auto-picks up GOOGLE_APPLICATION_CREDENTIALS for ADC. We
-  // verify that the file exists up front so the error message is clear
-  // when the bootstrap forgot to write the JSON.
-  const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!credPath) {
-    const err = new Error(
-      "Veo: GOOGLE_APPLICATION_CREDENTIALS env var is required (path to SA JSON)."
-    );
-    err.code = "VEO_CONFIG_MISSING";
-    throw err;
-  }
-  try {
-    await fs.access(credPath);
-  } catch {
-    const err = new Error(
-      `Veo: GOOGLE_APPLICATION_CREDENTIALS points to "${credPath}" but the file doesn't exist. Did the bootstrap write the SA JSON?`
-    );
-    err.code = "VEO_CONFIG_MISSING";
-    throw err;
-  }
-  _client = new GoogleGenAI({
-    vertexai: true,
-    project,
-    location
-  });
-  return _client;
-}
+// Defaults.
+const DEFAULT_MODEL = "fal-ai/veo3/fast/image-to-video";
+const DEFAULT_RESOLUTION = "1080p";
+const DEFAULT_DURATION = "6s";
+const DEFAULT_GENERATE_AUDIO = false;
+const DEFAULT_SAFETY = "4";
 
 /* =================================================================
    generateVeoClip — the per-scene primitive.
 
-   Takes one source image (HTTPS or gs:// URL) + a motion prompt, calls
-   Veo 3.1 Fast, polls until the operation completes, then downloads the
-   resulting mp4 to the local temp dir. Returns:
+   Submits one image + one motion prompt to fal.ai, blocks until the
+   queue completes, downloads the resulting mp4 to local disk. Returns:
      {
-       clipPath:   "/tmp/.../scene-003.mp4",  // local file you can stitch
-       sceneIndex: 3,
-       photoId:    "uuid",
-       duration:   5,                          // requested seconds
-       gcsUri:     "gs://bucket/.../video.mp4",// where Veo dropped it
-       veoOpName:  "projects/.../operations/..." // for ops/debug
+       clipPath:    "/tmp/.../veo-scene-003.mp4",
+       sceneIndex:  3,
+       photoId:     "uuid",
+       duration:    "6s",
+       videoUrl:    "https://...mp4" // fal.ai's hosted output URL
+       requestId:   "abc-123",       // for ops/debug
+       model:       "fal-ai/veo3/fast/image-to-video"
      }
 
-   Failures throw with a `.code` field:
-     VEO_CONFIG_MISSING   - env vars not set
-     VEO_SDK_UNAVAILABLE  - @google/genai not on disk
-     VEO_GENERATE_FAILED  - submit failed (API error, 4xx/5xx)
-     VEO_OP_FAILED        - operation completed but returned no video
-     VEO_TIMEOUT          - polled VEO_MAX_POLL_MINUTES with no result
-     VEO_DOWNLOAD_FAILED  - couldn't pull the mp4 from GCS
+   Failures throw with .code:
+     FAL_CONFIG_MISSING   - FAL_KEY not set
+     FAL_SDK_UNAVAILABLE  - @fal-ai/client not on disk
+     FAL_BAD_INPUT        - missing imageUrl or prompt
+     FAL_GENERATE_FAILED  - submit/queue threw (API error)
+     FAL_NO_OUTPUT        - queue completed but no video URL returned
+     FAL_DOWNLOAD_FAILED  - couldn't fetch the mp4 from fal.ai's CDN
    ================================================================= */
 export async function generateVeoClip({
   imageUrl,
-  mimeType = "image/jpeg",
   prompt,
-  aspectRatio = "9:16",     // EstateMotion ships vertical 9:16 masters
-  duration = 5,             // Veo 3.1 emits 5s or 8s clips natively
+  aspectRatio = "9:16",        // EstateMotion ships vertical 9:16 masters
+  duration,                    // string: "4s" | "6s" | "8s"
   sceneIndex = 0,
   photoId = "",
   tempDir,
-  outputGcsBucket = process.env.VEO_OUTPUT_GCS_BUCKET || "",
-  pollSeconds = Number(process.env.VEO_POLL_SECONDS || DEFAULT_POLL_SECONDS),
-  maxPollMinutes = Number(process.env.VEO_MAX_POLL_MINUTES || DEFAULT_MAX_POLL_MINUTES),
-  model = process.env.VEO_MODEL || DEFAULT_MODEL
+  // Allow per-call overrides so the bake-off script can sweep models.
+  model = process.env.FAL_VIDEO_MODEL || DEFAULT_MODEL,
+  resolution = process.env.FAL_RESOLUTION || DEFAULT_RESOLUTION,
+  generateAudio = toBool(process.env.FAL_GENERATE_AUDIO, DEFAULT_GENERATE_AUDIO),
+  safetyTolerance = process.env.FAL_SAFETY || DEFAULT_SAFETY
 }) {
+  if (!process.env.FAL_KEY) {
+    const err = new Error(
+      "FAL_KEY env var is required. Get one at https://fal.ai/dashboard/keys."
+    );
+    err.code = "FAL_CONFIG_MISSING";
+    throw err;
+  }
   if (!imageUrl) {
     const err = new Error("generateVeoClip: imageUrl is required.");
-    err.code = "VEO_BAD_INPUT";
+    err.code = "FAL_BAD_INPUT";
     throw err;
   }
   if (!prompt || !prompt.trim()) {
     const err = new Error("generateVeoClip: prompt is required.");
-    err.code = "VEO_BAD_INPUT";
-    throw err;
-  }
-  if (!outputGcsBucket) {
-    const err = new Error(
-      "generateVeoClip: VEO_OUTPUT_GCS_BUCKET env var required (e.g. gs://estatemotion-veo-output)."
-    );
-    err.code = "VEO_CONFIG_MISSING";
+    err.code = "FAL_BAD_INPUT";
     throw err;
   }
   if (!tempDir) {
-    const err = new Error("generateVeoClip: tempDir is required for download.");
-    err.code = "VEO_BAD_INPUT";
+    const err = new Error("generateVeoClip: tempDir is required.");
+    err.code = "FAL_BAD_INPUT";
     throw err;
   }
 
-  const client = await getVeoClient();
+  const fal = await getFalClient();
+  // @fal-ai/client auto-reads FAL_KEY from env, but call config() explicitly
+  // so a different runtime that injected the var late still works.
+  fal.config({ credentials: process.env.FAL_KEY });
 
-  // Veo accepts either:
-  //   - gcsUri:  gs://bucket/path/to/image.jpg
-  //   - imageBytes (base64) + mimeType
-  // For HTTPS Supabase URLs we have to inline the bytes — Veo does not
-  // accept arbitrary HTTPS image URLs.
-  let imagePayload;
-  if (imageUrl.startsWith("gs://")) {
-    imagePayload = { gcsUri: imageUrl, mimeType };
-  } else {
-    const bytes = await downloadImageBytes(imageUrl);
-    imagePayload = {
-      imageBytes: bytes.toString("base64"),
-      mimeType: bytes.detectedMimeType || mimeType
-    };
-  }
+  // fal.ai Veo 3 Fast accepts duration as enum "4s"|"6s"|"8s". Our pipeline
+  // uses numeric 5s — round up to 6s for cinematic flow (4s feels choppy).
+  const durationEnum = normalizeDuration(duration);
 
-  // Output URI is a *folder* — Veo writes one or more videos under it
-  // with auto-generated names. Scope per-scene so we can find/clean them.
-  const jobStamp = Date.now();
-  const outputGcsUri = `${outputGcsBucket.replace(/\/$/, "")}/scene-${String(sceneIndex).padStart(3, "0")}-${jobStamp}/`;
+  // Build the input payload. Schema reference:
+  //   https://fal.ai/models/fal-ai/veo3/fast/image-to-video/api#schema-input
+  // Note: aspect_ratio "auto" is the default; we override to "9:16" because
+  // every EstateMotion master is vertical.
+  const input = {
+    prompt,
+    image_url: imageUrl,
+    aspect_ratio: aspectRatio,
+    duration: durationEnum,
+    resolution,
+    generate_audio: generateAudio,
+    safety_tolerance: safetyTolerance
+  };
 
-  // Submit the generation operation.
-  let operation;
+  let result;
   try {
-    operation = await client.models.generateVideos({
-      model,
-      prompt,
-      image: imagePayload,
-      config: {
-        aspectRatio,
-        outputGcsUri,
-        // Veo defaults to 8s. Override for short scenes.
-        durationSeconds: clamp(Number(duration) || 5, 4, 8)
+    // subscribe() blocks until the queue completes (60-180s typical for
+    // Veo 3 Fast). It internally handles status polling so we don't have
+    // to roll our own poll loop like we did with Vertex AI direct.
+    result = await fal.subscribe(model, {
+      input,
+      logs: true,
+      onQueueUpdate: (update) => {
+        if (update.status === "IN_PROGRESS" && Array.isArray(update.logs)) {
+          for (const log of update.logs) {
+            console.info(`[fal/${model}] scene ${sceneIndex + 1}: ${log.message}`);
+          }
+        }
       }
     });
   } catch (err) {
     const wrapped = new Error(
-      `Veo generateVideos submit failed for scene ${sceneIndex + 1}: ${err.message || err}`
+      `fal.subscribe failed for scene ${sceneIndex + 1} on ${model}: ${err.message || err}`
     );
-    wrapped.code = "VEO_GENERATE_FAILED";
+    wrapped.code = "FAL_GENERATE_FAILED";
     wrapped.cause = err;
     throw wrapped;
   }
 
-  // Poll the operation. Each iteration sleeps `pollSeconds` then calls
-  // operations.get to refresh status. Veo 3.1 Fast typically completes
-  // in 60-180s on the Vertex AI side.
-  const deadline = Date.now() + maxPollMinutes * 60 * 1000;
-  while (!operation.done) {
-    if (Date.now() > deadline) {
-      const err = new Error(
-        `Veo scene ${sceneIndex + 1} did not complete within ${maxPollMinutes} minutes.`
-      );
-      err.code = "VEO_TIMEOUT";
-      err.veoOpName = operation?.name;
-      throw err;
-    }
-    await sleep(pollSeconds * 1000);
-    try {
-      operation = await client.operations.get({ operation });
-    } catch (err) {
-      // Transient ops-poll failures shouldn't kill the whole job — log
-      // and try again on next tick.
-      console.warn(
-        `[veo] operations.get failed for scene ${sceneIndex + 1}: ${err.message || err}. Will retry.`
-      );
-    }
-  }
-
-  // Operation done — extract the resulting video URI.
-  const generated = operation?.response?.generatedVideos?.[0]?.video;
-  const videoUri = generated?.uri || generated?.gcsUri || "";
-  if (!videoUri) {
+  // Output schema:
+  //   { video: { url, content_type?, file_name?, file_size? } }
+  const videoUrl = result?.data?.video?.url || "";
+  if (!videoUrl) {
     const err = new Error(
-      `Veo scene ${sceneIndex + 1} operation completed but no video URI was returned.`
+      `fal.ai scene ${sceneIndex + 1} completed but no video URL was returned.`
     );
-    err.code = "VEO_OP_FAILED";
-    err.opName = operation?.name;
-    err.responseSnapshot = JSON.stringify(operation?.response || {}).slice(0, 300);
+    err.code = "FAL_NO_OUTPUT";
+    err.responseSnapshot = JSON.stringify(result?.data || {}).slice(0, 300);
     throw err;
   }
 
-  // Download the mp4 from GCS to our local temp dir so the rest of the
-  // pipeline (stitch, normalize, upload to Supabase) can treat it the
-  // same as a Runway clip.
+  // Download the mp4 from fal.ai's CDN. Public URL, no auth required.
   const clipPath = path.join(
     tempDir,
     `veo-scene-${String(sceneIndex).padStart(3, "0")}.mp4`
   );
   try {
-    await downloadGcsObject(videoUri, clipPath);
+    await downloadToFile(videoUrl, clipPath);
   } catch (err) {
     const wrapped = new Error(
-      `Veo scene ${sceneIndex + 1} download failed (${videoUri}): ${err.message || err}`
+      `fal.ai scene ${sceneIndex + 1} download failed (${videoUrl}): ${err.message || err}`
     );
-    wrapped.code = "VEO_DOWNLOAD_FAILED";
+    wrapped.code = "FAL_DOWNLOAD_FAILED";
     wrapped.cause = err;
     throw wrapped;
   }
@@ -281,27 +205,27 @@ export async function generateVeoClip({
     clipPath,
     sceneIndex,
     photoId,
-    duration: clamp(Number(duration) || 5, 4, 8),
-    gcsUri: videoUri,
-    veoOpName: operation?.name || ""
+    duration: durationEnum,
+    videoUrl,
+    requestId: result?.requestId || "",
+    model
   };
 }
 
 /* =================================================================
    runVeoSmokeTest — POST /test/veo handler helper.
-   One image + one prompt → one local clip path. Returns the path
-   plus the upstream gcsUri so the caller can either serve the local
-   file or hand back the GCS URI as a sanity check.
+   One image + one prompt → one local clip path.
    ================================================================= */
-export async function runVeoSmokeTest({ imageUrl, prompt, aspectRatio, duration, tempDir }) {
+export async function runVeoSmokeTest({ imageUrl, prompt, aspectRatio, duration, model, tempDir }) {
   return generateVeoClip({
     imageUrl,
     prompt,
     aspectRatio: aspectRatio || "9:16",
-    duration: duration || 5,
+    duration: duration || "6s",
     sceneIndex: 0,
     photoId: "smoke-test",
-    tempDir
+    tempDir,
+    ...(model ? { model } : {})
   });
 }
 
@@ -309,50 +233,36 @@ export async function runVeoSmokeTest({ imageUrl, prompt, aspectRatio, duration,
    Helpers
    ================================================================= */
 
-function clamp(n, lo, hi) {
-  return Math.max(lo, Math.min(hi, n));
+// Convert a numeric or string seconds value to fal.ai's enum.
+// fal.ai Veo 3 Fast only supports "4s" | "6s" | "8s". Pick the
+// next-largest bucket so we never undershoot what the manifest asked for.
+function normalizeDuration(raw) {
+  if (typeof raw === "string" && /^\d+s$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    return secondsToEnum(n);
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_DURATION;
+  return secondsToEnum(n);
 }
 
-// Download an HTTPS image (typically a Supabase Storage URL) into a
-// Buffer. Adds a `detectedMimeType` property so the caller can override
-// the default jpeg assumption when the server returns a different type.
-async function downloadImageBytes(url) {
+function secondsToEnum(n) {
+  if (n <= 4) return "4s";
+  if (n <= 6) return "6s";
+  return "8s";
+}
+
+function toBool(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return /^(1|true|yes|on)$/i.test(String(value).trim());
+}
+
+// Stream-download a public URL into a local file using built-in fetch.
+async function downloadToFile(url, destPath) {
   const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Image fetch failed (${res.status}) for ${url}`);
+  if (!res.ok || !res.body) {
+    throw new Error(`HTTP ${res.status} downloading ${url}`);
   }
-  const ct = res.headers.get("content-type") || "";
   const buf = Buffer.from(await res.arrayBuffer());
-  buf.detectedMimeType = ct.includes("image/") ? ct.split(";")[0].trim() : null;
-  return buf;
-}
-
-// Download an object from Google Cloud Storage using @google-cloud/storage.
-// Reuses ADC (the same SA credentials the Veo client uses), so no extra
-// auth config required. Lazy-import so unset envs don't crash boot.
-let _storage = null;
-async function getStorageClient() {
-  if (_storage) return _storage;
-  try {
-    const { Storage } = await import("@google-cloud/storage");
-    _storage = new Storage();
-    return _storage;
-  } catch (err) {
-    const msg = err?.code === "ERR_MODULE_NOT_FOUND"
-      ? "@google-cloud/storage not installed. Run `npm install @google-cloud/storage` in render-worker/."
-      : `Failed to load @google-cloud/storage: ${err.message || err}`;
-    const wrapped = new Error(msg);
-    wrapped.code = "VEO_SDK_UNAVAILABLE";
-    throw wrapped;
-  }
-}
-
-async function downloadGcsObject(gsUri, destPath) {
-  const match = /^gs:\/\/([^/]+)\/(.+)$/.exec(gsUri);
-  if (!match) {
-    throw new Error(`Not a gs:// URI: ${gsUri}`);
-  }
-  const [, bucket, key] = match;
-  const storage = await getStorageClient();
-  await storage.bucket(bucket).file(key).download({ destination: destPath });
+  await fs.writeFile(destPath, buf);
 }

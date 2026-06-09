@@ -1,30 +1,31 @@
-// EstateMotion v25 Phase 1 — Veo smoke-test runner.
+// EstateMotion v25 Phase 1b — Veo smoke-test runner (fal.ai).
 //
 // Hits the worker's POST /test/veo endpoint with one Supabase image URL
-// + one motion prompt and prints the resulting clip URL on success. The
-// intent is to validate Veo 3.1 Fast end-to-end before flipping any
-// production routing.
+// + one motion prompt and prints the resulting clip URL on success.
 //
 // USAGE
 //   WORKER_URL=https://estatemotion-worker.onrender.com \
 //     node test-veo.mjs \
 //       --image https://your-supabase-url.supabase.co/.../kitchen.jpg \
-//       --prompt "Slow cinematic dolly toward the kitchen island. Subtle 6% zoom. No camera shake. Preserve cabinetry and appliance hardware exactly." \
+//       --prompt "Slow cinematic dolly toward the kitchen island. Preserve cabinetry exactly." \
 //       --aspect 9:16 \
-//       --duration 5
+//       --duration 6s \
+//       --model fal-ai/veo3/fast/image-to-video
 //
 //   # Or, if you have a local worker running:
 //   WORKER_URL=http://127.0.0.1:8787 node test-veo.mjs --image ... --prompt ...
 //
-// PREREQS (on the worker side)
-//   GOOGLE_APPLICATION_CREDENTIALS_JSON  - raw service-account JSON in env var
-//   GOOGLE_CLOUD_PROJECT                 - GCP project ID
-//   VEO_OUTPUT_GCS_BUCKET                - gs://your-veo-output-bucket
-//   GOOGLE_CLOUD_LOCATION                - default "global" (optional)
+// Bake-off: change --model to A/B test other engines via fal.ai:
+//   fal-ai/veo3/fast/image-to-video          (Veo 3 Fast, cheapest)
+//   fal-ai/veo3.1/lite/image-to-video        (Veo 3.1 Lite)
+//   fal-ai/veo3.1/image-to-video             (Veo 3.1 Standard)
+//   fal-ai/kling-video/o3/standard/image-to-video  (Kling)
+//   fal-ai/luma-dream-machine/ray-2/image-to-video (Luma Ray)
+//   fal-ai/bytedance/seedance/v1/pro/image-to-video (Seedance Pro)
 //
-// The worker bootstrap writes the SA JSON to /tmp/gcp-sa.json at boot
-// and points GOOGLE_APPLICATION_CREDENTIALS at it. Vertex AI's ADC
-// picks it up automatically.
+// PREREQS (on the worker side)
+//   FAL_KEY              - your fal.ai API key (from https://fal.ai/dashboard/keys)
+//   FAL_VIDEO_MODEL      - optional, defaults to fal-ai/veo3/fast/image-to-video
 
 const args = parseArgs(process.argv.slice(2));
 if (!args.image || !args.prompt) {
@@ -40,7 +41,8 @@ const body = {
   imageUrl: args.image,
   prompt: args.prompt,
   aspectRatio: args.aspect || "9:16",
-  duration: Number(args.duration) || 5
+  duration: args.duration || "6s",
+  ...(args.model ? { model: args.model } : {})
 };
 
 console.log(`POST ${workerUrl}/test/veo`);

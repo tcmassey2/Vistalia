@@ -12,8 +12,7 @@
     "verify:async": "node verify-async-render.mjs"
   },
   "dependencies": {
-    "@google-cloud/storage": "^7.13.0",
-    "@google/genai": "^1.0.0",
+    "@fal-ai/client": "^1.4.0",
     "@remotion/bundler": "^4.0.229",
     "@remotion/renderer": "^4.0.229",
     "@supabase/supabase-js": "^2.45.4",

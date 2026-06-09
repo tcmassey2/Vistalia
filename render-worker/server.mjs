@@ -6,27 +6,12 @@ import { renderEstateMotionJob } from "./src/render-job.mjs";
 import { renderRunwayJob } from "./src/runway-job.mjs";
 import { regenerateScene } from "./src/regenerate-job.mjs";
 
-// v25 Phase 1: Veo 3.1 Fast bootstrap.
-// Render.com (and most Linux PaaS) won't let us upload arbitrary files,
-// so the service-account JSON for Vertex AI auth ships as a single env
-// var. We write it to /tmp at boot and point ADC at it. The Veo module
-// (src/veo-job.mjs) is lazy-imported so this bootstrap can run before
-// any Veo code touches @google/genai.
-(function bootstrapVeoCredentials() {
-  const json = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-  if (!json) return; // not configured yet — fine for now
-  const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS
-    || path.join(os.tmpdir(), "gcp-sa.json");
-  try {
-    fs.writeFileSync(credPath, json, { mode: 0o600 });
-    process.env.GOOGLE_APPLICATION_CREDENTIALS = credPath;
-    console.info(`[veo] wrote SA JSON to ${credPath} (${json.length} bytes)`);
-  } catch (err) {
-    console.error(
-      `[veo] failed to write SA JSON to ${credPath}: ${err.message || err}. /test/veo will return VEO_CONFIG_MISSING.`
-    );
-  }
-})();
+// v25 Phase 1b: Veo via fal.ai (no bootstrap needed).
+// The previous Vertex-AI-direct path required writing a service-account
+// JSON to /tmp at boot. We pivoted to fal.ai because Google's
+// Secure-by-Default org policy on free-tier accounts blocks SA key
+// creation entirely. fal.ai uses a single FAL_KEY env var — no
+// bootstrap, no disk writes, no IAM dance.
 
 // v24: depth engine removed from production routing. The files
 // (depth-job.mjs, depth-renderer.mjs, replicate-client.mjs) are
@@ -72,18 +57,18 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.06.03-v25.0-phase1",
-      // v25 Phase 1: Veo 3.1 Fast plumbing added (POST /test/veo) but
-      // not yet routed to production. Active production engines remain
+      version: "2026.06.09-v25.0-phase1b",
+      // v25 Phase 1b: Veo via fal.ai. Standalone smoke-test only; not
+      // yet routed to production. Active production engines remain
       // remotion + runway until Phase 2.
       engines: ["remotion", "runway"],
       experimentalEngines: ["veo"],
       veo: {
-        model: process.env.VEO_MODEL || "veo-3.1-fast-generate-001",
-        location: process.env.GOOGLE_CLOUD_LOCATION || "global",
-        projectConfigured: Boolean(process.env.GOOGLE_CLOUD_PROJECT),
-        credentialsConfigured: Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS),
-        outputBucketConfigured: Boolean(process.env.VEO_OUTPUT_GCS_BUCKET),
+        provider: "fal.ai",
+        model: process.env.FAL_VIDEO_MODEL || "fal-ai/veo3/fast/image-to-video",
+        resolution: process.env.FAL_RESOLUTION || "1080p",
+        duration: process.env.FAL_DURATION || "6s",
+        keyConfigured: Boolean(process.env.FAL_KEY),
         testEndpoint: "POST /test/veo"
       },
       bootedAt: BOOTED_AT,
@@ -392,7 +377,10 @@ async function handleVeoSmokeTest(request, response) {
       imageUrl,
       prompt,
       aspectRatio: body.aspectRatio || "9:16",
-      duration: Number(body.duration) || 5,
+      duration: body.duration || "6s",
+      // Optional per-call model override so the bake-off runner can
+      // sweep through Veo 3 Fast / Veo 3.1 Lite / Kling / Luma / etc.
+      model: body.model || undefined,
       tempDir
     });
   } catch (err) {
