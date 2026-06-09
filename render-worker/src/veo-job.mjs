@@ -134,19 +134,20 @@ export async function generateVeoClip({
   // uses numeric 5s — round up to 6s for cinematic flow (4s feels choppy).
   const durationEnum = normalizeDuration(duration);
 
-  // Build the input payload. Schema reference:
-  //   https://fal.ai/models/fal-ai/veo3/fast/image-to-video/api#schema-input
-  // Note: aspect_ratio "auto" is the default; we override to "9:16" because
-  // every EstateMotion master is vertical.
-  const input = {
+  // v26.1: per-model input mapping. Each fal.ai model family has its own
+  // schema — sending Veo-shaped input (duration "6s", resolution,
+  // generate_audio, safety_tolerance) to Luma or Kling 422s with
+  // "Unprocessable Entity". Discovered live during the laundry/pool
+  // bake-off. Map to the right shape per family so --model sweeps work.
+  const input = buildModelInput(model, {
     prompt,
-    image_url: imageUrl,
-    aspect_ratio: aspectRatio,
-    duration: durationEnum,
+    imageUrl,
+    aspectRatio,
+    durationEnum,
     resolution,
-    generate_audio: generateAudio,
-    safety_tolerance: safetyTolerance
-  };
+    generateAudio,
+    safetyTolerance
+  });
 
   let result;
   try {
@@ -232,6 +233,58 @@ export async function runVeoSmokeTest({ imageUrl, prompt, aspectRatio, duration,
 /* =================================================================
    Helpers
    ================================================================= */
+
+// v26.1: per-model-family input shapes. fal.ai models do NOT share a
+// schema. Verified against fal.ai model API docs June 2026:
+//   veo3 family:   prompt, image_url, aspect_ratio, duration "4s|6s|8s",
+//                  resolution, generate_audio, safety_tolerance
+//   luma ray-2:    prompt, image_url, aspect_ratio, duration "5s|9s",
+//                  resolution "540p|720p|1080p", loop
+//   kling o3/v2:   prompt, image_url, duration "5|10" (no 's'),
+//                  aspect_ratio, cfg_scale
+//   seedance:      prompt, image_url, duration "5|10", resolution
+// Unknown families get the minimal universal pair + aspect/duration in
+// the most common shape, which is also the safest default.
+function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, resolution, generateAudio, safetyTolerance }) {
+  const m = String(model || "").toLowerCase();
+  const seconds = parseInt(durationEnum, 10) || 6;
+
+  if (m.includes("luma")) {
+    return {
+      prompt,
+      image_url: imageUrl,
+      aspect_ratio: aspectRatio,
+      duration: seconds <= 5 ? "5s" : "9s",
+      resolution
+    };
+  }
+  if (m.includes("kling")) {
+    return {
+      prompt,
+      image_url: imageUrl,
+      aspect_ratio: aspectRatio,
+      duration: seconds <= 5 ? "5" : "10"
+    };
+  }
+  if (m.includes("seedance")) {
+    return {
+      prompt,
+      image_url: imageUrl,
+      duration: seconds <= 5 ? "5" : "10",
+      resolution
+    };
+  }
+  // veo3 family + default
+  return {
+    prompt,
+    image_url: imageUrl,
+    aspect_ratio: aspectRatio,
+    duration: durationEnum,
+    resolution,
+    generate_audio: generateAudio,
+    safety_tolerance: safetyTolerance
+  };
+}
 
 // Convert a numeric or string seconds value to fal.ai's enum.
 // fal.ai Veo 3 Fast only supports "4s" | "6s" | "8s". Pick the

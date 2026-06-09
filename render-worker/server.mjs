@@ -57,7 +57,7 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.06.09-v25.0-phase1b",
+      version: "2026.06.09-v26.1",
       // v25 Phase 1b: Veo via fal.ai. Standalone smoke-test only; not
       // yet routed to production. Active production engines remain
       // remotion + runway until Phase 2.
@@ -420,10 +420,14 @@ async function handleVeoSmokeTest(request, response) {
   // Park output under the same temp/asset machinery the production
   // renders use so the existing GET /render/assets/:id/:file serves it.
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "veo-smoke-"));
-  let result;
-  try {
+
+  // v26.1: async mode. Generation takes 60-180s; some callers (CI, proxies,
+  // sandboxed shells) can't hold a connection that long. With async:true
+  // we return 202 + a jobId immediately and run the generation through the
+  // same jobs map the production renders use — poll GET /render/status/:id.
+  const runOnce = async () => {
     const { runVeoSmokeTest } = await import("./src/veo-job.mjs");
-    result = await runVeoSmokeTest({
+    const result = await runVeoSmokeTest({
       imageUrl,
       prompt,
       aspectRatio: body.aspectRatio || "9:16",
@@ -433,6 +437,38 @@ async function handleVeoSmokeTest(request, response) {
       model: body.model || undefined,
       tempDir
     });
+    const tokenId = `veo-smoke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    jobAssets.set(tokenId, { mp4Path: result.clipPath, thumbnailPath: "" });
+    return {
+      clipServePath: `/render/assets/${tokenId}/render.mp4`,
+      gcsUri: result.gcsUri,
+      veoOpName: result.veoOpName,
+      durationSec: result.duration,
+      durationMs: Date.now() - startedAt,
+      notes: "Asset is in-memory only — restart the worker and the URL 404s."
+    };
+  };
+
+  if (body.async === true) {
+    const jobId = `veo-smoke-job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    jobs.set(jobId, {
+      status: "rendering", phase: "Generating clip", progress: 10,
+      jobId, mp4Url: "", thumbnailUrl: "", error: "", createdAt: now, updatedAt: now
+    });
+    sendJson(response, 202, { status: "queued", jobId, poll: `/render/status/${jobId}` });
+    runOnce()
+      .then((out) => updateJob(jobId, { ...out, status: "completed", phase: "Ready", progress: 100 }))
+      .catch((err) => updateJob(jobId, {
+        status: "failed", phase: "Generation failed", progress: 100,
+        error: err.message || String(err), errorCode: err.code || "VEO_UNKNOWN"
+      }));
+    return;
+  }
+
+  try {
+    const out = await runOnce();
+    sendJson(response, 200, { status: "ok", ...out });
   } catch (err) {
     sendJson(response, 500, {
       status: "failed",
@@ -440,23 +476,7 @@ async function handleVeoSmokeTest(request, response) {
       code: err.code || "VEO_UNKNOWN",
       durationMs: Date.now() - startedAt
     });
-    return;
   }
-
-  // Register the local clip under a one-shot job ID so the existing
-  // /render/assets/:id/render.mp4 path can serve it.
-  const tokenId = `veo-smoke-${Date.now()}`;
-  jobAssets.set(tokenId, { mp4Path: result.clipPath, thumbnailPath: "" });
-
-  sendJson(response, 200, {
-    status: "ok",
-    clipServePath: `/render/assets/${tokenId}/render.mp4`,
-    gcsUri: result.gcsUri,
-    veoOpName: result.veoOpName,
-    durationSec: result.duration,
-    durationMs: Date.now() - startedAt,
-    notes: "Asset is in-memory only — restart the worker and the URL 404s."
-  });
 }
 
 async function serveRenderAsset(request, response) {
