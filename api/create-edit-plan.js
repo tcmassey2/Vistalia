@@ -63,7 +63,7 @@ function avgSecPerScene({ engine, hasKitchen, hasBathroom }) {
 const ROOM_TYPES = ["exterior", "kitchen", "living", "bedroom", "bathroom", "outdoor", "amenity", "detail"];
 const CAMERA_MOTIONS = ["push_in", "pull_out", "lateral_pan", "vertical_reveal", "parallax_zoom", "detail_sweep"];
 const TRANSITIONS = ["crossfade", "blur_wipe", "whip_pan", "match_cut", "light_leak"];
-const RENDER_ENGINES = ["remotion", "runway"];
+const RENDER_ENGINES = ["remotion", "runway", "veo"];
 
 // Runway Gen-3 Turbo image-to-video prompt templates. These map our internal
 // camera-motion taxonomy onto natural-language prompts that Runway responds well
@@ -120,7 +120,11 @@ const RUNWAY_MOTION_PROMPTS = {
 //   v23.1 — MLS auto-strict guard, softer LUTs, model-driven photo tour order
 //   v23.0 — Prompt versioning + B-roll integration + voice catalog
 //   v22.0 — Hallucination Guard balanced/strict tiers + kitchen lockout
-export const PROMPT_VERSION = "v24.5";
+//   v26.0 — Phase 2 engine swap: Veo 3.1 Fast prompt system added
+//           (VEO_MOTION_PROMPTS + VEO_STYLE_PROMPTS + buildVeoPrompt).
+//           Explicit cinematography vocabulary validated by the June 9
+//           laundry/pool bake-off. Scenes carry veoPrompt + runwayPrompt.
+export const PROMPT_VERSION = "v26.0";
 
 // v23.2 — Universal anti-hallucination clause now leads with the most
 // common failure mode (phantom ceiling fans) AND covers ALL rooms, not
@@ -179,6 +183,81 @@ const RUNWAY_STYLE_PROMPTS = {
   "Investor Tour":
     "Direct, factual cinematography. Neutral grade. Steady pacing without flourish."
 };
+
+/* =================================================================
+   v26.0 — Veo 3.1 Fast prompt system (Phase 2 engine swap)
+
+   Veo differs from Runway in three ways that shape these prompts:
+   1. It follows explicit cinematography vocabulary (dolly, tripod,
+      gimbal) accurately instead of over-committing — the June 9
+      bake-off validated "locked tripod, slow push-in" language with
+      zero hallucination on the known failure scenes.
+   2. It rewards scene-level art direction (lighting, atmosphere,
+      lens feel), so style notes are written as a DP would brief.
+   3. No 1000-char API limit, so we don't have to choose between
+      motion vocabulary and constraints. The universal fidelity
+      clause is appended WORKER-SIDE (VEO_FIDELITY_SUFFIX in
+      runway-job.mjs) so it can never be dropped by prompt assembly.
+   ================================================================= */
+const VEO_MOTION_PROMPTS = {
+  push_in:
+    "Smooth dolly-in toward the focal point of the room, slow and steady, about 6% total travel. " +
+    "Tripod-stable, no handheld sway, no vertical drift.",
+  pull_out:
+    "Slow dolly-back revealing the full space, about 6% total travel. " +
+    "Tripod-stable, constant speed, no drift.",
+  lateral_pan:
+    "Slow lateral tracking move from left to right on a slider, level horizon throughout. " +
+    "No rotation, no vertical movement.",
+  vertical_reveal:
+    "Gentle tilt-up from the lower foreground to reveal the full height of the space. " +
+    "Slow, constant speed, tripod-mounted.",
+  parallax_zoom:
+    "Subtle dolly-in with natural depth parallax between foreground and background. " +
+    "About 6% travel. Stable, deliberate, no shake.",
+  detail_sweep:
+    "Slow close-range slider move across the architectural detail, shallow depth of field, " +
+    "tight framing. Constant speed."
+};
+
+// Per-mode art direction, written as a DP brief. Each mode also carries a
+// pacing hint the Motion Director sees when planning scene order.
+const VEO_STYLE_PROMPTS = {
+  "Cinematic Luxury":
+    "Editorial luxury real-estate film. Warm golden-hour light quality, soft contrast, " +
+    "gentle highlight rolloff. 35mm lens feel. Unhurried, premium pacing.",
+  "Modern Social":
+    "Bright contemporary social-media real-estate reel. Clean daylight white balance, " +
+    "crisp detail, lightly lifted contrast. Energetic but stable.",
+  "MLS Clean":
+    "Accurate documentary real-estate footage. True-to-life neutral color, no stylization, " +
+    "no atmosphere effects. The room must look exactly as a buyer would see it in person.",
+  "Investor Tour":
+    "Factual walkthrough documentation. Neutral grade, even exposure, clear sightlines. " +
+    "Steady, efficient camera work without flourish."
+};
+
+function buildVeoPrompt(scene, photos, context = {}) {
+  const photo = photos.find((p) => p.id === scene.photoId) || {};
+  const motionClause = VEO_MOTION_PROMPTS[scene.cameraMotion] || VEO_MOTION_PROMPTS.push_in;
+  const styleClause = VEO_STYLE_PROMPTS[context.selectedStyle] || VEO_STYLE_PROMPTS["Cinematic Luxury"];
+  // Named-object anchoring carries over from the Runway system — naming
+  // the physical contents of the room anchors spatial understanding on
+  // Veo too, and we no longer pay a character-budget price for it.
+  const roomClause = RUNWAY_ROOM_CONSTRAINTS[scene.roomType] || "";
+  const subject = describeSubject(scene, photo);
+  const visibleClause = scene.visibleFeatures && scene.visibleFeatures.length
+    ? `Visible elements include: ${scene.visibleFeatures.slice(0, 4).join(", ")}.`
+    : "";
+
+  // Motion first, subject second, anchoring, then art direction. The
+  // universal fidelity clause is appended by the worker — do NOT add it
+  // here or it doubles up.
+  const parts = [motionClause, `Subject: ${subject}.`, visibleClause, styleClause, roomClause];
+  let combined = parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  if (combined.length > 1800) combined = combined.slice(0, 1790) + " ...";
+  return combined;
+}
 
 export default async function handler(request, response) {
   setCorsHeaders(response);
@@ -395,7 +474,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   // 30s default = 6 Cinematic AI scenes (5s each) or 10-12 Quick Reel scenes
   // (2.5s avg). 60s = 12 Cinematic AI or up to MAX_PLAN_SCENES Quick Reel.
   // Always capped by available photos AND the hard MAX_PLAN_SCENES ceiling.
-  const isCinematicAI = engine === "runway";
+  const isCinematicAI = engine === "runway" || engine === "veo";
   const clampedDuration = Math.max(15, Math.min(MAX_TARGET_DURATION_SEC, Number(targetDurationSec) || DEFAULT_TARGET_DURATION_SEC));
   // v24.1: account for mixed-engine fallbacks. Runway-only assumed 5s/scene
   // which gave only 6 scenes at 30s — but when ~30% of scenes fall back
@@ -444,7 +523,11 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
               `Allowed transition values: ${TRANSITIONS.join(", ")}.`,
               "Prefer vertical 9:16 pacing.",
               isCinematicAI
-                ? "Engine is Cinematic AI (Runway image-to-video). Set scene duration to 5 seconds. Pick subtle motion that won't induce hallucination."
+                // v26.0: production AI engine is Veo 3.1 Fast, which buckets
+                // clips to 6 seconds — plan with 6s scenes so the 30s/60s
+                // duration budget yields the right scene count (5 scenes per
+                // 30s, not 6).
+                ? "Engine is Cinematic AI (Veo image-to-video). Set scene duration to 6 seconds. Pick subtle, tripod-stable motion appropriate to each room."
                 : "Engine is Quick Reel (Ken Burns photo motion). Scene duration 2.0–3.0s for kitchen/living, 1.6–2.4s for detail shots, 2.6–3.2s for hero shots.",
               narrationGuidance,
               "Return strict JSON only."
@@ -700,10 +783,15 @@ function normalizeEditPlan(plan, photos, context) {
       // ElevenLabs would synthesize through the next scene boundary.
       narrationLine: clampNarrationToWords(cleanText(scene.narrationLine || "", 240), 22)
     }));
-  const finalScenes = engine === "runway"
+  // v26.0: AI engines ("runway" legacy or "veo") get BOTH prompts on every
+  // scene. veoPrompt drives production (Veo 3.1 Fast); runwayPrompt is kept
+  // for the VEO_PRODUCTION=false rollback path. Cost: bytes in the manifest.
+  const isAiEngine = engine === "runway" || engine === "veo";
+  const finalScenes = isAiEngine
     ? scenes.map((scene) => ({
         ...scene,
-        runwayPrompt: buildRunwayPrompt(scene, photos, context)
+        runwayPrompt: buildRunwayPrompt(scene, photos, context),
+        veoPrompt: buildVeoPrompt(scene, photos, context)
       }))
     : scenes;
   return {
@@ -723,7 +811,7 @@ function normalizeEditPlan(plan, photos, context) {
       headline: cleanText(plan.outroCard?.headline || context.listingDetails.agentName || "Schedule a private tour", 80),
       subline: cleanText(plan.outroCard?.subline || context.listingDetails.brokerage || "", 100)
     },
-    runwayConfig: engine === "runway" ? defaultRunwayConfig(context.exportFormat) : null,
+    runwayConfig: isAiEngine ? defaultRunwayConfig(context.exportFormat) : null,
     scenes: finalScenes
   };
 }

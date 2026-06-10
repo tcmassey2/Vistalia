@@ -43,7 +43,7 @@ export default async function handler(request, response) {
       const workerResponse = await fetchWithTimeout(workerUrl, {
         method: "GET",
         headers: {
-          ...(process.env.RENDER_WEBHOOK_SECRET ? { Authorization: `Bearer ${process.env.RENDER_WEBHOOK_SECRET}` } : {})
+          ...(workerSecret() ? { Authorization: `Bearer ${workerSecret()}` } : {})
         }
       }, 30000);
 
@@ -170,7 +170,7 @@ export default async function handler(request, response) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(process.env.RENDER_WEBHOOK_SECRET ? { Authorization: `Bearer ${process.env.RENDER_WEBHOOK_SECRET}` } : {})
+        ...(workerSecret() ? { Authorization: `Bearer ${workerSecret()}` } : {})
       },
       body: JSON.stringify({
         manifest,
@@ -224,6 +224,16 @@ function readFlag(key, fallback) {
   const value = process.env[key];
   if (value === undefined || value === null || value === "") return fallback;
   return value === true || value === "true" || value === "1";
+}
+
+// v26.2: accept either secret name. health.js and the worker itself have
+// always accepted RENDER_WORKER_SECRET as an alias, but this file only read
+// RENDER_WEBHOOK_SECRET — so a Vercel deployment with the alias name passed
+// /api/health checks while every render was sent UNAUTHENTICATED and 401'd.
+// Cost us a production outage on June 9, 2026. Never read this env var
+// directly again; use this helper.
+function workerSecret() {
+  return process.env.RENDER_WEBHOOK_SECRET || process.env.RENDER_WORKER_SECRET || "";
 }
 
 function renderWorkerUrl() {

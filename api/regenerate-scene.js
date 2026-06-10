@@ -105,7 +105,8 @@ export default async function handler(request, response) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(process.env.RENDER_WEBHOOK_SECRET ? { Authorization: `Bearer ${process.env.RENDER_WEBHOOK_SECRET}` } : {})
+        // v26.2: accept either secret name (see render.js workerSecret note).
+        ...((process.env.RENDER_WEBHOOK_SECRET || process.env.RENDER_WORKER_SECRET) ? { Authorization: `Bearer ${process.env.RENDER_WEBHOOK_SECRET || process.env.RENDER_WORKER_SECRET}` } : {})
       },
       body: JSON.stringify({
         jobId,

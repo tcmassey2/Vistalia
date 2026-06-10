@@ -28,6 +28,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   generateClip,
   generateKenBurnsFallback,
+  generateVeoSceneClip,
   stitchClipsAndOverlays,
   uploadPerSceneClips,
   uploadDeliverables
@@ -43,8 +44,14 @@ export async function regenerateScene(body, options = {}) {
     throw new Error("regenerateScene: sceneIndex (non-negative integer) required.");
   }
   if (!manifest) throw new Error("regenerateScene: manifest required.");
-  if (!process.env.RUNWAY_API_KEY && mode === "ai") {
-    throw new Error("RUNWAY_API_KEY is required for AI regenerate. Use mode='kenburns' to skip Runway.");
+
+  // v26.3: AI regen now runs Veo 3.1 Fast (matching the production cutover
+  // in dispatchRender). Rollback mirror: VEO_PRODUCTION=false restores
+  // Runway regen. mode='kenburns' still works for legacy renders until the
+  // Phase 3 UI strip.
+  const useVeo = process.env.VEO_PRODUCTION !== "false" && Boolean(process.env.FAL_KEY);
+  if (mode === "ai" && !useVeo && !process.env.RUNWAY_API_KEY) {
+    throw new Error("FAL_KEY (Veo) or RUNWAY_API_KEY is required for AI regenerate. Use mode='kenburns' to skip AI.");
   }
 
   options.onProgress?.({ phase: "Looking up original render", progress: 4 });
@@ -98,11 +105,28 @@ export async function regenerateScene(body, options = {}) {
   try {
     if (mode === "kenburns") {
       replacementClip = await generateKenBurnsFallback(manifestScene, manifest, tempDir, sceneIndex);
+    } else if (useVeo) {
+      // v26.3: Veo regen. A user regenerating a scene is usually unhappy
+      // with hallucinated detail, so regen runs CONSTRAINED by default —
+      // maximal fidelity is the whole point of the click. Retry once on
+      // failure; no Ken Burns downgrade on the Veo path.
+      try {
+        replacementClip = await generateVeoSceneClip(manifestScene, manifest, tempDir, sceneIndex, { constrained: true });
+      } catch (veoErr) {
+        console.warn(`[regen] veo regen failed (${veoErr.message}). Retrying once.`);
+        replacementClip = await generateVeoSceneClip(manifestScene, manifest, tempDir, sceneIndex, { constrained: true });
+      }
     } else {
       replacementClip = await generateClip(manifestScene, manifest, tempDir, sceneIndex);
     }
   } catch (err) {
     if (err.code === "RUNWAY_DAILY_CAP") throw err;
+    if (useVeo && mode === "ai") {
+      // No silent KB downgrade on Veo — surface the failure honestly.
+      const wrapped = new Error(`Veo regenerate failed twice for scene ${sceneIndex + 1}: ${err.message}`);
+      wrapped.code = "VEO_REGEN_FAILED";
+      throw wrapped;
+    }
     console.warn(`[regen] ${mode} regen failed (${err.message}). Falling back to Ken Burns.`);
     replacementClip = await generateKenBurnsFallback(manifestScene, manifest, tempDir, sceneIndex);
   }

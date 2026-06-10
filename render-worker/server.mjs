@@ -21,10 +21,22 @@ import { regenerateScene } from "./src/regenerate-job.mjs";
 //
 // Route to the correct render engine based on manifest.engine:
 //   "remotion" (default) — Ken-Burns photo-animation via Remotion.
-//   "runway"             — Runway Gen-4 Turbo → ffmpeg stitch.
+//   "veo"                — Veo 3.1 Fast (fal.ai) → ffmpeg stitch.
+//   "runway"             — legacy Runway Gen-4 Turbo → ffmpeg stitch.
+//
+// v26.3 PRODUCTION CUTOVER: engine "runway" is transparently upgraded to
+// "veo" — existing clients and tier configs all say "runway" and keep
+// working, but every AI render now runs Veo 3.1 Fast. Rollback without a
+// deploy: set VEO_PRODUCTION=false on Render to restore Runway routing.
 async function dispatchRender(body, options = {}) {
-  const engine = String(body?.manifest?.engine || "remotion").toLowerCase();
-  if (engine === "runway") {
+  let engine = String(body?.manifest?.engine || "remotion").toLowerCase();
+  const veoProduction = process.env.VEO_PRODUCTION !== "false";
+  if (engine === "runway" && veoProduction && process.env.FAL_KEY) {
+    console.info("[server] engine runway → veo (v26.3 production cutover)");
+    engine = "veo";
+    body.manifest.engine = "veo";
+  }
+  if (engine === "veo" || engine === "runway") {
     return renderRunwayJob(body, options);
   }
   // Any other engine value (including stale 'depth' from older clients)
@@ -57,12 +69,13 @@ const server = http.createServer(async (request, response) => {
   // hardening pass so we can confirm the latest fix is live.
   if (request.method === "GET" && request.url === "/version") {
     sendJson(response, 200, {
-      version: "2026.06.09-v26.1",
-      // v25 Phase 1b: Veo via fal.ai. Standalone smoke-test only; not
-      // yet routed to production. Active production engines remain
-      // remotion + runway until Phase 2.
-      engines: ["remotion", "runway"],
-      experimentalEngines: ["veo"],
+      version: "2026.06.09-v26.3",
+      // v26.3 Phase 2: Veo 3.1 Fast IS the production AI engine. Incoming
+      // engine:"runway" manifests are upgraded to veo at dispatch (rollback:
+      // VEO_PRODUCTION=false). Runway code path preserved on disk.
+      engines: ["remotion", "veo"],
+      legacyEngines: ["runway (auto-upgraded to veo)"],
+      veoProduction: process.env.VEO_PRODUCTION !== "false",
       veo: {
         provider: "fal.ai",
         model: process.env.FAL_VIDEO_MODEL || "fal-ai/veo3/fast/image-to-video",

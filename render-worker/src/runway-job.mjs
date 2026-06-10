@@ -64,7 +64,16 @@ export async function renderRunwayJob(body, options = {}) {
   const { manifest, requestedFormat } = body || {};
   validateRunwayManifest(manifest);
 
-  if (!process.env.RUNWAY_API_KEY) {
+  // v26.3 (Phase 2): this orchestrator is now engine-agnostic. engine "veo"
+  // generates per-scene clips via Veo 3.1 Fast on fal.ai; everything else
+  // (stitch, voice, variants, uploads) is unchanged. Runway path preserved
+  // for rollback via VEO_PRODUCTION=false on the dispatcher.
+  const isVeo = String(manifest?.engine || "runway").toLowerCase() === "veo";
+
+  if (isVeo && !process.env.FAL_KEY) {
+    throw new Error("FAL_KEY is required for Veo rendering. Set it on the render-worker host.");
+  }
+  if (!isVeo && !process.env.RUNWAY_API_KEY) {
     throw new Error("RUNWAY_API_KEY is required for Runway rendering. Set it on the render-worker host.");
   }
 
@@ -120,11 +129,46 @@ export async function renderRunwayJob(body, options = {}) {
     async (scene, index) => {
       let result;
       // The Hallucination Guard decision is logged with reasoning so we can
-      // tune thresholds based on real-world data. Every Ken-Burns-by-design
-      // scene gets a line in the logs explaining WHY.
+      // tune thresholds based on real-world data.
       const guardDecision = decideUseKenBurns(scene, guardLevel);
-      const useKenBurnsForScene = complianceMode || guardDecision.useKenBurns;
-      if (useKenBurnsForScene) {
+
+      if (isVeo) {
+        // v26.3: NO Ken Burns on the Veo path — ever. The guard's risk
+        // scoring is repurposed: risky scenes (kitchens, baths, laundry,
+        // pools, signage) get a CONSTRAINED locked-tripod prompt instead of
+        // a different engine. Validated June 9 bake-off: constrained
+        // prompts eliminated hallucination on the failure scenes across
+        // Veo 3/3.1, Kling, and Seedance. complianceMode = constrained
+        // for every scene.
+        const constrained = complianceMode || guardDecision.useKenBurns;
+        if (constrained && !complianceMode) {
+          guardForcedCount++;
+          console.info(
+            `[veo] guard:${guardLevel} scene ${index + 1} (${scene.roomType || "unknown"}) ` +
+            `→ constrained prompt. risk=${guardDecision.risk}/100, reason="${guardDecision.reason}"`
+          );
+        }
+        try {
+          result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained });
+        } catch (error) {
+          // Auto-retry ONCE, always constrained (a failed cinematic attempt
+          // most often means the motion asked too much of the source photo).
+          console.warn(`[veo] scene ${index + 1} failed (${error.message}). Retrying once, constrained.`);
+          try {
+            result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
+            fallbackCount++; // counted as "retried", surfaces in phase text
+          } catch (retryError) {
+            // No partial videos, no silent quality downgrades. Fail the
+            // render with a typed error; the API layer refunds the credit
+            // (render_credit_refunds helper — Phase 2 remainder).
+            const err = new Error(
+              `Scene ${index + 1} failed twice on Veo (${retryError.message}). Render aborted — your render credit will be refunded.`
+            );
+            err.code = "VEO_SCENE_FAILED";
+            throw err;
+          }
+        }
+      } else if (complianceMode || guardDecision.useKenBurns) {
         if (!complianceMode && guardDecision.useKenBurns) {
           guardForcedCount++;
           console.info(
@@ -132,7 +176,7 @@ export async function renderRunwayJob(body, options = {}) {
             `→ Ken Burns. risk=${guardDecision.risk}/100, reason="${guardDecision.reason}"`
           );
         }
-        // Skip Runway entirely for this scene — guaranteed shape preservation.
+        // Legacy Runway path only: skip Runway for this scene.
         result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
       } else {
         try {
@@ -378,6 +422,88 @@ export async function generateClip(scene, manifest, tempDir, sceneIndex) {
     transition: scene.transition || "crossfade",
     overlay: scene.overlay || null,
     runwayTaskId: taskId
+  };
+}
+
+/* =================================================================
+   v26.3 — Veo 3.1 Fast per-scene clip (Phase 2 production path)
+   ================================================================= */
+
+// Room types whose constrained prompt needs special handling beyond the
+// generic locked-tripod language. Pools get a water-shimmer allowance
+// (a fully frozen pool looks like a photo, defeating the point).
+const CONSTRAINED_PROMPTS = {
+  generic:
+    "Locked tripod shot, very slow 4% push-in only. No camera drift. " +
+    "Preserve every surface, fixture, appliance, label, and object exactly as photographed. " +
+    "Nothing in the scene moves.",
+  pool:
+    "Locked tripod shot, very slow 4% push-in only. No camera drift. " +
+    "Water surface may shimmer gently, but pool shape, tile, coping, deck, and all " +
+    "surroundings stay exactly as photographed. Nothing else moves.",
+  exterior:
+    "Locked tripod shot, very slow 4% push-in only. No camera drift. " +
+    "Foliage may sway very subtly in a light breeze, but the structure, roofline, windows, " +
+    "and all hardscape stay exactly as photographed."
+};
+
+function buildConstrainedVeoPrompt(scene) {
+  const room = String(scene.roomType || "").toLowerCase();
+  if (/pool|spa/.test(room)) return CONSTRAINED_PROMPTS.pool;
+  if (/exterior|backyard|outdoor|front|yard|patio/.test(room)) return CONSTRAINED_PROMPTS.exterior;
+  return CONSTRAINED_PROMPTS.generic;
+}
+
+// MLS-compliance suffix appended to EVERY Veo prompt, cinematic or
+// constrained. Listing videos legally must not misrepresent the property —
+// this is the per-scene guardrail, independent of the edit plan.
+const VEO_FIDELITY_SUFFIX =
+  " Photorealistic. Do not add, remove, or alter any object, surface, fixture, or " +
+  "architectural feature. No people, no animals, no text or logos. The scene must remain " +
+  "exactly as photographed apart from the camera motion described.";
+
+// Per-scene Veo generation, mapped to the same clipResults shape that
+// generateClip / generateKenBurnsFallback return so the stitch pipeline
+// downstream is untouched.
+export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false } = {}) {
+  const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
+  const imageUrl = pickImageUrl(scene, photo);
+  if (!imageUrl) throw new Error(`Scene ${sceneIndex + 1} (${scene.photoId}) missing durable image URL.`);
+
+  // Prompt priority: explicit veoPrompt from a v26 edit plan → legacy
+  // runwayPrompt (older plans; plain text, works on Veo) → constrained.
+  const basePrompt = constrained
+    ? buildConstrainedVeoPrompt(scene)
+    : (scene.veoPrompt || scene.veo_prompt || scene.runwayPrompt || scene.runway_prompt || buildConstrainedVeoPrompt(scene));
+  const prompt = basePrompt + VEO_FIDELITY_SUFFIX;
+
+  const config = manifest.runwayConfig || {};
+  const ratio = config.ratio === "16:9" || config.ratio === "wide" ? "16:9" : "9:16";
+  // Veo 3.1 Fast buckets to 4s/6s/8s; our 5s scenes round up to 6s.
+  const duration = clamp(Number(scene.duration || 5) > 6.5 ? 8 : 6, 4, 8);
+
+  const { generateVeoClip } = await import("./veo-job.mjs");
+  const result = await generateVeoClip({
+    imageUrl,
+    prompt,
+    aspectRatio: ratio,
+    duration: `${duration}s`,
+    sceneIndex,
+    photoId: scene.photoId,
+    tempDir
+  });
+
+  return {
+    sceneIndex,
+    photoId: scene.photoId,
+    clipPath: result.clipPath,
+    duration,
+    transition: scene.transition || "crossfade",
+    overlay: scene.overlay || null,
+    runwayTaskId: null,
+    veoRequestId: result.requestId || "",
+    veoModel: result.model || "",
+    constrained
   };
 }
 
