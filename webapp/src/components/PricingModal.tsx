@@ -32,47 +32,49 @@ interface TierCard {
   featured?: boolean;
 }
 
+// v26.5 lineup (June 2026). Every tier runs the same Veo 3.1 engine with
+// MLS-safe fidelity guardrails — tiers differ on volume, not quality.
+// A 60-second video uses 2 render credits (double the AI generation).
 const TIERS: TierCard[] = [
   {
-    slug: "quick_reel",
-    name: "Quick Reel",
-    tagline: "For agents shipping listings every week.",
-    price: "$79",
+    slug: "launch",
+    name: "Launch",
+    tagline: "For solo agents with a listing or two a month.",
+    price: "$99",
     features: [
-      "10 finished videos per month",
-      "Cinematic photo motion",
-      "HD 1080p output, 9:16 vertical",
+      "8 AI render credits per month",
+      "True AI cinematic video (Veo 3.1)",
+      "MLS-safe fidelity guardrails on every scene",
+      "HD 1080p, 9:16 vertical + all social formats",
       "Branded outro with your contact details",
-      "Music library access",
       "Email support"
     ]
   },
   {
-    slug: "cinematic_ai",
-    name: "Cinematic AI",
-    tagline: "For agents who want the difference buyers feel.",
-    price: "$149",
+    slug: "pro",
+    name: "Pro",
+    tagline: "For agents shipping listings every week.",
+    price: "$249",
     featured: true,
     features: [
-      "25 finished videos per month",
-      "True AI image-to-video (Runway Gen-4)",
-      "AI photo upscale on small images",
-      "Animated address card opener",
+      "25 AI render credits per month",
+      "True AI cinematic video (Veo 3.1)",
+      "60-second video option (2 credits)",
+      "AI voiceover narration + photo upscale",
       "Priority rendering queue",
       "Priority chat support"
     ]
   },
   {
-    slug: "cinematic_4k",
-    name: "Cinematic AI Pro",
-    tagline: "For luxury teams and brokerages.",
-    price: "$299",
+    slug: "studio",
+    name: "Studio",
+    tagline: "For teams and brokerages.",
+    price: "$499",
     features: [
-      "60 finished videos per month",
-      "Runway Gen-4 Turbo — same AI engine, no daily cap",
-      "Priority rendering — front of the queue",
-      "60-second video length option",
+      "50 AI render credits per month",
+      "Everything in Pro",
       "Brokerage white-label branding",
+      "Front-of-queue rendering",
       "Concierge onboarding",
       "Premium chat + email support"
     ]

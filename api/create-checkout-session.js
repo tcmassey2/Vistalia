@@ -15,6 +15,8 @@
 import { rateLimit } from "./_lib/rate-limit.js";
 
 const TIER_TO_PRICE_ENV = {
+  // Legacy tiers — retired from sale June 2026; kept resolvable so stale
+  // links fail gracefully rather than 500.
   quick_reel: "STRIPE_PRICE_QUICK_REEL",
   cinematic_ai: "STRIPE_PRICE_CINEMATIC_AI",
   cinematic_4k: "STRIPE_PRICE_CINEMATIC_4K",
@@ -23,6 +25,31 @@ const TIER_TO_PRICE_ENV = {
   // body's `seats` field (default 5, min 3, max 100).
   brokerage: "STRIPE_PRICE_BROKERAGE"
 };
+
+// v26.5 tiers resolve by PRODUCT — we fetch the product's default_price
+// from Stripe at checkout time, so price changes in the Stripe dashboard
+// need zero code or env updates. Defaults are the live June 2026 products.
+const TIER_TO_PRODUCT = {
+  launch: process.env.STRIPE_PRODUCT_LAUNCH || "prod_UWBRgVofDDfSGD",
+  pro: process.env.STRIPE_PRODUCT_PRO || "prod_UWBRaEsEqwILzN",
+  studio: process.env.STRIPE_PRODUCT_STUDIO || "prod_Ug0YMKAVXKEYqh"
+};
+
+async function resolvePriceForTier(tier) {
+  const productId = TIER_TO_PRODUCT[tier];
+  if (productId) {
+    const res = await fetch(`https://api.stripe.com/v1/products/${productId}`, {
+      headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` }
+    });
+    if (!res.ok) return "";
+    const product = await res.json().catch(() => ({}));
+    return typeof product.default_price === "string"
+      ? product.default_price
+      : product.default_price?.id || "";
+  }
+  const envName = TIER_TO_PRICE_ENV[tier];
+  return envName ? process.env[envName] || "" : "";
+}
 
 export default async function handler(request, response) {
   setCors(response);
@@ -48,8 +75,7 @@ export default async function handler(request, response) {
   try {
     const body = parseBody(request.body);
     const tier = String(body.tier || "");
-    const priceEnv = TIER_TO_PRICE_ENV[tier];
-    const priceId = priceEnv ? process.env[priceEnv] : "";
+    const priceId = await resolvePriceForTier(tier);
     if (!priceId) {
       return response.status(400).json({ error: `Unknown or unconfigured tier: ${tier}.` });
     }

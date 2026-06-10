@@ -19,7 +19,18 @@ export const config = {
   api: { bodyParser: false }
 };
 
-const TIER_FROM_PRICE = (priceId) => {
+// v26.5: tiers map by PRODUCT id (covers monthly + annual prices with one
+// entry, survives price edits). Defaults are the live June 2026 products;
+// env vars override for test mode. Legacy price-id mapping retained for
+// any subscriber still on a pre-v26 price.
+const PRODUCT_TIERS = {
+  [process.env.STRIPE_PRODUCT_LAUNCH || "prod_UWBRgVofDDfSGD"]: "launch",
+  [process.env.STRIPE_PRODUCT_PRO || "prod_UWBRaEsEqwILzN"]: "pro",
+  [process.env.STRIPE_PRODUCT_STUDIO || "prod_Ug0YMKAVXKEYqh"]: "studio"
+};
+
+const TIER_FROM_PRICE = (priceId, productId) => {
+  if (productId && PRODUCT_TIERS[productId]) return PRODUCT_TIERS[productId];
   if (priceId === process.env.STRIPE_PRICE_QUICK_REEL) return "quick_reel";
   if (priceId === process.env.STRIPE_PRICE_CINEMATIC_AI) return "cinematic_ai";
   if (priceId === process.env.STRIPE_PRICE_CINEMATIC_4K) return "cinematic_4k";
@@ -27,7 +38,11 @@ const TIER_FROM_PRICE = (priceId) => {
 };
 
 const QUOTA_FOR_TIER = {
-  trial: 1,
+  trial: 1,        // v26.5: one free trial video
+  launch: 8,       // $99/mo
+  pro: 25,         // $249/mo
+  studio: 50,      // $499/mo
+  // Legacy tiers — retired from sale, honored until subscriptions lapse.
   quick_reel: 10,
   cinematic_ai: 25,
   cinematic_4k: 60
@@ -119,8 +134,10 @@ async function onSubscriptionChanged(subscription) {
 
   const userId = subscription.metadata?.user_id || (await findUserByCustomer(subscription.customer));
   if (!userId) return;
-  const priceId = subscription.items?.data?.[0]?.price?.id;
-  const tier = TIER_FROM_PRICE(priceId) || "trial";
+  const item = subscription.items?.data?.[0];
+  const priceId = item?.price?.id;
+  const productId = typeof item?.price?.product === "string" ? item.price.product : item?.price?.product?.id;
+  const tier = TIER_FROM_PRICE(priceId, productId) || "trial";
   await updateProfile(userId, {
     stripe_subscription_id: subscription.id,
     subscription_status: subscription.status,
@@ -224,6 +241,10 @@ async function notifyPaymentFailed(userId, invoice) {
 
 const TIER_LABELS = {
   trial: "Free Trial",
+  launch: "EstateMotion Launch",
+  pro: "EstateMotion Pro",
+  studio: "EstateMotion Studio",
+  // Legacy (retired from sale June 2026)
   quick_reel: "Quick Reel",
   cinematic_ai: "Cinematic AI",
   cinematic_4k: "Cinematic AI 4K"

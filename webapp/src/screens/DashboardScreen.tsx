@@ -169,7 +169,7 @@ export default function DashboardScreen() {
               </button>
             </div>
             <p className="text-xs text-ink-dim mt-3">
-              Free for 7 days · 3 videos · No credit card
+              Free for 7 days · 1 free video · No credit card
             </p>
           </div>
 

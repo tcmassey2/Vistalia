@@ -418,7 +418,9 @@ export async function openBillingPortal(): Promise<BillingPortalResponse> {
    On success the user lands back on returnUrl?checkout=success.
 */
 
-export type CheckoutTier = "quick_reel" | "cinematic_ai" | "cinematic_4k" | "brokerage";
+// v26.5 lineup: launch/pro/studio. Legacy slugs retained for grandfathered
+// subscribers' billing-portal flows.
+export type CheckoutTier = "launch" | "pro" | "studio" | "quick_reel" | "cinematic_ai" | "cinematic_4k" | "brokerage";
 
 export interface CheckoutResponse {
   url?: string;
