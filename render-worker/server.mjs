@@ -318,9 +318,42 @@ async function runRenderJob(jobId, body) {
       status: "failed",
       phase: "Render failed",
       progress: 100,
-      error: error.message || "EstateMotion render worker failed."
+      error: error.message || "EstateMotion render worker failed.",
+      errorCode: error.code || ""
     });
+    // v26.4: honor the refund promise. Aborted Veo renders refund the
+    // user's render credit via the refund_render_credit RPC (migration 12,
+    // idempotent per jobId). Fire-and-forget — refund failure must not
+    // mask the render error, but it IS loud in the logs.
+    if (error.code === "VEO_SCENE_FAILED") {
+      refundRenderCredit(body?.manifest?.project?.userId, jobId, error.code).catch((err) =>
+        console.error(`[server] ⚠️ REFUND FAILED for job ${jobId}: ${err.message} — refund manually via render_credit_refunds.`)
+      );
+    }
   }
+}
+
+// Refund one render credit for an aborted job. Idempotent server-side
+// (unique job_id). No-ops cleanly when Supabase env or userId is absent
+// (local dev / anonymous remotion renders).
+async function refundRenderCredit(userId, jobId, errorCode) {
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey || !userId || !jobId) return;
+  const res = await fetch(`${supabaseUrl}/rest/v1/rpc/refund_render_credit`, {
+    method: "POST",
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ p_user_id: userId, p_job_id: jobId, p_error_code: errorCode || null })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`refund_render_credit RPC ${res.status}: ${text.slice(0, 200)}`);
+  }
+  console.info(`[server] refunded render credit for user ${userId}, job ${jobId}.`);
 }
 
 // Run the per-scene regenerate orchestrator with an overall timeout. Regen
