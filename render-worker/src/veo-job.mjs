@@ -131,6 +131,33 @@ export async function generateVeoClip({
     throw err;
   }
 
+  // v26.4: verify the source image is actually fetchable BEFORE submitting
+  // to fal. fal's backend fetches image_url server-side; an expired Supabase
+  // signed URL or private object returns 403 there, which fal surfaces as a
+  // bare "Forbidden" — indistinguishable from a content-policy block. A
+  // 2-second HEAD here turns that into a precise, free error. Network
+  // hiccups on the HEAD don't block the render (fail-open).
+  if (/^https?:/i.test(imageUrl)) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 4000);
+      const head = await fetch(imageUrl, { method: "HEAD", signal: controller.signal });
+      clearTimeout(t);
+      if (!head.ok) {
+        const err = new Error(
+          `Scene ${sceneIndex + 1}: source image URL returned HTTP ${head.status} — fal.ai cannot fetch it. ` +
+          `Likely an expired signed URL or private storage object. Re-upload or refresh the photo.`
+        );
+        err.code = "FAL_IMAGE_URL_REJECTED";
+        err.httpStatus = head.status;
+        throw err;
+      }
+    } catch (probeErr) {
+      if (probeErr.code === "FAL_IMAGE_URL_REJECTED") throw probeErr;
+      // HEAD blocked/timed out — inconclusive, proceed to fal.
+    }
+  }
+
   const fal = await getFalClient();
   // @fal-ai/client auto-reads FAL_KEY from env, but call config() explicitly
   // so a different runtime that injected the var late still works.
@@ -172,10 +199,19 @@ export async function generateVeoClip({
       }
     });
   } catch (err) {
+    // v26.4: surface fal's error BODY, not just the HTTP status text.
+    // "Forbidden" alone cost us a debugging round on June 9 — the body
+    // distinguishes balance exhaustion vs content policy vs bad input.
+    let detail = "";
+    try {
+      const body = err?.body ?? err?.cause?.body;
+      if (body) detail = ` Detail: ${JSON.stringify(body.detail ?? body).slice(0, 400)}`;
+    } catch { /* body not serializable — keep going */ }
     const wrapped = new Error(
-      `fal.subscribe failed for scene ${sceneIndex + 1} on ${model}: ${err.message || err}`
+      `fal.subscribe failed for scene ${sceneIndex + 1} on ${model}: ${err.message || err}${detail}`
     );
     wrapped.code = "FAL_GENERATE_FAILED";
+    wrapped.httpStatus = err?.status || err?.cause?.status;
     wrapped.cause = err;
     throw wrapped;
   }
