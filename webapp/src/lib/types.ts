@@ -1,6 +1,9 @@
 // EstateMotion — domain types
 
-export type RenderEngine = "remotion" | "runway";
+// v26.6: "veo" is the production AI engine. "runway" retained for the
+// rollback path (the worker upgrades runway→veo); "remotion" is the
+// legacy Ken Burns path, still referenced by older code.
+export type RenderEngine = "remotion" | "runway" | "veo";
 
 export type ExportFormat = "vertical" | "wide" | "square";
 

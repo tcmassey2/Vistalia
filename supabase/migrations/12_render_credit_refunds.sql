@@ -44,15 +44,15 @@ security definer
 set search_path = public
 as $$
 declare
-  v_inserted boolean := false;
+  v_rows integer := 0;
 begin
   -- Idempotency: one refund per job, ever.
   insert into public.render_credit_refunds (job_id, user_id, error_code)
   values (p_job_id, p_user_id, p_error_code)
   on conflict (job_id) do nothing;
 
-  get diagnostics v_inserted = row_count;
-  if not v_inserted then
+  get diagnostics v_rows = row_count;
+  if v_rows = 0 then
     return false; -- already refunded
   end if;
 
