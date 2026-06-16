@@ -44,6 +44,8 @@ export default function TopBar() {
       <div className="max-w-6xl mx-auto px-5 sm:px-6 h-14 flex items-center justify-between gap-3">
         <button
           onClick={() => goToScreen("dashboard")}
+          title="Home — your dashboard"
+          aria-label="Home — your dashboard"
           className="flex items-center gap-2 text-ink hover:text-gold-light transition-colors flex-shrink-0"
         >
           <span className="grid place-items-center w-7 h-7 rounded-md bg-gradient-to-br from-gold-light to-gold-dim text-paper font-bold italic">
@@ -73,6 +75,13 @@ export default function TopBar() {
               )}
             </span>
           </NavButton>
+          <a
+            href="/"
+            className="btn-press text-xs text-ink-muted hover:text-ink px-3 py-1.5 rounded-md border border-transparent hover:border-edge transition-colors"
+            title="View the public site"
+          >
+            View site
+          </a>
           <a
             href="/help.html"
             target="_blank"
@@ -158,6 +167,14 @@ export default function TopBar() {
                 >
                   Settings
                 </MenuItem>
+                <a
+                  role="menuitem"
+                  href="/"
+                  onClick={() => setMenuOpen(false)}
+                  className="block px-4 py-2.5 text-sm text-ink-muted hover:bg-surface-input hover:text-ink transition-colors"
+                >
+                  View site
+                </a>
                 <a
                   role="menuitem"
                   href="/help.html"

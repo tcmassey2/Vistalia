@@ -42,9 +42,10 @@
     "operatingSystem": "Web",
     "description": "AI-directed cinematic listing video generator for real estate agents.",
     "offers": [
-      { "@type": "Offer", "name": "Quick Reel", "price": "79", "priceCurrency": "USD" },
-      { "@type": "Offer", "name": "Cinematic AI", "price": "149", "priceCurrency": "USD" },
-      { "@type": "Offer", "name": "Cinematic AI 4K", "price": "299", "priceCurrency": "USD" }
+      { "@type": "Offer", "name": "Single video", "price": "100", "priceCurrency": "USD" },
+      { "@type": "Offer", "name": "Launch", "price": "99", "priceCurrency": "USD" },
+      { "@type": "Offer", "name": "Pro", "price": "249", "priceCurrency": "USD" },
+      { "@type": "Offer", "name": "Studio", "price": "499", "priceCurrency": "USD" }
     ]
   }
   </script>
@@ -89,9 +90,10 @@
         <a href="#pricing">Pricing</a>
         <a href="#faq">FAQ</a>
       </nav>
-      <div class="nav-actions">
-        <a href="/app" class="btn btn-ghost btn-sm">Sign in</a>
-        <a href="/app" class="btn btn-primary btn-sm">Start free trial</a>
+      <div class="nav-actions" id="nav-actions">
+        <a href="/app" class="btn btn-ghost btn-sm" data-signed-out>Sign in</a>
+        <a href="/app" class="btn btn-primary btn-sm" data-signed-out>Start free trial</a>
+        <a href="/app" class="btn btn-primary btn-sm" data-signed-in style="display:none">Go to my dashboard &rarr;</a>
       </div>
     </div>
   </header>
@@ -152,7 +154,7 @@
                 </div>
                 <div class="hero-preview-title">Loading reel&hellip;</div>
                 <div class="hero-preview-meta">
-                  Cinematic AI &middot; 9:16 &middot; 30 seconds
+                  EstateMotion &middot; 9:16 &middot; 30 seconds
                 </div>
               </div>
             </div>
@@ -204,9 +206,9 @@
           <div class="proof-note">Reported by agents in the closed beta.</div>
         </div>
         <div class="proof-stat">
-          <div class="proof-number">$850 <span class="proof-arrow">&rarr;</span> $79</div>
+          <div class="proof-number">$850 <span class="proof-arrow">&rarr;</span> $100</div>
           <div class="proof-label">Videographer cost saved</div>
-          <div class="proof-note">Per shoot, replaced by a monthly subscription.</div>
+          <div class="proof-note">Per shoot, replaced by one cinematic video.</div>
         </div>
         <div class="proof-stat">
           <div class="proof-number">1 day <span class="proof-arrow">&rarr;</span> 3 min</div>
@@ -239,7 +241,7 @@
         <div class="step reveal">
           <div class="step-num">03 &mdash; Render</div>
           <h4>Download your finished MP4</h4>
-          <p>9:16 vertical for Instagram and TikTok. 4K available on Cinematic AI tier. Branded outro with your photo and contact details.</p>
+          <p>9:16 vertical for Instagram and TikTok, plus 1:1 and 16:9. Branded outro with your photo and contact details.</p>
         </div>
       </div>
     </div>
@@ -341,15 +343,15 @@
 
       <div class="pricing-grid">
         <div class="tier">
-          <div class="tier-name">Quick Reel</div>
-          <div class="tier-tagline">For agents shipping listings every week.</div>
-          <div class="tier-price"><span class="currency">$</span>79<span class="period">/mo</span></div>
+          <div class="tier-name">Launch</div>
+          <div class="tier-tagline">For solo agents with a listing or two a month.</div>
+          <div class="tier-price"><span class="currency">$</span>99<span class="period">/mo</span></div>
           <ul class="tier-features">
-            <li>10 finished videos per month</li>
-            <li>Cinematic photo motion (Ken Burns Pro)</li>
-            <li>HD 1080p output, 9:16 vertical</li>
+            <li>8 AI render credits per month</li>
+            <li>True AI cinematic video (Veo 3.1)</li>
+            <li>MLS-safe fidelity guardrails on every scene</li>
+            <li>All social formats (9:16, 1:1, 16:9)</li>
             <li>Branded outro with your contact details</li>
-            <li>Music library access</li>
             <li>Email support</li>
           </ul>
           <a href="/app" class="btn btn-secondary">Start free trial</a>
@@ -357,14 +359,14 @@
 
         <div class="tier featured">
           <div class="tier-badge">Most popular</div>
-          <div class="tier-name">Cinematic AI</div>
-          <div class="tier-tagline">For agents who want the difference buyers feel.</div>
-          <div class="tier-price"><span class="currency">$</span>149<span class="period">/mo</span></div>
+          <div class="tier-name">Pro</div>
+          <div class="tier-tagline">For agents shipping listings every week.</div>
+          <div class="tier-price"><span class="currency">$</span>249<span class="period">/mo</span></div>
           <ul class="tier-features">
-            <li>25 finished videos per month</li>
-            <li>True AI image-to-video (Runway Gen-3)</li>
-            <li>HD 1080p output, 9:16 vertical</li>
-            <li>Everything in Quick Reel</li>
+            <li>25 AI render credits per month</li>
+            <li>True AI cinematic video (Veo 3.1)</li>
+            <li>60-second video option (2 credits)</li>
+            <li>AI voiceover narration + photo upscale</li>
             <li>Priority rendering queue</li>
             <li>Priority chat support</li>
           </ul>
@@ -372,25 +374,23 @@
         </div>
 
         <div class="tier">
-          <div class="tier-name">Cinematic AI 4K</div>
-          <div class="tier-tagline">For luxury teams and brokerages.</div>
-          <div class="tier-price"><span class="currency">$</span>299<span class="period">/mo</span></div>
+          <div class="tier-name">Studio</div>
+          <div class="tier-tagline">For teams and brokerages.</div>
+          <div class="tier-price"><span class="currency">$</span>499<span class="period">/mo</span></div>
           <ul class="tier-features">
-            <li>60 finished videos per month</li>
-            <li>Runway Gen-4.5 — premium AI engine</li>
-            <li>4K Ultra HD output</li>
-            <li>Twilight Magic (day-to-dusk hero shots)</li>
-            <li>White-label / custom branding</li>
-            <li>Multiple aspect ratios (9:16, 1:1, 16:9)</li>
-            <li>Dedicated rendering capacity</li>
+            <li>50 AI render credits per month</li>
+            <li>Everything in Pro</li>
+            <li>Brokerage white-label branding</li>
+            <li>Front-of-queue rendering</li>
             <li>Concierge onboarding</li>
+            <li>Premium chat + email support</li>
           </ul>
           <a href="/app" class="btn btn-secondary">Talk to sales</a>
         </div>
       </div>
 
       <p class="tier-fineprint">
-        7-day free trial on every plan. No credit card required to start. Cancel anytime.
+        Start free — your first video is on us, no credit card. Prefer to pay as you go? Buy a single video for $100, or 5 for $375. Cancel anytime.
       </p>
     </div>
   </section>
@@ -458,7 +458,7 @@
             <span class="faq-toggle" aria-hidden="true">+</span>
           </button>
           <div class="faq-answer">
-            <p>No. The Motion Director only describes what's actually visible in your photos — it never invents features, furniture, or finishes. Camera motion stays subtle and deliberately cinematic. Hallucinations are blocked at the prompt layer and the render layer.</p>
+            <p>It animates your actual photos — it doesn't invent rooms, features, or finishes, and fidelity guardrails keep fixtures and finishes true to what you shot. Risky rooms like kitchens and baths render conservatively by design. And because you review every scene before publishing — regenerating any that look off, free — nothing goes out that you haven't approved.</p>
           </div>
         </div>
 
@@ -498,7 +498,7 @@
             <span class="faq-toggle" aria-hidden="true">+</span>
           </button>
           <div class="faq-answer">
-            <p>Quick Reel: under 90 seconds. Cinematic AI: 3–5 minutes depending on photo count. The finished MP4 appears in your dashboard with a download button as soon as it's ready.</p>
+            <p>About 3 minutes depending on photo count. You review every scene before publishing, and the finished MP4 appears in your dashboard with a download button as soon as you approve it.</p>
           </div>
         </div>
 
@@ -603,5 +603,24 @@
   <!-- Interaction script -->
   <script src="/api/env" onerror="window.ESTATEMOTION_API_ENV_UNAVAILABLE = true"></script>
   <script src="landing.js" defer></script>
+
+  <!-- v26.6: auth-aware nav. If the visitor already has a session, swap the
+       "Sign in / Start free" CTAs for "Go to my dashboard" so signed-in
+       users aren't looped back to login. Fails silent if env/Supabase
+       is unavailable — the signed-out CTAs remain. -->
+  <script type="module">
+    (async () => {
+      try {
+        const env = window.ESTATEMOTION_ENV;
+        if (!env || !env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) return;
+        const { createClient } = await import(env.SUPABASE_JS_URL || "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+        const sb = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
+        const { data } = await sb.auth.getSession();
+        if (!data || !data.session) return;
+        document.querySelectorAll("[data-signed-out]").forEach((el) => { el.style.display = "none"; });
+        document.querySelectorAll("[data-signed-in]").forEach((el) => { el.style.display = ""; });
+      } catch (e) { /* not signed in / SDK blocked — keep signed-out CTAs */ }
+    })();
+  </script>
 </body>
 </html>

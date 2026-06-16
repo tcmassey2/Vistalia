@@ -8,6 +8,8 @@ import { cn } from "../lib/cn";
 import { resolveTrack } from "../lib/music-catalog";
 import { isAiVideoEngine } from "../lib/engine-labels";
 import MusicSelector from "../components/MusicSelector";
+import PaywallModal from "../components/PaywallModal";
+import PricingModal from "../components/PricingModal";
 
 const STYLES: Array<{
   id: StyleId;
@@ -53,7 +55,7 @@ export default function ProjectScreen() {
           className="bg-transparent border-0 outline-none text-3xl sm:text-4xl font-semibold tracking-tighter2 text-ink placeholder:text-ink-dim w-full"
         />
         <p className="text-sm text-ink-muted leading-relaxed">
-          Tell us about the listing, drop in your photos, pick a style — Quick Reel finishes in 90 seconds, Cinematic AI in 3–5 minutes.
+          Tell us about the listing, drop in your photos, pick a style — your cinematic video is ready in about 3 minutes.
         </p>
       </header>
 
@@ -130,16 +132,13 @@ export default function ProjectScreen() {
         <AudioControls />
       </Section>
 
-      {/* Render — one canonical pipeline. Pick the engine, pick the
-          hallucination-protection level, click Generate. Everything else
-          (narration, music, brand kit, output formats) is automatic and
-          tier-determined. */}
-      <Section title="Render" subtitle="Pick your engine, pick a length, hit Generate.">
+      {/* v26.6: single cinematic engine (Veo 3.1). The engine toggle,
+          tier/quality panel, and hallucination-safety picker are gone —
+          there's one pipeline now, MLS-safe by design. Length still matters
+          (60s consumes 2 credits). Everything else is automatic. */}
+      <Section title="Render" subtitle="Pick a length and hit Generate. Review every scene before you publish.">
         <div className="flex flex-col gap-5">
-          <EngineToggle engine={renderEngine} onChange={setEngine} />
           <LengthToggle value={targetDurationSec} onChange={setTargetDuration} />
-          <RenderQualityPanel />
-          <RenderSafetyControl />
           <RenderControls />
           {renderJob && <RenderStatusPanel />}
         </div>
@@ -2102,6 +2101,11 @@ function RenderControls() {
   const setEditPlan = useStore((s) => s.setEditPlan);
   const setToast = useStore((s) => s.setToast);
 
+  // v26.6: paywall state for the free-video → paid moment.
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [showPlans, setShowPlans] = useState(false);
+  const [paywallReason, setPaywallReason] = useState<string>("");
+
   const isRendering = renderJob?.status === "queued" || renderJob?.status === "rendering";
   const isComplete = renderJob?.status === "completed" && renderJob.mp4Url;
   const canRender = photos.length >= 3 && !isRendering;
@@ -2153,7 +2157,9 @@ function RenderControls() {
       phaseCreep.update({ phase: "Sending the cut to the renderer", progressFloor: 10, ceilingProgress: 14 });
       const manifest: RenderManifest = {
         app: "EstateMotion",
-        engine: renderEngine,
+        // v26.6: single production engine. The worker upgrades "veo"
+        // (and legacy "runway") through the Veo 3.1 pipeline.
+        engine: "veo",
         exportFormat: "vertical",
         project: {
           id: projectId,
@@ -2217,25 +2223,20 @@ function RenderControls() {
         // v24.2: narrationEnabled is now exposed in the Audio panel.
         // Worker still fail-soft to music-only if ElevenLabs is unavailable.
         skipNarration: !narrationEnabled,
-        // Translate the single "Render safety" picker into the worker's
-        // existing fields. Worker code is unchanged; only the UI consolidated.
-        //   off   → pure AI (no protection)
-        //   smart → balanced Hallucination Guard (default)
-        //   max   → Compliance Mode (every scene Ken Burns)
-        complianceMode: renderSafety === "max",
-        protectHighRiskRooms: renderSafety === "smart",
-        hallucinationGuard:
-          renderSafety === "off" ? "off" :
-          renderSafety === "max" ? "strict" :
-          "balanced"
+        // v26.6: the Hallucination Guard now routes risky rooms (kitchen,
+        // bath, pool, laundry) to constrained locked-tripod Veo prompts
+        // instead of Ken Burns — always on, no user-facing safety picker.
+        hallucinationGuard: "balanced"
       };
 
       // 3. Submit
       const submitted = await submitRender(manifest);
       if (submitted.upgradeRequired) {
         phaseCreep.stop();
-        setRenderJob(null); // clear the panel — error message takes over
-        setError(submitted.error || "Cinematic AI needs the $149 plan or higher. Upgrade to unlock real AI motion.");
+        setRenderJob(null); // clear the panel — paywall takes over
+        // v26.6: open the buy-credits paywall instead of a dead-end error.
+        setPaywallReason(submitted.error || "");
+        setShowPaywall(true);
         return;
       }
       if (submitted.status === "failed") {
@@ -2254,9 +2255,7 @@ function RenderControls() {
         progress: Math.max(15, Number(submitted.progress) || 15),
         engine: renderEngine
       });
-      setToast(renderEngine === "runway"
-        ? "Cinematic AI render started — this takes 3 to 5 minutes."
-        : "Quick Reel render started — under 90 seconds.");
+      setToast("Render started — your cinematic video is usually ready in about 3 minutes.");
 
       // 4. Poll
       if (submitted.jobId) pollUntilDone(submitted.jobId);
@@ -2494,6 +2493,14 @@ function RenderControls() {
           Add at least 3 photos to render.
         </span>
       )}
+
+      <PaywallModal
+        open={showPaywall}
+        onClose={() => setShowPaywall(false)}
+        onSeePlans={() => setShowPlans(true)}
+        reason={paywallReason}
+      />
+      <PricingModal open={showPlans} onClose={() => setShowPlans(false)} />
     </div>
   );
 }

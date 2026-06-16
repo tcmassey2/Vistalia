@@ -1,6 +1,6 @@
 // EstateMotion — usage / tier state lookup.
 // GET /api/usage  with Authorization: Bearer <Supabase JWT>
-// Returns: { tier, monthly_video_quota, videos_used_this_month, available_engines, can_render, reason }
+// Returns: { tier, monthly_video_quota, videos_used_this_month, available_engines, can_render, reason, render_credits }
 //
 // The frontend calls this to render the dashboard meter and gate the "Render"
 // button. /api/render also calls the same RPC server-side as a hard guard.
@@ -35,9 +35,10 @@ export async function fetchTierState(userId) {
       tier: "trial",
       monthly_video_quota: 1,
       videos_used_this_month: 0,
-      available_engines: ["remotion"],
+      available_engines: ["remotion", "veo"],
       can_render: true,
-      reason: null
+      reason: null,
+      render_credits: 0
     };
   }
   return row;
