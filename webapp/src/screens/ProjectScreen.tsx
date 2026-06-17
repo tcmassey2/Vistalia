@@ -2559,13 +2559,26 @@ function RenderStatusPanel() {
     if (wideUrl)   formatPills.push({ label: "16:9", sublabel: "YouTube · Zillow · MLS", url: wideUrl, ratio: "16:9" });
 
     return (
-      <div className="bg-surface border border-gold/40 rounded-xl p-4 flex flex-col gap-5">
+      <div
+        className="border border-gold/40 rounded-2xl p-5 sm:p-6 flex flex-col gap-5 fade-up-in"
+        style={{ background: "radial-gradient(600px 200px at 50% -10%, rgba(199,167,108,0.10), transparent 60%), #18181C" }}
+      >
+        {/* v2 revamp: the reveal moment — the emotional peak that sells the
+            next video. Cinematic Fraunces headline over the finished work. */}
+        <div className="text-center pt-1">
+          <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-gold mb-2">Render complete</div>
+          <h2 className="font-display text-3xl sm:text-4xl font-semibold tracking-tighter2 leading-tight">
+            Your video's ready.
+          </h2>
+          <p className="text-ink-soft text-sm mt-2">Press play. Download every format below — or regenerate any scene that's not perfect.</p>
+        </div>
         <video
           src={verticalUrl}
           controls
           playsInline
           poster={renderJob.thumbnailUrl}
-          className="w-full max-h-[600px] rounded-lg bg-black"
+          className="w-full max-h-[600px] rounded-xl bg-black ring-1 ring-edge"
+          style={{ boxShadow: "0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(199,167,108,0.08)" }}
         />
 
         {/* Format bundle — one render, every aspect ratio */}
@@ -2849,7 +2862,7 @@ function ActiveRenderPanel() {
             these fire every few seconds and must not interrupt. */}
         <div className="flex items-end justify-between gap-6" role="status" aria-live="polite">
           <div className="flex-1 min-w-0">
-            <div className="text-2xl sm:text-3xl font-semibold tracking-tighter2 text-ink leading-tight">
+            <div className="font-display text-2xl sm:text-3xl font-semibold tracking-tighter2 text-ink leading-tight">
               {friendlyPhase.title}
             </div>
             {friendlyPhase.detail && (
@@ -2862,7 +2875,7 @@ function ActiveRenderPanel() {
             <div className="flex items-baseline gap-1 justify-end">
               <span
                 ref={percentRef}
-                className="text-5xl sm:text-6xl font-bold tracking-tighter2 text-gold leading-none tabular-nums"
+                className="font-display text-5xl sm:text-6xl font-semibold tracking-tighter2 text-gold leading-none tabular-nums"
                 style={{ fontFeatureSettings: "'tnum'" }}
               >
                 2

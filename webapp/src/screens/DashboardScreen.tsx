@@ -76,8 +76,8 @@ export default function DashboardScreen() {
     <div className="max-w-5xl mx-auto px-6 py-12">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-6 mb-10">
         <div>
-          <p className="text-xs uppercase tracking-wider text-gold mb-2 font-mono">Your work</p>
-          <h1 className="text-3xl sm:text-4xl font-semibold tracking-tighter2">
+          <p className="text-[11px] uppercase tracking-[0.22em] text-gold mb-2.5 font-mono">Your work</p>
+          <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-tighter2 leading-[1.05]">
             Welcome back, {firstName}.
           </h1>
           <p className="text-ink-muted text-sm mt-2">
@@ -152,7 +152,7 @@ export default function DashboardScreen() {
                 <path d="M10 9l5 3-5 3V9z" fill="currentColor" stroke="none" />
               </svg>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-semibold tracking-tighter2 mb-3">
+            <h2 className="font-display text-3xl sm:text-4xl font-semibold tracking-tighter2 mb-3 leading-tight">
               Your first cinematic listing video, in three minutes.
             </h2>
             <p className="text-ink-muted text-sm sm:text-base max-w-md mx-auto mb-8 leading-relaxed">

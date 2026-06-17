@@ -119,8 +119,8 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
       >
         <div className="flex items-start justify-between px-6 sm:px-8 py-5 border-b border-edge-soft">
           <div>
-            <h2 className="text-lg font-semibold tracking-tightish">Get your next video</h2>
-            <p className="text-xs text-ink-muted mt-1">
+            <h2 className="font-display text-2xl font-semibold tracking-tighter2">Get your next video</h2>
+            <p className="text-xs text-ink-muted mt-1.5">
               {reason || "You've used your free video. Buy credits to keep rendering — they never expire."}
             </p>
           </div>
