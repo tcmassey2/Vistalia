@@ -4,12 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>EstateMotion — Your first listing video, free</title>
-<meta name="description" content="Turn your listing photos into a cinematic video in 3 minutes. Your first video is free. MLS-safe by design." />
+<meta name="description" content="Turn your listing photos into a cinematic video in 3 minutes. Your first video is free. Built for MLS compliance — review every scene before you publish." />
 
 <!-- ============================================================
-     META PIXEL — replace PIXEL_ID. Fires PageView on load;
-     Lead on free-signup click; Purchase is fired server-side
-     via CAPI from the Stripe webhook (see AD_CAMPAIGN_REVENUE_PLAN.md).
+     META PIXEL — replace PIXEL_ID. PageView on load; Lead on CTA click.
+     Purchase is fired server-side via CAPI from the Stripe webhook.
      ============================================================ -->
 <script>
 !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
@@ -23,107 +22,154 @@ function trackLead(){try{fbq('track','Lead');}catch(e){}}
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
+/* ============================================================
+   EstateMotion design system — v2 "filmic"
+   Shared tokens for marketing + app. Dark, cinematic, gold.
+   ============================================================ */
 :root{
-  --bg:#08080A; --bg-soft:#0E0E12; --surface:#15151B; --surface-elevated:#1F1F26;
-  --border:#2A2A33; --border-soft:#1A1A22;
-  --ink:#F8F5EF; --ink-soft:#C4C4C8; --ink-muted:#7C7C82; --ink-dim:#4A4A50;
-  --gold:#C7A76C; --gold-light:#E3BB73; --gold-dim:#9C773B;
+  --bg:#0B0B0D; --bg-1:#101014; --surface:#16161B; --surface-2:#1C1C23;
+  --edge:#26262C; --edge-strong:#3A3A42;
+  --ink:#F4F2EC; --ink-soft:#C2C2BC; --ink-muted:#88888E; --ink-dim:#56565C;
+  --gold:#C7A76C; --gold-light:#DBBE7E; --gold-deep:#9C773B;
   --success:#5BBE9B;
   --font-display:"Fraunces","Georgia",serif;
   --font-body:"Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
   --font-mono:"JetBrains Mono","SF Mono",monospace;
+  --ease:cubic-bezier(0.16,1,0.3,1);
+  --maxw:1120px;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{background:var(--bg);color:var(--ink);font-family:var(--font-body);line-height:1.5;-webkit-font-smoothing:antialiased}
-.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 a{color:inherit;text-decoration:none}
+img,video{display:block;max-width:100%}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
 .gold{color:var(--gold)}
-.eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)}
+.eyebrow{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold)}
+.serif{font-family:var(--font-display)}
 
-/* CTA buttons */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:600;
-  border-radius:12px;padding:16px 28px;font-size:16px;cursor:pointer;border:none;transition:transform .15s,box-shadow .15s;text-align:center}
-.btn-primary{background:linear-gradient(135deg,var(--gold-light),var(--gold-dim));color:#08080A;box-shadow:0 8px 30px rgba(199,167,108,.28)}
-.btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(199,167,108,.4)}
-.btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--border)}
-.btn-lg{padding:18px 36px;font-size:18px}
+/* Ambient filmic glow */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(1200px 600px at 70% -5%, rgba(199,167,108,.10), transparent 60%),
+             radial-gradient(900px 500px at 0% 100%, rgba(199,167,108,.05), transparent 55%);}
+main,header,footer{position:relative;z-index:1}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-family:var(--font-body);font-weight:600;
+  border-radius:13px;padding:15px 26px;font-size:15.5px;cursor:pointer;border:1px solid transparent;
+  transition:transform .2s var(--ease),box-shadow .2s var(--ease),background .2s var(--ease);white-space:nowrap}
+.btn-primary{background:linear-gradient(135deg,var(--gold-light),var(--gold-deep));color:#0B0B0D;box-shadow:0 10px 34px rgba(199,167,108,.26)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 46px rgba(199,167,108,.40)}
+.btn-ghost{background:transparent;color:var(--ink);border-color:var(--edge-strong)}
+.btn-ghost:hover{border-color:var(--gold);color:var(--gold-light)}
+.btn-lg{padding:18px 38px;font-size:17px;border-radius:15px}
 .btn-block{display:flex;width:100%}
 
 /* Header */
-header{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);background:rgba(8,8,10,.7);border-bottom:1px solid var(--border-soft)}
-.nav{display:flex;align-items:center;justify-content:space-between;height:64px}
-.logo{font-family:var(--font-display);font-size:22px;font-weight:600;letter-spacing:-.02em}
-.logo span{color:var(--gold)}
+header{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(11,11,13,.66);border-bottom:1px solid rgba(38,38,44,.7)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:70px}
+.logo{font-family:var(--font-display);font-size:23px;font-weight:600;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
+.logo .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--gold-light),var(--gold-deep));color:#0B0B0D;display:grid;place-items:center;font-weight:700;font-style:italic;font-size:17px}
+.logo .mark{font-family:var(--font-display)}
+
+/* Reveal-on-scroll */
+.reveal{opacity:0;transform:translateY(16px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
 
 /* Hero */
-.hero{padding:64px 0 48px;text-align:center}
-.hero h1{font-family:var(--font-display);font-weight:600;font-size:clamp(34px,6vw,60px);line-height:1.04;letter-spacing:-.02em;margin:18px auto 0;max-width:14ch}
-.hero p.sub{color:var(--ink-soft);font-size:clamp(17px,2.4vw,21px);margin:20px auto 0;max-width:46ch}
-.hero .cta-row{margin-top:32px;display:flex;flex-direction:column;align-items:center;gap:12px}
-.hero .microcopy{font-size:14px;color:var(--ink-muted);font-family:var(--font-mono)}
-.video-frame{margin:40px auto 0;max-width:340px;border-radius:24px;overflow:hidden;border:1px solid var(--border);box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 80px rgba(199,167,108,.1);background:var(--surface)}
-.video-frame video{display:block;width:100%;height:auto;aspect-ratio:9/16;object-fit:cover;background:#000}
+.hero{padding:84px 0 64px;display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+.hero h1{font-family:var(--font-display);font-weight:600;font-size:clamp(40px,5.2vw,68px);line-height:1.02;letter-spacing:-.025em}
+.hero h1 em{font-style:italic;color:var(--gold-light)}
+.hero .sub{color:var(--ink-soft);font-size:clamp(17px,1.7vw,20px);margin-top:22px;max-width:30ch}
+.hero .cta-row{margin-top:34px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.hero .micro{font-family:var(--font-mono);font-size:12.5px;color:var(--ink-muted)}
+/* phone frame */
+.phone{justify-self:center;width:min(320px,80vw);aspect-ratio:9/19.5;border-radius:38px;padding:10px;
+  background:linear-gradient(160deg,#26262c,#0e0e12);border:1px solid var(--edge-strong);
+  box-shadow:0 40px 120px rgba(0,0,0,.65),0 0 90px rgba(199,167,108,.10);position:relative}
+.phone .screen{width:100%;height:100%;border-radius:30px;overflow:hidden;background:#000;position:relative}
+.phone video,.phone .ph{width:100%;height:100%;object-fit:cover}
+.phone .ph{background:linear-gradient(180deg,#1a1a20,#0d0d10);display:grid;place-items:center;color:var(--ink-dim);font-family:var(--font-mono);font-size:12px;text-align:center;padding:24px}
+.phone .tag{position:absolute;left:14px;bottom:14px;font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);background:rgba(11,11,13,.6);backdrop-filter:blur(6px);padding:5px 9px;border-radius:7px;border:1px solid var(--edge)}
 
-/* Trust strip */
-.trust{border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);background:var(--bg-soft)}
-.trust-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:28px 0;text-align:center}
-.trust-item .n{font-family:var(--font-display);font-size:26px;color:var(--gold);font-weight:600}
-.trust-item .l{font-size:13px;color:var(--ink-muted);margin-top:4px}
+/* Trust band */
+.trust{border-top:1px solid var(--edge);border-bottom:1px solid var(--edge);background:rgba(16,16,20,.5)}
+.trust-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:26px 0}
+.trust-item{text-align:center;padding:6px 8px}
+.trust-item .n{font-family:var(--font-display);font-size:21px;color:var(--gold-light);font-weight:600}
+.trust-item .l{font-size:12.5px;color:var(--ink-muted);margin-top:3px}
 
 /* Sections */
-section.block{padding:64px 0}
-.section-head{text-align:center;max-width:42ch;margin:0 auto 44px}
-.section-head h2{font-family:var(--font-display);font-weight:600;font-size:clamp(26px,4vw,40px);letter-spacing:-.02em}
-.section-head p{color:var(--ink-soft);margin-top:12px;font-size:17px}
+section.block{padding:88px 0}
+.head{text-align:center;max-width:44ch;margin:0 auto 52px}
+.head h2{font-family:var(--font-display);font-weight:600;font-size:clamp(28px,3.6vw,44px);letter-spacing:-.02em;line-height:1.08}
+.head h2 em{font-style:italic;color:var(--gold-light)}
+.head p{color:var(--ink-soft);margin-top:14px;font-size:17px}
+
+/* Before/after */
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:stretch}
+.ba-card{background:var(--surface);border:1px solid var(--edge);border-radius:22px;overflow:hidden;display:flex;flex-direction:column}
+.ba-card .frame{aspect-ratio:4/3;position:relative;display:grid;place-items:center;font-family:var(--font-mono);font-size:12px;color:var(--ink-dim)}
+.ba-card.before .frame{background:repeating-linear-gradient(45deg,#141418,#141418 12px,#17171c 12px,#17171c 24px)}
+.ba-card.after .frame{background:linear-gradient(150deg,#1d1a14,#0e0e12);color:var(--gold)}
+.ba-card .cap{padding:16px 20px;border-top:1px solid var(--edge)}
+.ba-card .cap .k{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-muted)}
+.ba-card .cap .v{margin-top:4px;font-size:15px;color:var(--ink-soft)}
+.ba-arrow{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:3;width:52px;height:52px;border-radius:50%;background:var(--gold);color:#0B0B0D;display:grid;place-items:center;font-size:22px;box-shadow:0 10px 30px rgba(199,167,108,.4)}
 
 /* Steps */
-.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
-.step{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:28px}
-.step .num{font-family:var(--font-mono);font-size:13px;color:var(--gold)}
-.step h3{font-family:var(--font-display);font-size:20px;margin:10px 0 8px;font-weight:600}
-.step p{color:var(--ink-muted);font-size:15px}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+.step{background:var(--surface);border:1px solid var(--edge);border-radius:18px;padding:30px}
+.step .num{font-family:var(--font-mono);font-size:12px;color:var(--gold)}
+.step h3{font-family:var(--font-display);font-size:21px;margin:12px 0 9px;font-weight:600}
+.step p{color:var(--ink-muted);font-size:14.5px;line-height:1.6}
 
 /* Pricing */
-.pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:880px;margin:0 auto}
-.price-card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:32px;display:flex;flex-direction:column}
-.price-card.featured{border-color:var(--gold);box-shadow:0 0 60px rgba(199,167,108,.14)}
-.badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--gold);color:#08080A;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:5px 14px;border-radius:20px}
-.price-card .name{font-family:var(--font-mono);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft)}
-.price-card .amt{font-family:var(--font-display);font-size:44px;font-weight:600;margin:10px 0 2px}
-.price-card .amt small{font-size:16px;color:var(--ink-muted);font-weight:400}
-.price-card .save{color:var(--success);font-size:14px;font-weight:600;margin-bottom:16px}
-.price-card ul{list-style:none;margin:14px 0 24px;display:flex;flex-direction:column;gap:10px}
-.price-card li{font-size:15px;color:var(--ink-soft);padding-left:24px;position:relative}
-.price-card li::before{content:"✓";position:absolute;left:0;color:var(--gold);font-weight:700}
-.price-card .btn{margin-top:auto}
-.sub-link{text-align:center;margin-top:24px;font-size:14px;color:var(--ink-muted)}
-.sub-link a{color:var(--gold);border-bottom:1px solid var(--gold-dim)}
+.pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;max-width:960px;margin:0 auto;align-items:stretch}
+.pcard{position:relative;background:var(--surface);border:1px solid var(--edge);border-radius:20px;padding:34px 28px;display:flex;flex-direction:column}
+.pcard.featured{border-color:var(--gold);background:linear-gradient(180deg,rgba(199,167,108,.06),var(--surface) 60%);box-shadow:0 0 70px rgba(199,167,108,.12)}
+.pcard .badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--gold);color:#0B0B0D;font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;padding:6px 14px;border-radius:20px}
+.pcard .name{font-family:var(--font-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft)}
+.pcard .amt{font-family:var(--font-display);font-size:48px;font-weight:600;margin:12px 0 0;letter-spacing:-.02em}
+.pcard .amt small{font-size:15px;color:var(--ink-muted);font-weight:400;font-family:var(--font-body)}
+.pcard .save{color:var(--success);font-size:13.5px;font-weight:600;margin-top:6px;min-height:20px}
+.pcard ul{list-style:none;margin:20px 0 26px;display:flex;flex-direction:column;gap:11px}
+.pcard li{font-size:14.5px;color:var(--ink-soft);padding-left:26px;position:relative;line-height:1.45}
+.pcard li::before{content:"";position:absolute;left:0;top:6px;width:15px;height:15px;border-radius:50%;background:rgba(199,167,108,.16);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M8 2.5L4 7L2 5' stroke='%23C7A76C' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:center}
+.pcard .btn{margin-top:auto}
+.note{text-align:center;margin-top:26px;font-family:var(--font-mono);font-size:12.5px;color:var(--ink-muted)}
 
 /* FAQ */
-.faq{max-width:680px;margin:0 auto}
-.faq details{border-bottom:1px solid var(--border-soft);padding:20px 0}
-.faq summary{font-weight:600;font-size:17px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center}
+.faq{max-width:720px;margin:0 auto}
+.faq details{border-bottom:1px solid var(--edge);padding:22px 0}
+.faq summary{font-weight:600;font-size:17px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:16px}
 .faq summary::-webkit-details-marker{display:none}
-.faq summary::after{content:"+";color:var(--gold);font-size:22px}
+.faq summary::after{content:"+";color:var(--gold);font-size:24px;font-weight:300;transition:transform .2s var(--ease)}
 .faq details[open] summary::after{content:"–"}
-.faq p{color:var(--ink-muted);margin-top:12px;font-size:15px;line-height:1.6}
+.faq p{color:var(--ink-muted);margin-top:13px;font-size:15px;line-height:1.65}
 
 /* Final CTA */
-.final{text-align:center;background:linear-gradient(180deg,var(--bg),var(--bg-soft));padding:80px 0}
-.final h2{font-family:var(--font-display);font-weight:600;font-size:clamp(28px,4.5vw,44px);letter-spacing:-.02em;max-width:16ch;margin:0 auto}
-.final p{color:var(--ink-soft);margin:16px auto 28px;max-width:40ch}
+.final{text-align:center;padding:96px 0;background:radial-gradient(700px 320px at 50% 0%, rgba(199,167,108,.10), transparent 60%)}
+.final h2{font-family:var(--font-display);font-weight:600;font-size:clamp(30px,4.4vw,52px);letter-spacing:-.02em;max-width:18ch;margin:0 auto;line-height:1.05}
+.final h2 em{font-style:italic;color:var(--gold-light)}
+.final p{color:var(--ink-soft);margin:18px auto 30px;max-width:42ch;font-size:17px}
 
-footer{border-top:1px solid var(--border-soft);padding:32px 0;text-align:center;color:var(--ink-dim);font-size:13px}
+footer{border-top:1px solid var(--edge);padding:38px 0;text-align:center;color:var(--ink-dim);font-size:13px}
+footer .logo{justify-content:center;font-size:18px;margin-bottom:10px;opacity:.8}
 
-@media (max-width:720px){
-  .trust-grid{padding:20px 0}
+@media (max-width:880px){
+  .hero{grid-template-columns:1fr;gap:40px;padding:56px 0 48px;text-align:center}
+  .hero .sub{margin-left:auto;margin-right:auto}
+  .hero .cta-row{justify-content:center}
+  .trust-grid{grid-template-columns:repeat(2,1fr);gap:18px}
   .steps{grid-template-columns:1fr}
-  .pricing{grid-template-columns:1fr}
-  .hero{padding:40px 0 32px}
-  section.block{padding:48px 0}
+  .ba{grid-template-columns:1fr}
+  .pricing{grid-template-columns:1fr;max-width:420px}
+  section.block{padding:64px 0}
 }
 </style>
 </head>
@@ -131,145 +177,177 @@ footer{border-top:1px solid var(--border-soft);padding:32px 0;text-align:center;
 
 <header>
   <div class="wrap nav">
-    <div class="logo">Estate<span>Motion</span></div>
-    <a href="#start" class="btn btn-ghost" style="padding:10px 18px;font-size:14px" onclick="trackLead()">Start free</a>
+    <div class="logo"><span class="mark">E</span>EstateMotion</div>
+    <a href="https://estatemotion.ai/app/?ref=ad&offer=free" class="btn btn-primary" style="padding:11px 20px;font-size:14px" onclick="trackLead()">Start free</a>
   </div>
 </header>
 
+<main>
 <!-- HERO -->
-<section class="hero">
-  <div class="wrap">
-    <div class="eyebrow">For real estate agents</div>
-    <h1>Your listing photos, a cinematic video in <span class="gold">3 minutes</span>.</h1>
-    <p class="sub">Upload the photos you already have. EstateMotion directs the motion, music, and pacing — and hands you a scroll-stopping listing video. Your first one is free.</p>
-
-    <!-- Real product output. Swap src to your hosted before/after clip
-         (host on Supabase Storage or your CDN; the file is in
-         marketing/ad-creatives/before-after-real-output.mp4). -->
-    <div class="video-frame">
-      <video src="REPLACE_WITH_HOSTED_VIDEO_URL.mp4" autoplay muted loop playsinline poster="REPLACE_WITH_POSTER.jpg"></video>
-    </div>
-
-    <div class="cta-row" id="start">
+<section class="hero wrap">
+  <div class="reveal">
+    <div class="eyebrow">AI listing videos for real estate</div>
+    <h1>Your photos.<br>A cinematic video in <em>three minutes.</em></h1>
+    <p class="sub">Upload the listing photos you already have. EstateMotion directs the motion, music, and pacing — and hands you a video buyers actually finish watching. Your first one is free.</p>
+    <div class="cta-row">
       <a href="https://estatemotion.ai/app/?ref=ad&offer=free" class="btn btn-primary btn-lg" onclick="trackLead()">Get my first video free →</a>
-      <span class="microcopy">No credit card · 1 free video · ready in 3 min</span>
+    </div>
+    <div class="micro" style="margin-top:14px">No credit card · ready in ~3 minutes · MLS-safe</div>
+  </div>
+  <div class="reveal">
+    <div class="phone">
+      <div class="screen">
+        <!-- Swap .ph for: <video src="HOSTED_URL.mp4" autoplay muted loop playsinline poster="POSTER.jpg"></video> -->
+        <div class="ph">Your finished listing video<br>plays here<br><br>(drop in before-after-real-output.mp4)</div>
+        <div class="tag">EstateMotion · 9:16 · 0:30</div>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- TRUST BAND -->
+<div class="trust">
+  <div class="wrap trust-grid">
+    <div class="trust-item reveal"><div class="n">~3 min</div><div class="l">Upload to finished video</div></div>
+    <div class="trust-item reveal"><div class="n">MLS-safe</div><div class="l">Review every scene first</div></div>
+    <div class="trust-item reveal"><div class="n">$100</div><div class="l">Per video — no subscription</div></div>
+    <div class="trust-item reveal"><div class="n">Free</div><div class="l">Your first video's on us</div></div>
+  </div>
+</div>
+
+<main>
+<!-- BEFORE / AFTER -->
+<section class="block wrap">
+  <div class="head reveal">
+    <div class="eyebrow">The difference</div>
+    <h2>Same listing. <em>Different result.</em></h2>
+    <p>The photos you already shot, turned into a video that stops the scroll.</p>
+  </div>
+  <div class="ba reveal" style="position:relative;max-width:880px;margin:0 auto">
+    <div class="ba-card before">
+      <div class="frame">static MLS photo</div>
+      <div class="cap"><div class="k">Before</div><div class="v">A still photo in the feed. Scrolled past.</div></div>
+    </div>
+    <div class="ba-card after">
+      <div class="frame">cinematic video ▸</div>
+      <div class="cap"><div class="k">After</div><div class="v">Cinematic motion, music, your branding. Watched.</div></div>
     </div>
   </div>
 </section>
 
-<!-- TRUST STRIP -->
-<div class="trust">
-  <div class="wrap trust-grid">
-    <div class="trust-item"><div class="n">3 min</div><div class="l">From upload to finished video</div></div>
-    <div class="trust-item"><div class="n">MLS-safe</div><div class="l">Fidelity guardrails on every scene</div></div>
-    <div class="trust-item"><div class="n">$100</div><div class="l">Per video after your free one</div></div>
-  </div>
-</div>
-
 <!-- HOW IT WORKS -->
-<section class="block">
-  <div class="wrap">
-    <div class="section-head">
-      <div class="eyebrow">How it works</div>
-      <h2>Three taps. No editing.</h2>
-    </div>
-    <div class="steps">
-      <div class="step"><div class="num">01</div><h3>Upload your photos</h3><p>Drop in the 8–24 listing photos you already shot. Drag to set the tour order, or let us order it.</p></div>
-      <div class="step"><div class="num">02</div><h3>Pick a style</h3><p>Cinematic Luxury, Modern Social, MLS Clean, or Investor Tour. Each has its own grade, motion, and music.</p></div>
-      <div class="step"><div class="num">03</div><h3>Review &amp; publish</h3><p>You see every scene before it goes live. Anything off? Regenerate it free. Then download for Reels, TikTok, and Shorts.</p></div>
-    </div>
+<section class="block wrap" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
+  <div class="head reveal">
+    <div class="eyebrow">How it works</div>
+    <h2>Three taps. <em>No editing.</em></h2>
+  </div>
+  <div class="steps">
+    <div class="step reveal"><div class="num">01</div><h3>Upload your photos</h3><p>Drop in 8–24 listing photos. Drag to set the tour order, or let us order it for you.</p></div>
+    <div class="step reveal"><div class="num">02</div><h3>Pick a style</h3><p>Cinematic Luxury, Modern Social, MLS Clean, or Investor Tour — each with its own grade and music.</p></div>
+    <div class="step reveal"><div class="num">03</div><h3>Review &amp; publish</h3><p>See every scene before it goes live. Anything off? Regenerate it free. Then post to Reels, TikTok, Shorts.</p></div>
   </div>
 </section>
 
 <!-- PRICING -->
-<section class="block" style="background:var(--bg-soft)">
-  <div class="wrap">
-    <div class="section-head">
-      <div class="eyebrow">Simple pricing</div>
-      <h2>First video free. Then pay per listing.</h2>
-      <p>No subscription required. Buy videos when you list — most agents bill it to the seller as marketing.</p>
-    </div>
-    <div class="pricing">
-      <div class="price-card">
-        <div class="name">Single video</div>
-        <div class="amt">$100<small> / video</small></div>
-        <div class="save" style="visibility:hidden">placeholder</div>
-        <ul>
-          <li>One cinematic listing video</li>
-          <li>All social formats (9:16, 1:1, 16:9)</li>
-          <li>Free scene regeneration</li>
-          <li>Branded outro with your details</li>
-        </ul>
-        <a href="https://estatemotion.ai/app/?ref=ad&offer=single" class="btn btn-ghost btn-block" onclick="trackLead()">Start free, then $100</a>
-      </div>
-      <div class="price-card featured">
-        <div class="badge">Best value</div>
-        <div class="name">5-video pack</div>
-        <div class="amt">$375<small> / 5 videos</small></div>
-        <div class="save">$75 per video — save 25%</div>
-        <ul>
-          <li>Five cinematic listing videos</li>
-          <li>Credits never expire</li>
-          <li>60-second video option</li>
-          <li>Priority rendering queue</li>
-        </ul>
-        <a href="https://estatemotion.ai/app/?ref=ad&offer=pack5" class="btn btn-primary btn-block" onclick="trackLead()">Get the 5-pack →</a>
-      </div>
-      <div class="price-card">
-        <div class="name">10-video pack</div>
-        <div class="amt">$650<small> / 10 videos</small></div>
-        <div class="save">$65 per video — save 35%</div>
-        <ul>
-          <li>Ten cinematic listing videos</li>
-          <li>Credits never expire</li>
-          <li>Best per-video price</li>
-          <li>Front-of-queue rendering</li>
-        </ul>
-        <a href="https://estatemotion.ai/app/?ref=ad&offer=pack10" class="btn btn-ghost btn-block" onclick="trackLead()">Get the 10-pack →</a>
-      </div>
-    </div>
-    <div class="sub-link">Credits never expire — buy what you list. No subscription.</div>
+<section class="block wrap">
+  <div class="head reveal">
+    <div class="eyebrow">Pricing</div>
+    <h2>Pay per listing. <em>No subscription.</em></h2>
+    <p>Your first video is free. After that, buy what you list — credits never expire.</p>
   </div>
+  <div class="pricing">
+    <div class="pcard reveal">
+      <div class="name">Single video</div>
+      <div class="amt">$100<small> / video</small></div>
+      <div class="save">&nbsp;</div>
+      <ul>
+        <li>One cinematic listing video</li>
+        <li>All social formats (9:16, 1:1, 16:9)</li>
+        <li>Free scene regeneration</li>
+        <li>Your branding on the outro</li>
+      </ul>
+      <a href="https://estatemotion.ai/app/?ref=ad&offer=single" class="btn btn-ghost btn-block" onclick="trackLead()">Start free, then $100</a>
+    </div>
+    <div class="pcard featured reveal">
+      <div class="badge">Best value</div>
+      <div class="name">5-video pack</div>
+      <div class="amt">$375<small> / 5 videos</small></div>
+      <div class="save">$75 per video — save 25%</div>
+      <ul>
+        <li>Five cinematic listing videos</li>
+        <li>Credits never expire</li>
+        <li>60-second video option</li>
+        <li>Priority rendering queue</li>
+      </ul>
+      <a href="https://estatemotion.ai/app/?ref=ad&offer=pack5" class="btn btn-primary btn-block" onclick="trackLead()">Get the 5-pack →</a>
+    </div>
+    <div class="pcard reveal">
+      <div class="name">10-video pack</div>
+      <div class="amt">$650<small> / 10 videos</small></div>
+      <div class="save">$65 per video — save 35%</div>
+      <ul>
+        <li>Ten cinematic listing videos</li>
+        <li>Credits never expire</li>
+        <li>Best per-video price</li>
+        <li>Front-of-queue rendering</li>
+      </ul>
+      <a href="https://estatemotion.ai/app/?ref=ad&offer=pack10" class="btn btn-ghost btn-block" onclick="trackLead()">Get the 10-pack →</a>
+    </div>
+  </div>
+  <div class="note">Credits never expire · no monthly commitment · cancel nothing</div>
 </section>
 
-<!-- FAQ — leads with the real objection -->
-<section class="block">
-  <div class="wrap">
-    <div class="section-head"><div class="eyebrow">Questions</div><h2>The honest answers</h2></div>
-    <div class="faq">
-      <details open>
-        <summary>What if a scene looks wrong?</summary>
-        <p>AI video isn't perfect — occasionally a scene needs a redo. That's why you review every scene before publishing, and regenerating any scene is free. Nothing goes out that you haven't approved. Risky rooms like kitchens and baths are rendered conservatively by design to keep them true to the photo.</p>
-      </details>
-      <details>
-        <summary>Is it really my photos, or AI-invented rooms?</summary>
-        <p>Your photos. EstateMotion animates the actual images you upload — it doesn't invent rooms or features. Fidelity guardrails keep fixtures, counters, and finishes true to what you shot.</p>
-      </details>
-      <details>
-        <summary>Do I need any editing skill?</summary>
-        <p>None. Upload, pick a style, review. The whole thing takes about three minutes and you get a finished, ready-to-post video.</p>
-      </details>
-      <details>
-        <summary>What does the free video include?</summary>
-        <p>A complete cinematic listing video from your photos — full length, your branding, all social formats. No credit card to try it.</p>
-      </details>
-    </div>
+<!-- FAQ -->
+<section class="block wrap" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
+  <div class="head reveal"><div class="eyebrow">Questions</div><h2>The honest answers</h2></div>
+  <div class="faq reveal">
+    <details open>
+      <summary>What if a scene looks wrong?</summary>
+      <p>AI video isn't perfect — occasionally a scene needs a redo. That's why you review every scene before publishing, and regenerating any scene is free. Nothing goes out that you haven't approved. Risky rooms like kitchens and baths render conservatively by design to stay true to your photo.</p>
+    </details>
+    <details>
+      <summary>Is it really my photos, or AI-invented rooms?</summary>
+      <p>Your photos. EstateMotion animates the actual images you upload — it doesn't invent rooms or features. Fidelity guardrails keep fixtures, counters, and finishes true to what you shot.</p>
+    </details>
+    <details>
+      <summary>Is there a subscription?</summary>
+      <p>No. You buy videos when you list — $100 for one, or less per video in a pack — and credits never expire. Your first video is free, no card required.</p>
+    </details>
+    <details>
+      <summary>Do I need any editing skill?</summary>
+      <p>None. Upload, pick a style, review. The whole thing takes about three minutes and you get a finished, ready-to-post video.</p>
+    </details>
   </div>
 </section>
+</main>
 
 <!-- FINAL CTA -->
 <section class="final">
   <div class="wrap">
-    <h2>See your next listing as a cinematic video.</h2>
-    <p>Free to try. Three minutes. Built for agents who'd rather be selling than editing.</p>
-    <a href="https://estatemotion.ai/app/?ref=ad&offer=free" class="btn btn-primary btn-lg" onclick="trackLead()">Get my first video free →</a>
-    <div class="microcopy" style="margin-top:12px;color:var(--ink-muted)">No credit card required</div>
+    <h2 class="reveal">See your next listing as a <em>cinematic video.</em></h2>
+    <p class="reveal">Free to try. Three minutes. Built for agents who'd rather be selling than editing.</p>
+    <a href="https://estatemotion.ai/app/?ref=ad&offer=free" class="btn btn-primary btn-lg reveal" onclick="trackLead()">Get my first video free →</a>
+    <div class="micro reveal" style="margin-top:14px">No credit card required</div>
   </div>
 </section>
 
 <footer>
-  <div class="wrap">EstateMotion · Cinematic listing videos for real estate agents · <a href="https://estatemotion.ai" class="gold">estatemotion.ai</a></div>
+  <div class="wrap">
+    <div class="logo"><span class="mark">E</span>EstateMotion</div>
+    Cinematic listing videos for real estate agents · <a href="https://estatemotion.ai" class="gold">estatemotion.ai</a>
+  </div>
 </footer>
 
+<script>
+  // Reveal-on-scroll (respects reduced-motion via CSS).
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach((el, i) => {
+    el.style.transitionDelay = (Math.min(i % 4, 3) * 60) + 'ms';
+    io.observe(el);
+  });
+</script>
 </body>
 </html>
