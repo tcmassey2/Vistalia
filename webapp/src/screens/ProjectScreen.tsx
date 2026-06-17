@@ -9,7 +9,6 @@ import { resolveTrack } from "../lib/music-catalog";
 import { isAiVideoEngine } from "../lib/engine-labels";
 import MusicSelector from "../components/MusicSelector";
 import PaywallModal from "../components/PaywallModal";
-import PricingModal from "../components/PricingModal";
 
 const STYLES: Array<{
   id: StyleId;
@@ -2103,7 +2102,6 @@ function RenderControls() {
 
   // v26.6: paywall state for the free-video → paid moment.
   const [showPaywall, setShowPaywall] = useState(false);
-  const [showPlans, setShowPlans] = useState(false);
   const [paywallReason, setPaywallReason] = useState<string>("");
 
   const isRendering = renderJob?.status === "queued" || renderJob?.status === "rendering";
@@ -2497,10 +2495,8 @@ function RenderControls() {
       <PaywallModal
         open={showPaywall}
         onClose={() => setShowPaywall(false)}
-        onSeePlans={() => setShowPlans(true)}
         reason={paywallReason}
       />
-      <PricingModal open={showPlans} onClose={() => setShowPlans(false)} />
     </div>
   );
 }

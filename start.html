@@ -87,7 +87,7 @@ section.block{padding:64px 0}
 .step p{color:var(--ink-muted);font-size:15px}
 
 /* Pricing */
-.pricing{display:grid;grid-template-columns:repeat(2,1fr);gap:20px;max-width:720px;margin:0 auto}
+.pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:880px;margin:0 auto}
 .price-card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:32px;display:flex;flex-direction:column}
 .price-card.featured{border-color:var(--gold);box-shadow:0 0 60px rgba(199,167,108,.14)}
 .badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--gold);color:#08080A;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:5px 14px;border-radius:20px}
@@ -206,17 +206,29 @@ footer{border-top:1px solid var(--border-soft);padding:32px 0;text-align:center;
         <div class="badge">Best value</div>
         <div class="name">5-video pack</div>
         <div class="amt">$375<small> / 5 videos</small></div>
-        <div class="save">Save $125 — $75 per video</div>
+        <div class="save">$75 per video — save 25%</div>
         <ul>
           <li>Five cinematic listing videos</li>
           <li>Credits never expire</li>
-          <li>Everything in single, plus</li>
+          <li>60-second video option</li>
           <li>Priority rendering queue</li>
         </ul>
         <a href="https://estatemotion.ai/app/?ref=ad&offer=pack5" class="btn btn-primary btn-block" onclick="trackLead()">Get the 5-pack →</a>
       </div>
+      <div class="price-card">
+        <div class="name">10-video pack</div>
+        <div class="amt">$650<small> / 10 videos</small></div>
+        <div class="save">$65 per video — save 35%</div>
+        <ul>
+          <li>Ten cinematic listing videos</li>
+          <li>Credits never expire</li>
+          <li>Best per-video price</li>
+          <li>Front-of-queue rendering</li>
+        </ul>
+        <a href="https://estatemotion.ai/app/?ref=ad&offer=pack10" class="btn btn-ghost btn-block" onclick="trackLead()">Get the 10-pack →</a>
+      </div>
     </div>
-    <div class="sub-link">Listing every week? <a href="https://estatemotion.ai/app/?ref=ad&offer=sub">See monthly plans →</a></div>
+    <div class="sub-link">Credits never expire — buy what you list. No subscription.</div>
   </div>
 </section>
 

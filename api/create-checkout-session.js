@@ -77,7 +77,8 @@ export default async function handler(request, response) {
   // + credit count live here. Webhook grants credits on session metadata.
   const CREDIT_PACKS = {
     single: { credits: 1, amount: 10000, label: "1 listing video" },
-    pack5: { credits: 5, amount: 37500, label: "5-video pack" }
+    pack5: { credits: 5, amount: 37500, label: "5-video pack" },
+    pack10: { credits: 10, amount: 65000, label: "10-video pack" }
   };
 
   try {

@@ -6,17 +6,14 @@ import { useStore } from "../lib/store";
  * PaywallModal — the free-video → paid moment.
  *
  * Shown when a user is out of render credits / past their free trial video
- * and tries to render. Per the locked launch strategy (cash flywheel), this
- * pushes one-off purchases: $100 single and the $375 5-pack (featured),
- * with monthly subscriptions as a quiet secondary link. One-off cash is
- * what funds ad spend, so it leads.
+ * and tries to render. v26.8 pay-per-video model (no subscriptions): the
+ * three credit packs — $100 single, $375 5-pack (featured), $650 10-pack.
+ * All collected cash, which funds the ad flywheel.
  */
 
 interface PaywallModalProps {
   open: boolean;
   onClose: () => void;
-  /** Opens the full subscription PricingModal (the "monthly plans" link). */
-  onSeePlans?: () => void;
   /** Optional context line, e.g. the gate reason from /api/usage. */
   reason?: string;
 }
@@ -36,7 +33,7 @@ const PACKS: PackCard[] = [
     slug: "single",
     name: "Single video",
     price: "$100",
-    unit: "one video",
+    unit: "1 video",
     features: [
       "One cinematic listing video",
       "All social formats (9:16, 1:1, 16:9)",
@@ -48,8 +45,8 @@ const PACKS: PackCard[] = [
     slug: "pack5",
     name: "5-video pack",
     price: "$375",
-    unit: "five videos",
-    save: "Save $125 — $75 / video",
+    unit: "5 videos",
+    save: "Save 25% — $75 / video",
     featured: true,
     features: [
       "Five cinematic listing videos",
@@ -57,10 +54,23 @@ const PACKS: PackCard[] = [
       "Everything in single, plus",
       "Priority rendering queue"
     ]
+  },
+  {
+    slug: "pack10",
+    name: "10-video pack",
+    price: "$650",
+    unit: "10 videos",
+    save: "Save 35% — $65 / video",
+    features: [
+      "Ten cinematic listing videos",
+      "Credits never expire",
+      "Best per-video price",
+      "Priority rendering queue"
+    ]
   }
 ];
 
-export default function PaywallModal({ open, onClose, onSeePlans, reason }: PaywallModalProps) {
+export default function PaywallModal({ open, onClose, reason }: PaywallModalProps) {
   const session = useStore((s) => s.session);
   const [busy, setBusy] = useState<CheckoutTier | null>(null);
   const [error, setError] = useState("");
@@ -104,7 +114,7 @@ export default function PaywallModal({ open, onClose, onSeePlans, reason }: Payw
         role="dialog"
         aria-modal="true"
         aria-label="Buy a video"
-        className="relative w-full max-w-2xl bg-surface rounded-2xl border border-edge shadow-2xl my-6"
+        className="relative w-full max-w-3xl bg-surface rounded-2xl border border-edge shadow-2xl my-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between px-6 sm:px-8 py-5 border-b border-edge-soft">
@@ -124,7 +134,7 @@ export default function PaywallModal({ open, onClose, onSeePlans, reason }: Payw
           </button>
         </div>
 
-        <div className="px-6 sm:px-8 py-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="px-6 sm:px-8 py-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
           {PACKS.map((pack) => {
             const isBusy = busy === pack.slug;
             return (
@@ -181,13 +191,7 @@ export default function PaywallModal({ open, onClose, onSeePlans, reason }: Payw
         )}
 
         <div className="px-6 sm:px-8 pb-6 flex items-center justify-between gap-4 flex-wrap">
-          <button
-            type="button"
-            onClick={() => { onClose(); onSeePlans?.(); }}
-            className="text-xs text-gold hover:text-gold-light underline underline-offset-2"
-          >
-            Listing every week? See monthly plans →
-          </button>
+          <span className="text-xs text-ink-muted">Credits never expire. Use them whenever you list.</span>
           <span className="text-[11px] text-ink-dim">Payments by Stripe. We never see your card.</span>
         </div>
       </div>

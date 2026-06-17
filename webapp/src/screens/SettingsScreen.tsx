@@ -5,7 +5,7 @@ import { signOut, requestPasswordReset } from "../lib/supabase";
 import type { UserProfile } from "../lib/types";
 import TwoFactorSection from "../components/TwoFactorSection";
 import VoiceSection from "../components/VoiceSection";
-import PricingModal from "../components/PricingModal";
+import PaywallModal from "../components/PaywallModal";
 import HCaptcha from "../components/HCaptcha";
 import { env } from "../lib/env";
 
@@ -59,7 +59,7 @@ export default function SettingsScreen() {
         return;
       }
       if (needsCheckout) {
-        setToast("You don't have a paid plan yet — pick one below to set up billing.");
+        setToast("You're on the free trial — buy videos below to keep rendering.");
         return;
       }
       setError(error || "Couldn't open the billing portal.");
@@ -236,7 +236,7 @@ export default function SettingsScreen() {
                   {usage && (
                     <div className="text-xs text-ink-muted mt-0.5">
                       {tier === "trial"
-                        ? `${usage.trial_renders_used ?? 0} of ${usage.trial_render_cap ?? 3} trial videos used`
+                        ? `${usage.trial_renders_used ?? 0} of ${usage.trial_render_cap ?? 1} trial videos used`
                         : `${usage.videos_used_this_month} of ${usage.monthly_video_quota} videos this cycle`}
                     </div>
                   )}
@@ -256,7 +256,7 @@ export default function SettingsScreen() {
                     onClick={() => setPricingOpen(true)}
                     className="card-press h-9 px-4 rounded-lg text-xs font-semibold bg-gold text-paper hover:bg-gold-light transition-colors inline-flex items-center"
                   >
-                    Pick a plan
+                    Buy videos
                   </button>
                 )}
               </div>
@@ -317,8 +317,8 @@ export default function SettingsScreen() {
           ============================================================ */}
       <DangerZone email={email} />
 
-      {/* v23: in-app upgrade flow. Replaces the old `/#pricing` anchor link. */}
-      <PricingModal open={pricingOpen} onClose={() => setPricingOpen(false)} />
+      {/* v26.8: pay-per-video purchase flow (same paywall as the render gate). */}
+      <PaywallModal open={pricingOpen} onClose={() => setPricingOpen(false)} />
     </div>
   );
 }

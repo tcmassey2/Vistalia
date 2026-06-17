@@ -418,10 +418,10 @@ export async function openBillingPortal(): Promise<BillingPortalResponse> {
    On success the user lands back on returnUrl?checkout=success.
 */
 
-// v26.5 lineup: launch/pro/studio subscriptions. v26.6 one-off credit
-// purchases: single ($100/1 credit), pack5 ($375/5 credits). Legacy slugs
-// retained for grandfathered subscribers' billing-portal flows.
-export type CheckoutTier = "single" | "pack5" | "launch" | "pro" | "studio" | "quick_reel" | "cinematic_ai" | "cinematic_4k" | "brokerage";
+// v26.8 pay-per-video lineup: single ($100/1), pack5 ($375/5), pack10
+// ($650/10). Subscription + legacy slugs retained only so old billing-portal
+// / grandfathered flows don't break; not offered in the UI.
+export type CheckoutTier = "single" | "pack5" | "pack10" | "launch" | "pro" | "studio" | "quick_reel" | "cinematic_ai" | "cinematic_4k" | "brokerage";
 
 export interface CheckoutResponse {
   url?: string;
