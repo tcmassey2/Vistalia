@@ -148,6 +148,7 @@ export interface RenderManifest {
     transition?: string;
     overlay?: { headline: string; subline: string };
     runwayPrompt?: string;
+    veoPrompt?: string;
     // Conversational voiceover line for this scene. Empty/missing = silent.
     // The render-worker synthesizes via ElevenLabs and ducks music under it.
     narrationLine?: string;

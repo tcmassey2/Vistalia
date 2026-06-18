@@ -2192,6 +2192,9 @@ function RenderControls() {
             transition: scene.transition,
             overlay: scene.overlay,
             runwayPrompt: scene.runwayPrompt,
+            // v26.9: forward veoPrompt so Veo uses its purpose-built
+            // cinematography prompts (not the Runway-style fallback).
+            veoPrompt: scene.veoPrompt,
             // narrationLine drives ElevenLabs synthesis on the worker
             narrationLine: scene.narrationLine || ""
           };

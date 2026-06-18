@@ -118,6 +118,7 @@ export interface EditPlanScene {
   transition: Transition;
   overlay: SceneOverlay;
   runwayPrompt?: string;
+  veoPrompt?: string;
   // Conversational 1-2 sentence narration for this scene. The Motion
   // Director only writes a line when narration would add to the moment
   // (intro / kitchen / outdoor / outro CTA). Silent scenes let the photo

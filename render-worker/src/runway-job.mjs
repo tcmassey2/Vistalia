@@ -316,7 +316,9 @@ export async function renderRunwayJob(body, options = {}) {
   writeRenderAudit({
     manifest,
     jobId,
-    engine: "runway",
+    // v26.9: record the engine actually used (was hardcoded "runway", which
+    // mislabeled every Veo render in the library + audit log).
+    engine: isVeo ? "veo" : "runway",
     upload,
     narration,
     scenes: scenesMeta

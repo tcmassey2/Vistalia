@@ -51,6 +51,10 @@ function predictKenBurnsFallback(roomType) {
 // target render length. Cinematic AI scenes that pass the guard are 5s
 // (Runway native). Predicted fallbacks are 2.8s (Quick Reel Ken Burns).
 function avgSecPerScene({ engine, hasKitchen, hasBathroom }) {
+  // v26.9: Veo renders 6s clips with NO Ken Burns fallback (risky rooms get
+  // constrained prompts, still 6s). So 30s → 5 scenes, 60s → 10. Without this
+  // veo hit the 2.8s branch → ~11 scenes → ~66s video at ~2x COGS.
+  if (engine === "veo") return 6.0;
   if (engine !== "runway") return 2.8;
   // Mixed-engine math: assume a typical listing has ~1 kitchen + ~1
   // bathroom scene that will fall back. The rest are 5s Runway clips.
@@ -756,8 +760,12 @@ function normalizeEditPlan(plan, photos, context) {
   const engine = RENDER_ENGINES.includes(context.engine) ? context.engine : "remotion";
   // Cinematic AI: clip duration up to 10 (worker decides 5 vs 10 based on >5.5 boundary).
   // Quick Reel: clip duration capped at 5 (Ken Burns shouldn't sit on one photo longer).
-  const maxDuration = engine === "runway" ? 10 : 5;
-  const defaultDuration = engine === "runway" ? 5 : 2.4;
+  // v26.9: Veo clips are 6s native (4/6/8 buckets). Treat veo as an AI video
+  // engine with a 6s default and an 8s ceiling — NOT like Ken Burns (which
+  // was the bug: veo fell through to the 2.4s default / 5s cap, so scenes
+  // desynced from the actual 6s Veo clips).
+  const maxDuration = engine === "runway" ? 10 : engine === "veo" ? 8 : 5;
+  const defaultDuration = engine === "runway" ? 5 : engine === "veo" ? 6 : 2.4;
   const scenes = [...(plan.scenes || [])]
     .filter((scene) => photoIds.has(scene.photoId))
     .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
@@ -1038,6 +1046,8 @@ function qualityScore(photo, index) {
 }
 
 function durationFor(roomType, style, index, engine = "remotion") {
+  // v26.9: Veo clips are 6s native — every scene, no Ken Burns fallback.
+  if (engine === "veo") return 6;
   // v24.1: Cinematic AI scene durations depend on whether the scene
   // will fall back to Ken Burns. Predicted-fallback scenes (kitchens,
   // bathrooms) get 2.8s — Ken Burns motion is more interesting at
