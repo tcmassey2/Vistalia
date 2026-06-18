@@ -234,10 +234,19 @@ export async function renderRunwayJob(body, options = {}) {
   } else {
     const NARRATION_TIME_BUDGET_MS = 120 * 1000; // 2 minutes hard cap
     try {
+      // v26.9 reliability: pass the ACTUAL per-scene clip durations (keyed by
+      // photoId) so narration timing tracks the real video, not the plan's
+      // stated durations. Eliminates the drift that made voice desync /
+      // "stop after 5 seconds" when manifest duration != rendered clip length.
+      const actualDurationsByPhoto = {};
+      for (const c of clipResults) {
+        if (c && c.photoId) actualDurationsByPhoto[c.photoId] = Number(c.duration) || 0;
+      }
       narration = await Promise.race([
         applyVoiceNarration({
           masterMp4: finalMp4,
           scenes: manifest.scenes,
+          sceneDurationsByPhoto: actualDurationsByPhoto,
           brandKit: manifest.brandKit || {},
           tempDir,
           jobId,

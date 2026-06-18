@@ -40,7 +40,14 @@ const DUCK_LEVEL = Number(process.env.DUCK_LEVEL ?? 0.30);
 // manifest.voiceLevel.
 const VOICE_WEIGHT = Number(process.env.VOICE_LEVEL ?? 1.4);
 
-export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir, jobId, onProgress }) {
+export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, brandKit, tempDir, jobId, onProgress }) {
+  // v26.9: actual rendered clip duration per scene (keyed by photoId). When
+  // present it overrides the manifest's stated duration so narration timing
+  // matches the real video exactly — the single biggest narration-sync fix.
+  const realDur = (scene, fallback) => {
+    const d = sceneDurationsByPhoto && scene && scene.photoId ? Number(sceneDurationsByPhoto[scene.photoId]) : 0;
+    return d > 0 ? d : fallback;
+  };
   if (!process.env.ELEVENLABS_API_KEY) {
     return { masterMp4, narrationApplied: false, reason: "ELEVENLABS_API_KEY not set" };
   }
@@ -109,10 +116,13 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
 
   const leadInSec = 0.35;
   const sceneStarts = []; // start time of each scene in seconds
+  const sceneDurs = [];   // resolved duration of each scene (actual clip > manifest)
   let cursor = 0;
   for (const sc of photoScenes) {
+    const d = realDur(sc, Number(sc.duration || 3));
     sceneStarts.push(cursor);
-    cursor += Number(sc.duration || 3);
+    sceneDurs.push(d);
+    cursor += d;
   }
   const totalDurationSec = cursor;
 
@@ -127,7 +137,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
   const placedNarrations = synthesized
     .map((entry, i) => {
       if (!entry) return null;
-      const sceneDur = Number(photoScenes[i].duration || 3);
+      const sceneDur = sceneDurs[i];
       // Two guards: subtractive (sceneDur - leadIn - tail) AND
       // proportional (80% of sceneDur). Min of the two is the hard cap.
       // For 5s scene:   min(5 - 0.35 - 0.8, 5 * 0.8)   = min(3.85, 4.0)   = 3.85s
@@ -158,7 +168,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, brandKit, tempDir
   );
 
   const narrationActiveWindows = synthesized
-    .map((entry, i) => entry ? [sceneStarts[i] + leadInSec, sceneStarts[i] + Number(photoScenes[i].duration || 3) - 0.2] : null)
+    .map((entry, i) => entry ? [sceneStarts[i] + leadInSec, sceneStarts[i] + sceneDurs[i] - 0.2] : null)
     .filter(Boolean);
 
   // Build the filter_complex graph. Inputs:
