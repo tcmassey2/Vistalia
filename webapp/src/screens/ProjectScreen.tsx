@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefOb
 import { useStore } from "../lib/store";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot, uploadBrokerageLogo } from "../lib/supabase";
 import { createEditPlan, submitRender, pollRender, lookupProperty, fetchLibrary, fetchUsage, authHeaders, RenderJobMissingError, type RenderManifest } from "../lib/api";
+import VoiceSection from "../components/VoiceSection";
 import { events, track } from "../lib/analytics";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
@@ -1970,8 +1971,19 @@ function AudioControls() {
             <span className="text-[10px] font-mono uppercase tracking-wider text-gold">Your voice</span>
           </div>
           <p className="text-[11px] text-ink-muted mb-3 leading-relaxed">
-            Use our professional narrator by default — or record once and narrate every listing in your own voice, automatically.
+            Pick one of our professional narrators — or record once and narrate every listing in your own voice, automatically.
           </p>
+
+          {/* Default narrator picker — usable right here in the render pipeline,
+              not just buried in Settings. Writes branding.voiceId (a slug). */}
+          <VoiceSection />
+
+          <div className="flex items-center gap-3 my-4">
+            <div className="h-px flex-1 bg-edge" />
+            <span className="text-[10px] font-mono uppercase tracking-wider text-ink-dim">or use your own voice</span>
+            <div className="h-px flex-1 bg-edge" />
+          </div>
+
           <VoiceCloneCard />
         </div>
       )}
