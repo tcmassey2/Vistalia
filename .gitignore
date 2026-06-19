@@ -50,3 +50,6 @@ Bakeoff Clips/
 EstateMotion Test Photos./
 *.mp4
 *.mov
+
+# TypeScript incremental build cache (auto-generated, machine-specific)
+*.tsbuildinfo
