@@ -139,17 +139,23 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   // narration audio CANNOT extend past its scene window even if amix
   // misbehaves, (d) logs the exact trim values per scene for one-line
   // diagnosis if overlap is reported again.
-  const TAIL_BUFFER_SEC = 0.8;
+  // v27 smoothness: give lines more room (tail 0.8→0.5, cap 0.80→0.90) so a
+  // natural sentence rarely needs trimming, and any trim is faded (below) not
+  // hard-cut. Still strictly within the scene window → never overlaps the next
+  // line (which starts at nextSceneStart + leadIn).
+  const TAIL_BUFFER_SEC = 0.5;
+  const FADE_IN_SEC = 0.08;   // soften the start of every line (kills clicks)
+  const FADE_OUT_SEC = 0.35;  // only bites when a line is trimmed → smooth, not a cut
   const placedNarrations = synthesized
     .map((entry, i) => {
       if (!entry) return null;
       const sceneDur = sceneDurs[i];
       // Two guards: subtractive (sceneDur - leadIn - tail) AND
-      // proportional (80% of sceneDur). Min of the two is the hard cap.
-      // For 5s scene:   min(5 - 0.35 - 0.8, 5 * 0.8)   = min(3.85, 4.0)   = 3.85s
-      // For 2.8s scene: min(2.8 - 0.35 - 0.8, 2.8*0.8) = min(1.65, 2.24)  = 1.65s
+      // proportional (90% of sceneDur). Min of the two is the hard cap.
+      // For 6s scene:   min(6 - 0.35 - 0.5, 6 * 0.9)   = min(5.15, 5.40)  = 5.15s
+      // For 2.8s scene: min(2.8 - 0.35 - 0.5, 2.8*0.9) = min(1.95, 2.52)  = 1.95s
       const cap1 = sceneDur - leadInSec - TAIL_BUFFER_SEC;
-      const cap2 = sceneDur * 0.80;
+      const cap2 = sceneDur * 0.90;
       const maxNarrationSec = Math.max(0.6, Math.min(cap1, cap2));
       const sceneEndMs = Math.round((sceneStarts[i] + sceneDur) * 1000);
       return {
@@ -191,11 +197,20 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   //      audio, the stream itself ends at the scene's end timestamp.
   //      This is the belt-and-suspenders that makes overlap physically
   //      impossible.
+  // v27 smoothness: afade in at the start (no click) and afade out at the very
+  // end of the (possibly trimmed) window. The fade-out only lands on audio when
+  // a line is actually longer than its cap — turning what used to be an abrupt
+  // mid-word chop into a natural fade. Shorter lines end on their own clean
+  // sentence boundary, untouched. asetpts after trim, then fades, then position.
   const adelaySteps = placedNarrations
-    .map((n, i) =>
-      `[${i + 1}:a]atrim=duration=${n.maxNarrationSec.toFixed(2)},asetpts=PTS-STARTPTS,` +
-      `adelay=${n.delayMs}|${n.delayMs},apad=whole_dur=${n.sceneEndMs}ms[n${i}]`
-    )
+    .map((n, i) => {
+      const fadeOutStart = Math.max(0, n.maxNarrationSec - FADE_OUT_SEC).toFixed(2);
+      return (
+        `[${i + 1}:a]atrim=duration=${n.maxNarrationSec.toFixed(2)},asetpts=PTS-STARTPTS,` +
+        `afade=t=in:st=0:d=${FADE_IN_SEC},afade=t=out:st=${fadeOutStart}:d=${FADE_OUT_SEC.toFixed(2)},` +
+        `adelay=${n.delayMs}|${n.delayMs},apad=whole_dur=${n.sceneEndMs}ms[n${i}]`
+      );
+    })
     .join(";");
   const mixInputs = placedNarrations.map((_, i) => `[n${i}]`).join("");
   const filterComplex = `${adelaySteps};[0:a]${mixInputs}amix=inputs=${placedNarrations.length + 1}:duration=first:dropout_transition=0,atrim=duration=${totalDurationSec}[narr]`;
