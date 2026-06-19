@@ -43,3 +43,10 @@ Thumbs.db
 *.tmp
 exports/
 generated/
+
+# Large media — keep on disk as local backups, never commit (they stall pushes)
+marketing/higgsfield-ads/
+Bakeoff Clips/
+EstateMotion Test Photos./
+*.mp4
+*.mov
