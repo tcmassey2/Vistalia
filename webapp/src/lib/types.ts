@@ -188,6 +188,24 @@ export interface RenderJobStatus {
   socialShorts?: SocialShortClip[];
   error?: string;
   engine?: RenderEngine;
+  // v27 Edit Studio: per-scene clips of the finished render, so a single
+  // scene can be previewed and re-rendered without redoing the whole video.
+  scenes?: SceneClipMeta[];
+}
+
+// One generated scene clip from a finished render. Powers the Edit Studio.
+export interface SceneClipMeta {
+  sceneIndex: number;
+  photoId: string;
+  photoUrl?: string;     // durable source photo URL
+  clipUrl?: string;      // durable per-scene clip URL ("" = not regenerable)
+  storagePath?: string;
+  roomType?: string;
+  cameraMotion?: string;
+  duration?: number;
+  runwayPrompt?: string;
+  wasFallback?: boolean;
+  veoAttempts?: number;  // re-render attempts; ≥2 → auto Ken Burns
 }
 
 export interface UserProfile {

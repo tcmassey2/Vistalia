@@ -357,7 +357,12 @@ export async function renderRunwayJob(body, options = {}) {
       photoId: c.photoId,
       durationSec: c.duration,
       runwayTaskId: c.runwayTaskId
-    }))
+    })),
+    // v27 Edit Studio: surface the full per-scene metadata (durable clip URL,
+    // photo URL, room, prompt, storage path) to the frontend so the Edit Studio
+    // can list each scene and target a single one for re-render. Previously
+    // this rich array only went to the audit log.
+    scenes: scenesMeta
   };
 }
 
