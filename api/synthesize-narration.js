@@ -14,6 +14,7 @@
 
 import { requireUser } from "./_lib/auth.js";
 import { rateLimit } from "./_lib/rate-limit.js";
+import { resolveVoiceId } from "./_lib/voice-resolver.js";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 // "eleven_turbo_v2_5" is the cheapest model that still sounds professional
@@ -71,7 +72,10 @@ export default async function handler(request, response) {
       return;
     }
 
-    const targetVoiceId = voiceId || FALLBACK_VOICE_ID;
+    // v27: voiceId may be a preset slug ("luxury-warm") or a raw cloned ID.
+    // ElevenLabs only accepts raw IDs — resolve before calling. Without this,
+    // previewing a preset voice 404'd and "voice doesn't work" looked real.
+    const targetVoiceId = resolveVoiceId(voiceId);
 
     const ttsResponse = await fetchWithTimeout(
       `${ELEVENLABS_BASE}/text-to-speech/${encodeURIComponent(targetVoiceId)}`,

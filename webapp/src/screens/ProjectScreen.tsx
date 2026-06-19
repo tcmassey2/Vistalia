@@ -1167,14 +1167,25 @@ function BrandKitArea({ userId }: { userId: string }) {
 */
 type VoiceMode = "idle" | "permission" | "countdown" | "recording" | "review" | "cloning" | "cloned";
 
+// Preset narrator slugs (mirror of api/voices.js). These live in the SAME
+// branding.voiceId field as a cloned voice ID, so the clone card must not
+// mistake a preset selection for "you cloned a voice."
+const PRESET_VOICE_SLUGS = new Set([
+  "luxury-warm", "luxury-male", "luxury-british",
+  "viral-energetic", "viral-confident", "investor-deep", "mls-neutral"
+]);
+
 function VoiceCloneCard() {
   const branding = useStore((s) => s.branding);
   const setBranding = useStore((s) => s.setBranding);
   const setError = useStore((s) => s.setError);
   const setToast = useStore((s) => s.setToast);
 
-  // Mode state — drives which UI we show.
-  const initialMode: VoiceMode = branding.voiceId ? "cloned" : "idle";
+  // Mode state — drives which UI we show. branding.voiceId holds EITHER a
+  // preset slug or a cloned voice ID, so only treat it as a clone when it's
+  // not one of the known preset slugs.
+  const hasClonedVoice = !!branding.voiceId && !PRESET_VOICE_SLUGS.has(branding.voiceId);
+  const initialMode: VoiceMode = hasClonedVoice ? "cloned" : "idle";
   const [mode, setMode] = useState<VoiceMode>(initialMode);
   const [countdown, setCountdown] = useState(3);
   const [elapsed, setElapsed] = useState(0);
@@ -1520,8 +1531,9 @@ function VoiceCloneCard() {
   const elapsedLabel = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
   const maxLabel = `${Math.floor(MAX_DURATION_SEC / 60)}:${String(MAX_DURATION_SEC % 60).padStart(2, "0")}`;
 
-  // Cloned state — clean, confident "ready" card
-  if (mode === "cloned" && branding.voiceId) {
+  // Cloned state — clean, confident "ready" card. Guard against a preset slug
+  // sitting in voiceId (picked in Settings) being shown as a clone.
+  if (mode === "cloned" && branding.voiceId && !PRESET_VOICE_SLUGS.has(branding.voiceId)) {
     return (
       <div>
         <VoiceHeader />

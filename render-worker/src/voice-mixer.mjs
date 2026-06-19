@@ -23,6 +23,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { runFFmpeg } from "./ffmpeg-runner.mjs";
+import { resolveVoiceId } from "./voices.mjs";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 const DEFAULT_MODEL = process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2_5";
@@ -61,7 +62,12 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     return { masterMp4, narrationApplied: false, reason: "No narrationLine fields on any scene" };
   }
 
-  const voiceId = (brandKit?.voiceId || "").trim() || FALLBACK_VOICE_ID;
+  // v27: resolve the stored value. brandKit.voiceId may be a PRESET SLUG
+  // ("luxury-warm") from the picker or a RAW CLONED ID from "use your own
+  // voice". ElevenLabs only accepts raw IDs — resolveVoiceId maps slugs and
+  // passes cloned IDs through. Before this, slugs were sent verbatim and every
+  // preset-voice render shipped silent.
+  const voiceId = resolveVoiceId(brandKit?.voiceId, brandKit?.style);
 
   // ============================================================
   // STEP 1 — synthesize each narration line via ElevenLabs (parallel)
