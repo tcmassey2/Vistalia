@@ -1782,6 +1782,20 @@ function decideUseKenBurns(scene, guardLevel) {
   const risk = computeHallucinationRisk(scene);
   const room = String(scene?.roomType || "").toLowerCase();
 
+  // v27 AUDIT FIX: rotational objects (ceiling fans, chandeliers, pendants) are
+  // the single most damaging hallucination — they SPIN or morph. The old risk
+  // math let a living-room/bedroom ceiling fan (~35-55) sail under the 90
+  // balanced threshold straight onto the cinematic path. Now ANY scene naming a
+  // rotational object is forced safe regardless of score. On the Veo path this
+  // maps to the CONSTRAINED "nothing moves" prompt; on legacy Runway, Ken Burns.
+  const riskBlob = [
+    Array.isArray(scene?.visibleFeatures) ? scene.visibleFeatures.join(" ") : "",
+    scene?.runwayPrompt || "", scene?.veoPrompt || "", scene?.runway_prompt || ""
+  ].join(" ").toLowerCase();
+  if (RISK_KEYWORDS.rotational.some((kw) => riskBlob.includes(kw))) {
+    return { useKenBurns: true, risk, reason: `rotational object (fan/pendant) → constrained (risk ${risk})` };
+  }
+
   // STRICT: lock all kitchens regardless of features. Aggressive lower threshold.
   if (guardLevel === "strict") {
     if (room === "kitchen") {

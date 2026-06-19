@@ -266,8 +266,14 @@ function buildVeoPrompt(scene, photos, context = {}) {
   // Veo too, and we no longer pay a character-budget price for it.
   const roomClause = RUNWAY_ROOM_CONSTRAINTS[scene.roomType] || "";
   const subject = describeSubject(scene, photo);
-  const visibleClause = scene.visibleFeatures && scene.visibleFeatures.length
-    ? `Visible elements include: ${scene.visibleFeatures.slice(0, 4).join(", ")}.`
+  // v27 AUDIT FIX: this is IMAGE-to-video — Veo already sees the photo. Naming a
+  // spinning/animatable or text object here (e.g. "ceiling fan", "chandelier",
+  // "sign") on the now-literal Veo can make it animate or mangle that object.
+  // Drop those terms from the named-elements clause; keep the safe anchors.
+  const RISKY_FEATURE_TERMS = /\b(fan|fans|ceiling fan|blade|blades|pendant|chandelier|propeller|turbine|sign|signage|logo|text|lettering|menu|license plate|clock|tv|television|screen|monitor)\b/i;
+  const safeFeatures = (scene.visibleFeatures || []).filter((f) => !RISKY_FEATURE_TERMS.test(String(f)));
+  const visibleClause = safeFeatures.length
+    ? `Visible elements include: ${safeFeatures.slice(0, 4).join(", ")}.`
     : "";
 
   // Motion first, subject second, anchoring, then art direction. The
