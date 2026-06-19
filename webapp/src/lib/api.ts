@@ -17,7 +17,10 @@ import type {
   UserProfile
 } from "./types";
 
-async function authHeaders(): Promise<HeadersInit> {
+// Exported so hand-rolled fetches (e.g. the voice clone/preview calls in
+// ProjectScreen) attach the Supabase token too — without it the /api/*
+// endpoints reject with 401 "Sign in to use this feature."
+export async function authHeaders(): Promise<Record<string, string>> {
   const session = await getSession();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;

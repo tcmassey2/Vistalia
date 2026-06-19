@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefObject } from "react";
 import { useStore } from "../lib/store";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot, uploadBrokerageLogo } from "../lib/supabase";
-import { createEditPlan, submitRender, pollRender, lookupProperty, fetchLibrary, fetchUsage, RenderJobMissingError, type RenderManifest } from "../lib/api";
+import { createEditPlan, submitRender, pollRender, lookupProperty, fetchLibrary, fetchUsage, authHeaders, RenderJobMissingError, type RenderManifest } from "../lib/api";
 import { events, track } from "../lib/analytics";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
@@ -1417,7 +1417,7 @@ function VoiceCloneCard() {
       const ext = (recordedBlob.type.includes("mp4") ? "m4a" : "webm");
       const res = await fetch("/api/clone-voice", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({
           audioBase64,
           fileName: `${branding.fullName.split(/\s+/)[0] || "agent"}-voice.${ext}`,
@@ -1466,7 +1466,7 @@ function VoiceCloneCard() {
       const audioBase64 = await blobToBase64(file);
       const res = await fetch("/api/clone-voice", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({
           audioBase64,
           fileName: file.name,
@@ -1501,7 +1501,7 @@ function VoiceCloneCard() {
       const text = `Hi, I'm ${branding.voiceLabel || branding.fullName.split(/\s+/)[0] || "your agent"}. This is how I'll sound on every EstateMotion video.`;
       const res = await fetch("/api/synthesize-narration", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await authHeaders(),
         body: JSON.stringify({ voiceId: branding.voiceId, text })
       });
       if (!res.ok) {
@@ -1808,7 +1808,7 @@ function VoiceDiagnosticButton() {
   const run = async () => {
     setRunning(true);
     try {
-      const res = await fetch("/api/clone-voice?diagnose=1");
+      const res = await fetch("/api/clone-voice?diagnose=1", { headers: await authHeaders() });
       const payload = await res.json().catch(() => ({}));
       if (payload.ok && payload.canCloneVoice) {
         setToast(`✓ Connected to ElevenLabs (${payload.tierDisplay}). Voice cloning is available.`);
