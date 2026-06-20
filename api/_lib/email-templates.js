@@ -6,7 +6,7 @@
 // Each template returns { subject, html }. The html is a self-contained
 // table-layout email that survives Gmail/Outlook/Apple Mail rendering.
 
-const APP_URL = process.env.APP_URL || "https://estatemotion.ai";
+const APP_URL = process.env.APP_URL || "https://vistalia.ai";
 
 function shell({ eyebrow, headline, body, ctaLabel, ctaUrl, footer }) {
   return `<!DOCTYPE html>

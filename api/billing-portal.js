@@ -107,7 +107,7 @@ async function verifyUserId(request) {
 function inferReturnUrl(request) {
   const origin = String(request.headers.origin || request.headers.referer || "").split("?")[0];
   if (origin) return origin.replace(/\/$/, "") + "/app/";
-  return "https://estatemotion.ai/app/";
+  return "https://vistalia.ai/app/";
 }
 
 function setCors(response) {

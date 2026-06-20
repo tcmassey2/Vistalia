@@ -185,7 +185,7 @@ function createManifest(baseUrl) {
       name: "Troy Massey",
       brokerage: "W & Partners",
       phone: "480-555-0199",
-      website: "estatemotion.ai",
+      website: "vistalia.ai",
       ctaText: "Schedule a private tour"
     },
     template: { id: "modern-luxury", name: "Cinematic Luxury", accentColor: "#C7A76C" },

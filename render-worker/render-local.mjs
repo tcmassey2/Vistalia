@@ -90,7 +90,7 @@ function createManifest(mode, baseUrl) {
     : { title: "Marketing OS Test Listing", address: "123 Demo Lane", price: "$725,000", beds: "3", baths: "2", squareFeet: "1,950", city: "Phoenix", neighborhood: "Arcadia", cta: mode.id === "seller-lead-magnet" ? "Book a seller consultation" : "Schedule a private tour" };
   const brandKit = mode.id === "agent-brand"
     ? { name: "", brokerage: "", phone: "", website: "", instagram: "", ctaText: "" }
-    : { name: "Troy Massey", brokerage: "W & Partners", phone: "480-555-0199", website: "estatemotion.ai", instagram: "@troymassey", ctaText: "Schedule a private tour" };
+    : { name: "Troy Massey", brokerage: "W & Partners", phone: "480-555-0199", website: "vistalia.ai", instagram: "@troymassey", ctaText: "Schedule a private tour" };
   const marketingOS = {
     contentMode: mode.id,
     conversionGoal: mode.id === "investor-breakdown" ? "Investor details" : mode.id === "wholesale-opportunity" ? "Join waitlist" : mode.id === "seller-lead-magnet" ? "Seller consultation" : "Schedule showing",

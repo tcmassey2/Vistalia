@@ -1,0 +1,12 @@
+<svg width="96" height="96" viewBox="0 0 96 96" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Vistalia mark</title>
+<defs>
+<linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#EAD296"/>
+<stop offset="0.5" stop-color="#C7A76C"/>
+<stop offset="1" stop-color="#9C773B"/>
+</linearGradient>
+</defs>
+<rect x="0" y="0" width="96" height="96" rx="22" fill="#0B0B0D" stroke="url(#gold)" stroke-width="1.4"/>
+<text x="48" y="69" font-family="'Fraunces','Georgia',serif" font-size="62" font-weight="600" fill="url(#gold)" text-anchor="middle">V</text>
+</svg>

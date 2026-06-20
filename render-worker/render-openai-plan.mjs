@@ -82,7 +82,7 @@ function createOpenAiDirectedManifest(baseUrl) {
     name: "Troy Massey",
     brokerage: "W & Partners",
     phone: "480-555-0199",
-    website: "estatemotion.ai",
+    website: "vistalia.ai",
     instagram: "@troymassey",
     ctaText: "Schedule a private tour"
   };

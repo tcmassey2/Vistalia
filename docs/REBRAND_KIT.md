@@ -36,9 +36,9 @@ Facebook, LinkedIn — ideally the bare name; fall back to `get<name>` / `<name>
 entity, not the name. The IRS does not issue a new EIN for a name change. Two paths:
 
 - **Option A — DBA (fastest):** keep "EstateMotion LLC" as the legal entity; register a
-  trade name "<NewName>". Public brand = <NewName>; EIN + Stripe untouched. ~$10–100.
+  trade name "Vistalia". Public brand = Vistalia; EIN + Stripe untouched. ~$10–100.
 - **Option B — Amend the LLC name (cleanest, recommended since you just formed it):**
-  rename the LLC to "<NewName> LLC" with the state; EIN stays the same; notify the IRS.
+  rename the LLC to "Vistalia LLC" with the state; EIN stays the same; notify the IRS.
 
 Because nothing is attached yet (no contracts, Stripe not live), **Option B** gets the
 entity, EIN, Stripe, and brand all consistent from day one.
@@ -79,13 +79,13 @@ Internal Revenue Service
 Re: LLC name change — notification
 EIN: [your EIN]
 Old legal name: EstateMotion LLC
-New legal name: [NewName] LLC
+New legal name: Vistalia LLC
 Responsible party: Troy Massey
 
 To Whom It May Concern:
 
 This letter is to notify the IRS that the above single-member limited liability
-company has changed its legal name from "EstateMotion LLC" to "[NewName] LLC,"
+company has changed its legal name from "EstateMotion LLC" to "Vistalia LLC,"
 effective [effective date]. The entity's EIN ([your EIN]), ownership, structure,
 and address are unchanged; this is a name change only. No new EIN is requested.
 
@@ -96,7 +96,7 @@ Sincerely,
 
 _______________________________
 Troy Massey, Sole Member
-[NewName] LLC
+Vistalia LLC
 [business address]
 [phone] · [email]
 ```
@@ -110,7 +110,7 @@ is reported on your Schedule C — the letter is the clean way to sync the EIN r
 ## 5. Update-everything checklist (after the name is approved)
 - [ ] Domain: point `<newname>.ai` to the app; redirect estatemotion.ai → new (keep the
       old domain a while for any inbound).
-- [ ] Stripe: business legal name → "<NewName> LLC" (EIN unchanged); statement descriptor → NewName.
+- [ ] Stripe: business legal name → "Vistalia LLC" (EIN unchanged); statement descriptor → NewName.
 - [ ] Business bank account: name change with the bank (bring the amended Articles).
 - [ ] Google Workspace / email: new domain + addresses; keep old mailbox forwarding.
 - [ ] Supabase / Vercel / Render: project names + the site's brand strings, logo, OG image.

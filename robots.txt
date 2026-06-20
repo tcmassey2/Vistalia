@@ -10,4 +10,4 @@ Disallow: /beta
 Disallow: /waitlist
 Disallow: /api/
 
-Sitemap: https://estatemotion.ai/sitemap.xml
+Sitemap: https://vistalia.ai/sitemap.xml
