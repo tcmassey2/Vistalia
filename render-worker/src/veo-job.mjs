@@ -317,12 +317,22 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
     };
   }
   // veo3 family + default
+  //
+  // v26.10 FIX: Veo 3.1 Fast couples resolution to duration. 1080p output is
+  // ONLY valid at duration "8s"; 4s/6s clips MUST be 720p, or fal 422s with
+  // "Value error, 1080p resolution is only supported with a duration of 8s."
+  // Our scenes round to 6s (timed to the per-scene narration — we deliberately
+  // do NOT push them to 8s, which would desync voice and raise fal COGS). The
+  // stitch pipeline upscales every clip to the 1080x1920 master regardless, so
+  // generating 6s scenes at 720p costs us nothing visible. Only honor a 1080p
+  // request when the scene is genuinely 8s.
+  const veoResolution = durationEnum === "8s" ? resolution : "720p";
   return {
     prompt,
     image_url: imageUrl,
     aspect_ratio: aspectRatio,
     duration: durationEnum,
-    resolution,
+    resolution: veoResolution,
     generate_audio: generateAudio,
     safety_tolerance: safetyTolerance
   };

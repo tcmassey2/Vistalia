@@ -79,12 +79,15 @@ main,header,footer{position:relative;z-index:1}
 header{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(11,11,13,.66);border-bottom:1px solid rgba(38,38,44,.7)}
 .nav{display:flex;align-items:center;justify-content:space-between;height:70px}
 .logo{font-family:var(--font-display);font-size:23px;font-weight:600;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
-.logo .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--gold-light),var(--gold-deep));color:#0B0B0D;display:grid;place-items:center;font-weight:600;font-style:italic;font-size:17px;font-family:var(--font-display)}
+.logo .mark{width:30px;height:30px;border-radius:8px;background:#0B0B0D;border:1.5px solid #C7A76C;color:#E6CE8E;display:grid;place-items:center;font-weight:600;font-style:normal;font-size:18px;line-height:1;font-family:var(--font-display)}
 .nav-links{display:flex;gap:30px;font-size:14.5px;color:var(--ink-soft)}
 .nav-links a:hover{color:var(--ink)}
 .nav-actions{display:flex;align-items:center;gap:14px}
 .nav-actions a.signin{font-size:14.5px;color:var(--ink-soft)}
 .nav-actions a.signin:hover{color:var(--ink)}
+a.logo{text-decoration:none;color:var(--ink)}
+.signed-in-user{font-size:13px;color:var(--ink-soft);display:inline-flex;align-items:center;gap:7px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.signed-in-user::before{content:"";width:7px;height:7px;border-radius:50%;background:#5BD08A;flex-shrink:0;box-shadow:0 0 0 3px rgba(91,208,138,.18)}
 @media(max-width:880px){.nav-links{display:none}}
 
 .reveal{opacity:0;transform:translateY(16px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
@@ -233,7 +236,7 @@ footer{border-top:1px solid var(--edge);padding:40px 0 48px}
 
 <header>
   <div class="wrap nav">
-    <div class="logo"><span class="mark">V</span>Vistalia</div>
+    <a href="/" class="logo" aria-label="Vistalia — home"><span class="mark">V</span>Vistalia</a>
     <nav class="nav-links" aria-label="Primary">
       <a href="#how">How it works</a>
       <a href="#styles">Styles</a>
@@ -243,6 +246,7 @@ footer{border-top:1px solid var(--edge);padding:40px 0 48px}
     <div class="nav-actions" id="nav-actions">
       <a href="/app" class="signin" data-signed-out>Sign in</a>
       <a href="/app" class="btn btn-primary" style="padding:11px 20px;font-size:14px" data-signed-out>Start free trial</a>
+      <span class="signed-in-user" style="display:none" data-signed-in data-user-email></span>
       <a href="/app" class="btn btn-primary" style="padding:11px 20px;font-size:14px;display:none" data-signed-in>Go to my dashboard &rarr;</a>
     </div>
   </div>
@@ -442,8 +446,15 @@ footer{border-top:1px solid var(--edge);padding:40px 0 48px}
       const sb = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
       const { data } = await sb.auth.getSession();
       if (!data || !data.session) return;
+      const email = data.session.user && data.session.user.email ? data.session.user.email : '';
       document.querySelectorAll('[data-signed-out]').forEach((el) => { el.style.display = 'none'; });
       document.querySelectorAll('[data-signed-in]').forEach((el) => { el.style.display = ''; });
+      if (email) {
+        document.querySelectorAll('[data-user-email]').forEach((el) => {
+          el.textContent = email;
+          el.title = 'Signed in as ' + email;
+        });
+      }
     } catch (e) {}
   })();
 </script>

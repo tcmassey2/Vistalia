@@ -42,17 +42,17 @@ export default function TopBar() {
   return (
     <header className="sticky top-0 z-20 border-b border-edge-soft bg-paper/85 backdrop-blur-md">
       <div className="max-w-6xl mx-auto px-5 sm:px-6 h-14 flex items-center justify-between gap-3">
-        <button
-          onClick={() => goToScreen("dashboard")}
-          title="Home — your dashboard"
-          aria-label="Home — your dashboard"
+        <a
+          href="/"
+          title="Vistalia — back to homepage"
+          aria-label="Vistalia — back to homepage"
           className="flex items-center gap-2 text-ink hover:text-gold-light transition-colors flex-shrink-0"
         >
-          <span className="grid place-items-center w-7 h-7 rounded-md bg-gradient-to-br from-gold-light to-gold-dim text-paper font-bold italic">
-            E
+          <span className="grid place-items-center w-7 h-7 rounded-md bg-[#0B0B0D] border border-[#C7A76C] text-[#E6CE8E] font-display font-semibold text-[17px] leading-none">
+            V
           </span>
-          <span className="font-semibold tracking-tightish hidden xs:inline">Vistalia</span>
-        </button>
+          <span className="font-display font-semibold tracking-tightish hidden xs:inline">Vistalia</span>
+        </a>
 
         {screen === "project" && (
           <span className="hidden md:block text-sm text-ink-muted truncate max-w-md">

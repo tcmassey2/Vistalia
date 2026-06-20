@@ -212,8 +212,8 @@ export default function AuthScreen() {
       />
       <header className="px-6 py-5 relative">
         <a href="/" className="inline-flex items-center gap-2.5 text-ink hover:text-gold-light transition-colors">
-          <span className="grid place-items-center w-8 h-8 rounded-lg bg-gradient-to-br from-gold-light to-gold-dim text-paper font-display font-semibold italic">
-            E
+          <span className="grid place-items-center w-8 h-8 rounded-lg bg-[#0B0B0D] border border-[#C7A76C] text-[#E6CE8E] font-display font-semibold text-lg leading-none">
+            V
           </span>
           <span className="font-display text-lg font-semibold tracking-tightish">Vistalia</span>
         </a>

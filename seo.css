@@ -39,7 +39,7 @@ main,header,footer{position:relative;z-index:1}
 header{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(11,11,13,.66);border-bottom:1px solid rgba(38,38,44,.7)}
 .nav{display:flex;align-items:center;justify-content:space-between;height:68px}
 .logo{font-family:var(--font-display);font-size:22px;font-weight:600;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
-.logo .mark{width:29px;height:29px;border-radius:8px;background:linear-gradient(135deg,var(--gold-light),var(--gold-deep));color:#0B0B0D;display:grid;place-items:center;font-weight:600;font-style:italic;font-size:16px;font-family:var(--font-display)}
+.logo .mark{width:29px;height:29px;border-radius:8px;background:#0B0B0D;border:1.5px solid #C7A76C;color:#E6CE8E;display:grid;place-items:center;font-weight:600;font-style:normal;font-size:17px;line-height:1;font-family:var(--font-display)}
 .nav-links{display:flex;gap:28px;font-size:14.5px;color:var(--ink-soft)}
 .nav-links a:hover{color:var(--ink)}
 .nav-actions{display:flex;align-items:center;gap:14px}
