@@ -1,4 +1,4 @@
-// EstateMotion — voice slug → ElevenLabs voice ID resolver (API side).
+// Vistalia — voice slug → ElevenLabs voice ID resolver (API side).
 //
 // MIRROR of render-worker/src/voices.mjs. Two copies exist because the Vercel
 // API runtime can't import from the render-worker package. Keep them in sync.

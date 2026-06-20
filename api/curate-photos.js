@@ -1,4 +1,4 @@
-// EstateMotion — /api/curate-photos
+// Vistalia — /api/curate-photos
 //
 // "AI hand-picks the best 24 photos and arranges them in a strong real-estate
 // tour order." User uploads N photos (up to 60). OpenAI Vision scores each

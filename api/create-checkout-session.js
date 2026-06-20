@@ -1,4 +1,4 @@
-// EstateMotion — create a Stripe Checkout Session for a subscription tier.
+// Vistalia — create a Stripe Checkout Session for a subscription tier.
 // POST /api/create-checkout-session  body: { tier, returnUrl }
 // Authorization: Bearer <Supabase user JWT>
 //
@@ -118,7 +118,7 @@ export default async function handler(request, response) {
         "client_reference_id": userId,
         "line_items[0][price_data][currency]": "usd",
         "line_items[0][price_data][unit_amount]": String(pack.amount),
-        "line_items[0][price_data][product_data][name]": `EstateMotion — ${pack.label}`,
+        "line_items[0][price_data][product_data][name]": `Vistalia — ${pack.label}`,
         "line_items[0][quantity]": "1",
         "payment_intent_data[metadata][user_id]": userId,
         "payment_intent_data[metadata][credits]": String(pack.credits),

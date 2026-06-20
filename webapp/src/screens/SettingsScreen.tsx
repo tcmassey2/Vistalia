@@ -54,7 +54,7 @@ export default function SettingsScreen() {
     try {
       const { url, error, needsCheckout } = await openBillingPortal();
       if (url) {
-        // Open in new tab so the user keeps EstateMotion open behind it.
+        // Open in new tab so the user keeps Vistalia open behind it.
         window.open(url, "_blank", "noopener");
         return;
       }
@@ -376,7 +376,7 @@ function DangerZone({ email }: { email: string }) {
             </div>
             <div className="text-xs text-ink-muted mt-1 max-w-md leading-relaxed">
               Permanently removes your profile, brand kit, library, render audit log,
-              and all uploaded photos from EstateMotion. Stripe billing records are
+              and all uploaded photos from Vistalia. Stripe billing records are
               retained as required by tax law. This cannot be undone.
             </div>
           </div>

@@ -2,7 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { renderEstateMotionJob } from "./src/render-job.mjs";
+import { renderVistaliaJob } from "./src/render-job.mjs";
 import { renderRunwayJob } from "./src/runway-job.mjs";
 import { regenerateScene } from "./src/regenerate-job.mjs";
 
@@ -41,7 +41,7 @@ async function dispatchRender(body, options = {}) {
   }
   // Any other engine value (including stale 'depth' from older clients)
   // falls through to the safe default.
-  return renderEstateMotionJob(body, options);
+  return renderVistaliaJob(body, options);
 }
 
 const port = Number(process.env.PORT || 8787);
@@ -60,7 +60,7 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (request.method === "GET" && request.url === "/health") {
-    sendJson(response, 200, { ok: true, service: "EstateMotion Remotion worker" });
+    sendJson(response, 200, { ok: true, service: "Vistalia Remotion worker" });
     return;
   }
 
@@ -245,13 +245,13 @@ const server = http.createServer(async (request, response) => {
   } catch (error) {
     sendJson(response, 500, {
       status: "failed",
-      error: error.message || "EstateMotion render worker failed."
+      error: error.message || "Vistalia render worker failed."
     });
   }
 });
 
 server.listen(port, () => {
-  console.log(`EstateMotion render worker listening on http://localhost:${port}`);
+  console.log(`Vistalia render worker listening on http://localhost:${port}`);
   // v26: make missing auth LOUD. authorized() fails open by design (local
   // dev), but in production an unset secret means anyone with the worker
   // URL can submit Runway/Veo jobs on our API keys. /version also reports
@@ -318,7 +318,7 @@ async function runRenderJob(jobId, body) {
       status: "failed",
       phase: "Render failed",
       progress: 100,
-      error: error.message || "EstateMotion render worker failed.",
+      error: error.message || "Vistalia render worker failed.",
       errorCode: error.code || ""
     });
     // v26.4: honor the refund promise. Aborted Veo renders refund the
@@ -386,7 +386,7 @@ async function runRegenerateJob(progressKey, body) {
       status: "failed",
       phase: "Regenerate failed",
       progress: 100,
-      error: error.message || "EstateMotion regenerate failed.",
+      error: error.message || "Vistalia regenerate failed.",
       errorCode: error.code || ""
     });
   }

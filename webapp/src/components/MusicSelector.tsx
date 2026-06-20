@@ -1,4 +1,4 @@
-// EstateMotion — MusicSelector (v2: cleaned up).
+// Vistalia — MusicSelector (v2: cleaned up).
 //
 // Layout rationale (vs v1):
 //   v1 had a big grouped list with per-row Play + Use buttons + three

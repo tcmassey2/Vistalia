@@ -1,4 +1,4 @@
-// EstateMotion — Render library.
+// Vistalia — Render library.
 //
 // GET    /api/library          → returns the signed-in user's past renders, newest first.
 // DELETE /api/library?jobId=X  → deletes one library entry (audit row + storage objects).

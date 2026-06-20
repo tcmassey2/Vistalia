@@ -1,4 +1,4 @@
-// Diagnostic endpoint for EstateMotion deployment readiness.
+// Diagnostic endpoint for Vistalia deployment readiness.
 // Hit GET /api/health on the deployed site to see exactly which subsystems are
 // configured. Designed to be the first thing you check when something looks broken.
 //

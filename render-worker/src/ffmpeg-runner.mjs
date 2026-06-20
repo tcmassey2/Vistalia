@@ -1,4 +1,4 @@
-// EstateMotion — Shared ffmpeg runner with timeouts and structured logging.
+// Vistalia — Shared ffmpeg runner with timeouts and structured logging.
 //
 // The single biggest source of "frozen at 80%" reports has been ffmpeg
 // invocations that hang indefinitely — complex filter graphs, network

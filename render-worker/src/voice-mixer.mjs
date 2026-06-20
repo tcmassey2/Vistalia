@@ -1,4 +1,4 @@
-// EstateMotion — Voice narration synthesis + music ducking, fast path.
+// Vistalia — Voice narration synthesis + music ducking, fast path.
 //
 // REBUILD NOTES (vs prior version):
 //   The old implementation did 24 sequential ffmpeg calls to build per-scene

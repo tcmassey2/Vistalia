@@ -1,4 +1,4 @@
-// EstateMotion — Veo image-to-video worker via fal.ai (v25 Phase 1b).
+// Vistalia — Veo image-to-video worker via fal.ai (v25 Phase 1b).
 //
 // This file replaces our previous Vertex-AI-direct implementation. The
 // direct path required a Google Cloud service-account JSON key, which
@@ -97,7 +97,7 @@ const DEFAULT_SAFETY = "4";
 export async function generateVeoClip({
   imageUrl,
   prompt,
-  aspectRatio = "9:16",        // EstateMotion ships vertical 9:16 masters
+  aspectRatio = "9:16",        // Vistalia ships vertical 9:16 masters
   duration,                    // string: "4s" | "6s" | "8s"
   sceneIndex = 0,
   photoId = "",

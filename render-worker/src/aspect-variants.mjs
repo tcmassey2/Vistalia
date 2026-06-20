@@ -1,4 +1,4 @@
-// EstateMotion — multi-format atomic export.
+// Vistalia — multi-format atomic export.
 //
 // Both render engines (Remotion Quick Reel and Runway Cinematic AI) produce
 // a 9:16 master MP4. This helper derives 1:1 and 16:9 variants from that

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderEstateMotionJob } from "./src/render-job.mjs";
+import { renderVistaliaJob } from "./src/render-job.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.join(dirname, "out", "openai-motion-director");
@@ -17,7 +17,7 @@ try {
   const manifestPath = path.join(outDir, "openai-edit-plan.manifest.json");
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 
-  const result = await renderEstateMotionJob({ manifest, requestedFormat: "vertical" });
+  const result = await renderVistaliaJob({ manifest, requestedFormat: "vertical" });
   const mp4Path = path.join(outDir, "openai-motion-director.mp4");
   const thumbnailPath = path.join(outDir, "openai-motion-director.png");
   if (result.localMp4Path) await fs.copyFile(result.localMp4Path, mp4Path);
@@ -130,7 +130,7 @@ function createOpenAiDirectedManifest(baseUrl) {
     };
   });
   return {
-    app: "EstateMotion",
+    app: "Vistalia",
     project,
     brandKit,
     template: { id: "modern-luxury", name: "Cinematic Luxury", accentColor: "#C7A76C" },

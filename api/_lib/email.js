@@ -2,7 +2,7 @@
 //
 // Required env vars:
 //   RESEND_API_KEY        — re_… secret from resend.com/api-keys
-//   EMAIL_FROM            — verified sender, e.g. "EstateMotion <noreply@estatemotion.ai>"
+//   EMAIL_FROM            — verified sender, e.g. "Vistalia <noreply@estatemotion.ai>"
 //   EMAIL_REPLY_TO        — optional, e.g. "support@estatemotion.ai"
 //
 // Why Resend over Postmark/Sendgrid: simplest API, free tier covers our
@@ -17,7 +17,7 @@ const RESEND_API_URL = "https://api.resend.com/emails";
 
 export async function sendTransactionalEmail({ to, subject, html, text, replyTo, tags }) {
   const apiKey = process.env.RESEND_API_KEY || "";
-  const from = process.env.EMAIL_FROM || "EstateMotion <noreply@estatemotion.ai>";
+  const from = process.env.EMAIL_FROM || "Vistalia <noreply@estatemotion.ai>";
   const defaultReplyTo = process.env.EMAIL_REPLY_TO || "support@estatemotion.ai";
 
   if (!apiKey) {

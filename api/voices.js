@@ -1,4 +1,4 @@
-// EstateMotion — voices catalog endpoint (v23).
+// Vistalia — voices catalog endpoint (v23).
 //
 // Returns the public list of selectable narrator voices for the Settings UI.
 // We DO NOT expose the underlying ElevenLabs voice IDs in this response —

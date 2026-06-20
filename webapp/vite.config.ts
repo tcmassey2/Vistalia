@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// EstateMotion app shell — built and served at /app on the deployed Vercel site.
+// Vistalia app shell — built and served at /app on the deployed Vercel site.
 //
 // Source lives at /webapp/. Build output goes DIRECTLY into /app/ at the repo
 // root (NOT /webapp/dist/) so that /app/index.html is a real static file that

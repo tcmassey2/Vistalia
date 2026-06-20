@@ -1,4 +1,4 @@
-/* EstateMotion — landing page design system
+/* Vistalia — landing page design system
  * Dark cinematic, editorial typography, gold accent.
  * Loaded only by /index.html. The app surface uses styles.css.
  */
@@ -537,7 +537,7 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
 }
 
 /* ============================================================
-   Comparison: Slideshow vs EstateMotion
+   Comparison: Slideshow vs Vistalia
    ============================================================ */
 .comparison-grid {
   display: grid;
@@ -662,7 +662,7 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
   34%, 100% { opacity: 0; }
 }
 
-/* EstateMotion demo: parallax push + dynamic crop + light leak */
+/* Vistalia demo: parallax push + dynamic crop + light leak */
 .estate-scene {
   position: absolute; inset: 0;
   background-size: cover; background-position: center;
@@ -680,7 +680,7 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
   100% { opacity: 0; }
 }
 
-/* Light-leak overlay on EstateMotion side */
+/* Light-leak overlay on Vistalia side */
 .compare-card.winner .compare-frame::after {
   content: "";
   position: absolute; inset: 0;
@@ -1664,7 +1664,7 @@ em.accent { font-style: italic; color: var(--gold-light); font-weight: 400; }
 
 /* ====================================================================
    HERO PREVIEW SLOT — replaces the old hero-video-frame.
-   The agent's first impression of EstateMotion's quality. Designed to
+   The agent's first impression of Vistalia's quality. Designed to
    look intentional whether or not /showcase/preview.mp4 exists yet:
    when the file is missing, the placeholder shows; when the video loads,
    it auto-promotes itself by toggling [data-state="playing"] on the wrapper.

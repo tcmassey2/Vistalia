@@ -1,4 +1,4 @@
-// EstateMotion — /api/billing-portal
+// Vistalia — /api/billing-portal
 //
 // Creates a Stripe Customer Portal session for the signed-in user and
 // returns the redirect URL. The Customer Portal is Stripe's hosted UI

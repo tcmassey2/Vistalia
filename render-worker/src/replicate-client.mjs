@@ -1,4 +1,4 @@
-// EstateMotion — Replicate API client (Path B depth engine).
+// Vistalia — Replicate API client (Path B depth engine).
 //
 // Thin wrapper around Replicate's REST API for the two ML models we
 // depend on:

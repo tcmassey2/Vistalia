@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // EstateMotion workspace palette — workspace-scale dark, slightly warmer
+        // Vistalia workspace palette — workspace-scale dark, slightly warmer
         // than the marketing landing's pure black so eyes don't fatigue.
         ink: {
           DEFAULT: "#F0EFE9",

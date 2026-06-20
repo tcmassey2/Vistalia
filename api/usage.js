@@ -1,4 +1,4 @@
-// EstateMotion — usage / tier state lookup.
+// Vistalia — usage / tier state lookup.
 // GET /api/usage  with Authorization: Bearer <Supabase JWT>
 // Returns: { tier, monthly_video_quota, videos_used_this_month, available_engines, can_render, reason, render_credits }
 //

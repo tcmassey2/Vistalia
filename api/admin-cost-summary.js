@@ -1,4 +1,4 @@
-// EstateMotion — /api/admin-cost-summary
+// Vistalia — /api/admin-cost-summary
 //
 // Daily Runway + Replicate + OpenAI cost rollup, restricted to admin
 // users (defined by the ADMIN_USER_IDS env var, comma-separated Supabase

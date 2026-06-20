@@ -1,6 +1,6 @@
 // Branded HTML for transactional emails (trial-ending, payment-failed,
 // render-complete). Same visual language as the Supabase auth templates
-// in supabase/email-templates/ so the entire EstateMotion email
+// in supabase/email-templates/ so the entire Vistalia email
 // experience feels consistent.
 //
 // Each template returns { subject, html }. The html is a self-contained
@@ -21,7 +21,7 @@ function shell({ eyebrow, headline, body, ctaLabel, ctaUrl, footer }) {
             <td style="padding-right:10px;">
               <div style="display:inline-block;width:32px;height:32px;border-radius:6px;background:linear-gradient(135deg,#D4B96A,#A8843D);text-align:center;line-height:32px;font-style:italic;font-weight:700;color:#0E0E10;font-size:18px;">E</div>
             </td>
-            <td style="font-size:16px;font-weight:600;letter-spacing:-0.01em;color:#E8E2D6;">EstateMotion</td>
+            <td style="font-size:16px;font-weight:600;letter-spacing:-0.01em;color:#E8E2D6;">Vistalia</td>
           </tr>
         </table>
       </td></tr>
@@ -33,7 +33,7 @@ function shell({ eyebrow, headline, body, ctaLabel, ctaUrl, footer }) {
       ${ctaUrl ? `<tr><td style="padding:0 40px 32px 40px;" align="center">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0">
           <tr><td bgcolor="#C7A76C" style="border-radius:10px;">
-            <a href="${escape(ctaUrl)}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#0E0E10;text-decoration:none;letter-spacing:-0.005em;">${escape(ctaLabel || "Open EstateMotion")}</a>
+            <a href="${escape(ctaUrl)}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#0E0E10;text-decoration:none;letter-spacing:-0.005em;">${escape(ctaLabel || "Open Vistalia")}</a>
           </td></tr>
         </table>
       </td></tr>` : ""}
@@ -43,7 +43,7 @@ function shell({ eyebrow, headline, body, ctaLabel, ctaUrl, footer }) {
     </table>
     <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;margin-top:20px;">
       <tr><td style="padding:0 40px;font-size:11px;color:#5B5448;line-height:1.6;text-align:center;">
-        EstateMotion · Cinematic listing videos in three minutes.<br>
+        Vistalia · Cinematic listing videos in three minutes.<br>
         <a href="${APP_URL}/app/" style="color:#7A7164;text-decoration:underline;">Sign in</a>
         &nbsp;·&nbsp;
         <a href="${APP_URL}/help" style="color:#7A7164;text-decoration:underline;">Help</a>
@@ -65,11 +65,11 @@ function escape(s) {
    ============================================================ */
 export function trialEndingThreeDays({ email }) {
   return {
-    subject: "Your EstateMotion trial ends in 3 days",
+    subject: "Your Vistalia trial ends in 3 days",
     html: shell({
       eyebrow: "Trial reminder",
       headline: "Three days left in your trial.",
-      body: `Hi there,<p>Your EstateMotion free trial wraps up in <strong style="color:#E8E2D6;">three days</strong>. Pick a plan now and your work — brand kit, library, scene-by-scene fixes — keeps right on going without an interruption.</p>`,
+      body: `Hi there,<p>Your Vistalia free trial wraps up in <strong style="color:#E8E2D6;">three days</strong>. Pick a plan now and your work — brand kit, library, scene-by-scene fixes — keeps right on going without an interruption.</p>`,
       ctaLabel: "Pick a plan",
       ctaUrl: `${APP_URL}/app/#settings`,
       footer: `Sent to ${escape(email)} because your trial is winding down. You can cancel auto-emails by deleting your account at any time.`
@@ -82,11 +82,11 @@ export function trialEndingThreeDays({ email }) {
    ============================================================ */
 export function trialEndingOneDay({ email }) {
   return {
-    subject: "Last day of your EstateMotion trial",
+    subject: "Last day of your Vistalia trial",
     html: shell({
       eyebrow: "Final day",
       headline: "Last day to lock in your plan.",
-      body: `Hi there,<p>Your EstateMotion free trial ends <strong style="color:#E8E2D6;">tomorrow</strong>. After that, the Generate button stops responding until you pick a plan.</p><p style="margin-top:14px;">It takes 30 seconds and the videos you've already rendered stay in your library either way.</p>`,
+      body: `Hi there,<p>Your Vistalia free trial ends <strong style="color:#E8E2D6;">tomorrow</strong>. After that, the Generate button stops responding until you pick a plan.</p><p style="margin-top:14px;">It takes 30 seconds and the videos you've already rendered stay in your library either way.</p>`,
       ctaLabel: "Choose a plan",
       ctaUrl: `${APP_URL}/app/#settings`,
       footer: `Sent to ${escape(email)} because your trial expires within 24 hours.`
@@ -99,7 +99,7 @@ export function trialEndingOneDay({ email }) {
    ============================================================ */
 export function trialExpired({ email }) {
   return {
-    subject: "Your EstateMotion trial has ended",
+    subject: "Your Vistalia trial has ended",
     html: shell({
       eyebrow: "Trial ended",
       headline: "Pick a plan when you're ready.",
@@ -116,11 +116,11 @@ export function trialExpired({ email }) {
    ============================================================ */
 export function paymentFailed({ email, planLabel }) {
   return {
-    subject: "Action needed: payment failed for EstateMotion",
+    subject: "Action needed: payment failed for Vistalia",
     html: shell({
       eyebrow: "Payment failed",
       headline: "We couldn't charge your card.",
-      body: `Hi there,<p>Stripe couldn't process the renewal payment for your <strong style="color:#E8E2D6;">${escape(planLabel || "EstateMotion")}</strong> subscription. Your account is in a grace period — renders are paused until the card is updated.</p><p style="margin-top:14px;">Common fixes: update an expired card, switch to a different card, or check that your bank isn't blocking the charge.</p>`,
+      body: `Hi there,<p>Stripe couldn't process the renewal payment for your <strong style="color:#E8E2D6;">${escape(planLabel || "Vistalia")}</strong> subscription. Your account is in a grace period — renders are paused until the card is updated.</p><p style="margin-top:14px;">Common fixes: update an expired card, switch to a different card, or check that your bank isn't blocking the charge.</p>`,
       ctaLabel: "Update payment method",
       ctaUrl: `${APP_URL}/app/#settings`,
       footer: `Sent to ${escape(email)} because Stripe reported a payment failure. If this is wrong, reply and we'll dig in.`
@@ -143,7 +143,7 @@ export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobI
     html: shell({
       eyebrow: "Render complete",
       headline: "Your video is ready.",
-      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. Open it in EstateMotion to download every format (9:16, 1:1, 16:9) and the social shorts.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
+      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. Open it in Vistalia to download every format (9:16, 1:1, 16:9) and the social shorts.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
       ctaLabel: "Open the bundle",
       ctaUrl: `${APP_URL}/app/`,
       footer: `Sent to ${escape(email)} because a render you started just finished. You can disable these in Settings.`

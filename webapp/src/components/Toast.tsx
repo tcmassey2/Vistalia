@@ -6,7 +6,7 @@ import { useStore } from "../lib/store";
  *
  * Slide-in animation, click to dismiss, auto-fade after the store's
  * 3.5s timer. Visually mirrors the rest of the brand: surface card with
- * gold accent stripe on the left so it reads as part of EstateMotion
+ * gold accent stripe on the left so it reads as part of Vistalia
  * rather than a generic OS notification.
  *
  * Detects the message type heuristically:

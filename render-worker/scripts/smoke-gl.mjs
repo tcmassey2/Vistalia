@@ -1,4 +1,4 @@
-// EstateMotion — gl install smoke test (Path B prerequisite).
+// Vistalia — gl install smoke test (Path B prerequisite).
 //
 // Purpose: validate that the `gl` npm package (headless WebGL 1.0)
 // installs cleanly on the Render.com Linux container and can create a

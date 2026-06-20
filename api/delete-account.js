@@ -1,4 +1,4 @@
-// EstateMotion — /api/delete-account
+// Vistalia — /api/delete-account
 //
 // Self-service account deletion. GDPR Article 17 ("right to erasure") and
 // CCPA require a one-click way for users to delete their data. This endpoint

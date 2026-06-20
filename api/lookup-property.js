@@ -1,4 +1,4 @@
-// EstateMotion — Property auto-fill via RentCast public-records API.
+// Vistalia — Property auto-fill via RentCast public-records API.
 //
 // Agent types an address, we hit RentCast, return normalized listing facts
 // the form can populate. This is what eliminates AI-hallucination liability:
@@ -117,7 +117,7 @@ export default async function handler(request, response) {
 }
 
 /* ============================================================
-   Normalize RentCast response → EstateMotion ListingDetails shape
+   Normalize RentCast response → Vistalia ListingDetails shape
    ============================================================ */
 
 // RentCast's /properties endpoint returns either a single object or an

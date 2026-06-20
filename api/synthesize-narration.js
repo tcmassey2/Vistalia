@@ -1,4 +1,4 @@
-// EstateMotion — Per-line narration synthesis.
+// Vistalia — Per-line narration synthesis.
 //
 // Two callers:
 //   1. The render-worker, which hits ElevenLabs directly using the same

@@ -1,4 +1,4 @@
-// EstateMotion — Voice clone provisioning.
+// Vistalia — Voice clone provisioning.
 //
 // Two operations on this endpoint:
 //   GET  /api/clone-voice?diagnose=1  → health check (verifies API key works,
@@ -63,7 +63,7 @@ export default async function handler(request, response) {
     const fileName = sanitizeFileName(body.fileName || "voice-sample.mp3");
     const contentType = String(body.contentType || "audio/mpeg").toLowerCase();
     const voiceLabel = String(body.voiceLabel || "Agent").trim().slice(0, 80) || "Agent";
-    const description = String(body.description || `EstateMotion voice clone for ${voiceLabel}`).slice(0, 200);
+    const description = String(body.description || `Vistalia voice clone for ${voiceLabel}`).slice(0, 200);
 
     // Validate inputs before we burn an ElevenLabs call.
     if (!audioBase64) {
@@ -185,7 +185,7 @@ export default async function handler(request, response) {
       status: "ready",
       voiceId,
       voiceLabel,
-      previewUrl: `/api/synthesize-narration?voiceId=${encodeURIComponent(voiceId)}&text=${encodeURIComponent(`Hi, I'm ${voiceLabel}, and this is your EstateMotion voice clone test.`)}`
+      previewUrl: `/api/synthesize-narration?voiceId=${encodeURIComponent(voiceId)}&text=${encodeURIComponent(`Hi, I'm ${voiceLabel}, and this is your Vistalia voice clone test.`)}`
     });
   } catch (error) {
     console.error("[clone-voice] uncaught error", error);

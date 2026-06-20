@@ -1,4 +1,4 @@
-// EstateMotion — domain types
+// Vistalia — domain types
 
 // v26.6: "veo" is the production AI engine. "runway" retained for the
 // rollback path (the worker upgrades runway→veo); "remotion" is the
@@ -89,7 +89,7 @@ export interface AgentBranding {
   // "TREC# 0123456" (TX), "AZ SA-123456" (AZ).
   licenseNumber?: string;
   // ElevenLabs voice clone ID. When set, every future render is narrated in
-  // the agent's actual voice. When unset, EstateMotion still narrates using
+  // the agent's actual voice. When unset, Vistalia still narrates using
   // a stock professional voice — so the agent always gets narration, and
   // voice cloning becomes the perceptible upgrade.
   voiceId?: string;

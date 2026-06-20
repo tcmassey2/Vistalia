@@ -1,4 +1,4 @@
-// EstateMotion — /api/export-account
+// Vistalia — /api/export-account
 //
 // Returns a JSON manifest of the signed-in user's data: brand kit, library
 // (with deep links to every rendered file), and account profile. Intended
@@ -58,7 +58,7 @@ export default async function handler(request, response) {
   const payload = {
     exportedAt: new Date().toISOString(),
     accountVersion: 1,
-    note: "This is a portable snapshot of your EstateMotion data. Listing photos and rendered videos are linked by URL (not inlined). Save this file before deleting your account if you'd like a record.",
+    note: "This is a portable snapshot of your Vistalia data. Listing photos and rendered videos are linked by URL (not inlined). Save this file before deleting your account if you'd like a record.",
     user: {
       id: userId,
       email: me?.email || "",

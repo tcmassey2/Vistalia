@@ -1,4 +1,4 @@
-// EstateMotion landing page — minimal vanilla JS for interactions.
+// Vistalia landing page — minimal vanilla JS for interactions.
 // Three behaviors:
 //   1. Sticky nav adds .scrolled when the page has moved past the hero
 //   2. FAQ items toggle open/closed

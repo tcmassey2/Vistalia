@@ -12,9 +12,9 @@ import { writeRenderAudit } from "./audit-log.mjs";
 import { uploadDeliverables } from "./runway-job.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
-const compositionId = "EstateMotionRender";
+const compositionId = "VistaliaRender";
 
-export async function renderEstateMotionJob({ manifest, requestedFormat = "vertical" }, options = {}) {
+export async function renderVistaliaJob({ manifest, requestedFormat = "vertical" }, options = {}) {
   validateManifest(manifest);
 
   const jobId = options.jobId || createJobId(manifest);

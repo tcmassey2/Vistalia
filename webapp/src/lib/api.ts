@@ -118,7 +118,7 @@ export async function createEditPlan(args: CreateEditPlanArgs): Promise<CreateEd
    ============================================================ */
 
 export interface RenderManifest {
-  app: "EstateMotion";
+  app: "Vistalia";
   engine: RenderEngine;
   exportFormat: ExportFormat;
   // The Remotion composition reads listing facts from manifest.project to

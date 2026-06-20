@@ -1,4 +1,4 @@
-// EstateMotion — Per-scene regenerate orchestrator.
+// Vistalia — Per-scene regenerate orchestrator.
 //
 // The production-grade fix for hallucinated AI scenes. When one of the 24
 // Runway scenes comes out wrong (microwave-on-fridge, ceiling fan doubled,

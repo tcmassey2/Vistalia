@@ -1,4 +1,4 @@
-// EstateMotion — engine label centralization.
+// Vistalia — engine label centralization.
 //
 // Single source of truth for the user-facing engine name + short
 // description. Used by DashboardScreen, LibraryDetailModal,

@@ -51,7 +51,7 @@ export default function TopBar() {
           <span className="grid place-items-center w-7 h-7 rounded-md bg-gradient-to-br from-gold-light to-gold-dim text-paper font-bold italic">
             E
           </span>
-          <span className="font-semibold tracking-tightish hidden xs:inline">EstateMotion</span>
+          <span className="font-semibold tracking-tightish hidden xs:inline">Vistalia</span>
         </button>
 
         {screen === "project" && (

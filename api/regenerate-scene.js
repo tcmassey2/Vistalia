@@ -1,4 +1,4 @@
-// EstateMotion — /api/regenerate-scene
+// Vistalia — /api/regenerate-scene
 //
 // Vercel-side proxy for per-scene regenerate. Forwards the frontend's request
 // to the render-worker /regenerate-scene endpoint. The worker handles the
@@ -125,7 +125,7 @@ export default async function handler(request, response) {
   } catch (error) {
     response.status(500).json({
       status: "failed",
-      error: error.message || "EstateMotion regenerate-scene request failed."
+      error: error.message || "Vistalia regenerate-scene request failed."
     });
   }
 }

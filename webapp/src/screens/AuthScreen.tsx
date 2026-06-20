@@ -215,14 +215,14 @@ export default function AuthScreen() {
           <span className="grid place-items-center w-8 h-8 rounded-lg bg-gradient-to-br from-gold-light to-gold-dim text-paper font-display font-semibold italic">
             E
           </span>
-          <span className="font-display text-lg font-semibold tracking-tightish">EstateMotion</span>
+          <span className="font-display text-lg font-semibold tracking-tightish">Vistalia</span>
         </a>
       </header>
 
       <div className="flex-1 grid place-items-center px-6 pb-16 relative">
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
-            <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-gold mb-3">EstateMotion</div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-gold mb-3">Vistalia</div>
             <h1 className="font-display text-4xl sm:text-[2.75rem] leading-[1.05] font-semibold tracking-tighter2">{heading}</h1>
             <p className="text-ink-soft text-[15px] mt-3">{subhead}</p>
           </div>

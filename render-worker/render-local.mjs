@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderEstateMotionJob } from "./src/render-job.mjs";
+import { renderVistaliaJob } from "./src/render-job.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.join(dirname, "out", "marketing-os");
@@ -34,7 +34,7 @@ try {
     const manifest = createManifest(mode, assetServer.baseUrl);
     const manifestPath = path.join(outDir, `${mode.id}.manifest.json`);
     await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-    const result = await renderEstateMotionJob({ manifest, requestedFormat: "vertical" });
+    const result = await renderVistaliaJob({ manifest, requestedFormat: "vertical" });
     const mp4Path = path.join(outDir, `${mode.id}.mp4`);
     const thumbnailPath = path.join(outDir, `${mode.id}.png`);
     if (result.localMp4Path) await fs.copyFile(result.localMp4Path, mp4Path);
@@ -67,7 +67,7 @@ async function createDurableTestImages() {
       <rect width="1600" height="1200" fill="url(#g)"/>
       <rect x="110" y="120" width="1380" height="810" rx="34" fill="rgba(248,245,239,.12)" stroke="rgba(248,245,239,.42)" stroke-width="8"/>
       <text x="130" y="1040" fill="#F8F5EF" font-size="98" font-family="Arial" font-weight="900">${label}</text>
-      <text x="134" y="1120" fill="#C7A76C" font-size="38" font-family="Arial" font-weight="700">EstateMotion durable test image ${index + 1}</text>
+      <text x="134" y="1120" fill="#C7A76C" font-size="38" font-family="Arial" font-weight="700">Vistalia durable test image ${index + 1}</text>
     </svg>`;
     await fs.writeFile(path.join(assetDir, `${slug(sceneType)}.svg`), svg);
   }));
@@ -99,7 +99,7 @@ function createManifest(mode, baseUrl) {
       : {}
   };
   return {
-    app: "EstateMotion",
+    app: "Vistalia",
     project,
     brandKit,
     compliance: {

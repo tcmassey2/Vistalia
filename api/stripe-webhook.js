@@ -1,4 +1,4 @@
-// EstateMotion — Stripe webhook handler.
+// Vistalia — Stripe webhook handler.
 // Mounted at POST /api/stripe-webhook
 // Configure in Stripe Dashboard → Developers → Webhooks → Endpoint URL:
 //   https://YOUR-DOMAIN/api/stripe-webhook
@@ -266,7 +266,7 @@ async function notifyPaymentFailed(userId, invoice) {
   const rows = await res.json().catch(() => []);
   const profile = Array.isArray(rows) && rows.length ? rows[0] : null;
   if (!profile?.email) return;
-  const planLabel = TIER_LABELS[profile.tier] || "your EstateMotion subscription";
+  const planLabel = TIER_LABELS[profile.tier] || "your Vistalia subscription";
   const tpl = paymentFailed({ email: profile.email, planLabel });
   await sendTransactionalEmail({
     to: profile.email,
@@ -278,9 +278,9 @@ async function notifyPaymentFailed(userId, invoice) {
 
 const TIER_LABELS = {
   trial: "Free Trial",
-  launch: "EstateMotion Launch",
-  pro: "EstateMotion Pro",
-  studio: "EstateMotion Studio",
+  launch: "Vistalia Launch",
+  pro: "Vistalia Pro",
+  studio: "Vistalia Studio",
   // Legacy (retired from sale June 2026)
   quick_reel: "Quick Reel",
   cinematic_ai: "Cinematic AI",

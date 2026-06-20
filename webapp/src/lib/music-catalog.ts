@@ -1,4 +1,4 @@
-// EstateMotion — bundled music catalog.
+// Vistalia — bundled music catalog.
 //
 // Source of truth for the music selector. Each entry corresponds to a
 // real .mp3 file that lives in TWO places:

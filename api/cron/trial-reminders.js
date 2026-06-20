@@ -1,4 +1,4 @@
-// EstateMotion — daily trial-reminder emails.
+// Vistalia — daily trial-reminder emails.
 //
 // Runs once per day via Vercel Cron (configured in vercel.json). Scans
 // profiles with tier='trial' and dispatches the right email based on how

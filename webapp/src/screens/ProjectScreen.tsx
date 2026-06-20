@@ -1054,7 +1054,7 @@ function BrandKitArea({ userId }: { userId: string }) {
               label="Brokerage"
               value={branding.brokerage}
               onChange={(v) => setBranding({ brokerage: v })}
-              placeholder="EstateMotion Realty"
+              placeholder="Vistalia Realty"
             />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1499,7 +1499,7 @@ function VoiceCloneCard() {
     if (!branding.voiceId) return;
     setPreviewLoading(true);
     try {
-      const text = `Hi, I'm ${branding.voiceLabel || branding.fullName.split(/\s+/)[0] || "your agent"}. This is how I'll sound on every EstateMotion video.`;
+      const text = `Hi, I'm ${branding.voiceLabel || branding.fullName.split(/\s+/)[0] || "your agent"}. This is how I'll sound on every Vistalia video.`;
       const res = await fetch("/api/synthesize-narration", {
         method: "POST",
         headers: await authHeaders(),
@@ -2199,7 +2199,7 @@ function RenderControls() {
       // 2. Build manifest
       phaseCreep.update({ phase: "Sending the cut to the renderer", progressFloor: 10, ceilingProgress: 14 });
       const manifest: RenderManifest = {
-        app: "EstateMotion",
+        app: "Vistalia",
         // v26.6: single production engine. The worker upgrades "veo"
         // (and legacy "runway") through the Veo 3.1 pipeline.
         engine: "veo",

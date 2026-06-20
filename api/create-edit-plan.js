@@ -538,7 +538,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
           {
             type: "input_text",
             text: [
-              "You are EstateMotion Motion Director, a professional real estate video editor.",
+              "You are Vistalia Motion Director, a professional real estate video editor.",
               "Build a cinematic edit plan from the uploaded listing photos.",
               "USE EVERY PHOTO PROVIDED — do not skip any. Each photo becomes one scene.",
               "Order the scenes as a professional property tour: exterior hero → entry → kitchen → living/great room → dining → primary bedroom → other bedrooms → bathrooms → outdoor/pool → neighborhood/amenities → detail/outro.",
@@ -1287,7 +1287,7 @@ function logMotionDirector(level, message, details = {}) {
     at: new Date().toISOString()
   };
   const logger = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
-  logger(`[EstateMotion Motion Director] ${message}`, safeDetails);
+  logger(`[Vistalia Motion Director] ${message}`, safeDetails);
 }
 
 function isLocalOnlyUrl(url = "") {

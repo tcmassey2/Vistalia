@@ -78,7 +78,7 @@ export default async function handler(request, response) {
   }
 
   if (request.method !== "POST") {
-    response.status(405).json({ status: "failed", error: "Use POST /api/render with an EstateMotion render manifest." });
+    response.status(405).json({ status: "failed", error: "Use POST /api/render with an Vistalia render manifest." });
     return;
   }
 
@@ -205,7 +205,7 @@ export default async function handler(request, response) {
   } catch (error) {
     response.status(500).json({
       status: "failed",
-      error: error.message || "EstateMotion render request failed."
+      error: error.message || "Vistalia render request failed."
     });
   }
 }

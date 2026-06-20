@@ -156,7 +156,7 @@ export default function DashboardScreen() {
               Your first cinematic listing video, in three minutes.
             </h2>
             <p className="text-ink-muted text-sm sm:text-base max-w-md mx-auto mb-8 leading-relaxed">
-              Upload your MLS photos, pick a style, and EstateMotion directs the
+              Upload your MLS photos, pick a style, and Vistalia directs the
               motion, music, and pacing — then hands you every aspect ratio at once.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 mb-2">

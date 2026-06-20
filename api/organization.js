@@ -1,4 +1,4 @@
-// EstateMotion — Organization API
+// Vistalia — Organization API
 //
 // Handles the brokerage tier surface:
 //   GET  /api/organization                   → caller's primary org + role

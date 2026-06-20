@@ -836,7 +836,7 @@ function buildRegenManifest(
   }
 
   return {
-    app: "EstateMotion",
+    app: "Vistalia",
     engine: "runway",
     exportFormat: "vertical",
     project: {

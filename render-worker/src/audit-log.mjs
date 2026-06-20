@@ -1,4 +1,4 @@
-// EstateMotion — Render audit log writer.
+// Vistalia — Render audit log writer.
 //
 // Called from both render pipelines (Quick Reel + Cinematic AI) right after
 // upload completes. Writes a single row to public.render_audit_log so that
@@ -65,13 +65,13 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
       // The PostgREST code for missing-relation is PGRST205.
       if (res.status === 404 && /PGRST205|Could not find the table/i.test(text)) {
         auditTableMissing = true;
-        console.warn(`[EstateMotion audit-log] table 'render_audit_log' is missing — run supabase/migrations/04_brokerages.sql to enable. Skipping all future audit writes until worker restarts.`);
+        console.warn(`[Vistalia audit-log] table 'render_audit_log' is missing — run supabase/migrations/04_brokerages.sql to enable. Skipping all future audit writes until worker restarts.`);
       } else {
-        console.warn(`[EstateMotion audit-log] write failed (${res.status}):`, text.slice(0, 240));
+        console.warn(`[Vistalia audit-log] write failed (${res.status}):`, text.slice(0, 240));
       }
     }
   } catch (err) {
-    console.warn("[EstateMotion audit-log] write threw:", err.message || err);
+    console.warn("[Vistalia audit-log] write threw:", err.message || err);
   }
 }
 
@@ -98,10 +98,10 @@ export async function updateRenderAudit({ jobId, patch }) {
     );
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.warn(`[EstateMotion audit-log] update failed (${res.status}):`, text.slice(0, 240));
+      console.warn(`[Vistalia audit-log] update failed (${res.status}):`, text.slice(0, 240));
     }
   } catch (err) {
-    console.warn("[EstateMotion audit-log] update threw:", err.message || err);
+    console.warn("[Vistalia audit-log] update threw:", err.message || err);
   }
 }
 

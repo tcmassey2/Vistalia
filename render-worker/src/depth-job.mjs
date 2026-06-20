@@ -1,4 +1,4 @@
-// EstateMotion — Depth-based engine orchestrator (Path B).
+// Vistalia — Depth-based engine orchestrator (Path B).
 //
 // Full peer of renderRunwayJob. Same input contract (manifest, options),
 // same output shape (videoUrl + variants + shorts + thumbnail + per-scene

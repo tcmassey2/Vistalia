@@ -1,4 +1,4 @@
-// EstateMotion — Runway Gen-3 Turbo image-to-video render engine.
+// Vistalia — Runway Gen-3 Turbo image-to-video render engine.
 // Selected when manifest.engine === "runway". Generates one Runway clip per
 // photo scene (parallelized), downloads them, stitches with FFmpeg into the
 // final MP4, then uploads to Supabase Storage.
@@ -1060,7 +1060,7 @@ function buildWatermarkDrawtext({ name, brokerage }, dimensions) {
 //   2. circular headshot at top-center (if available)
 //   3. brokerage logo to the right of the headshot (if available)
 //   4. CTA eyebrow → agent name → brokerage → license → contact
-//   5. Equal Housing footer + EstateMotion attribution
+//   5. Equal Housing footer + Vistalia attribution
 // All optional pieces gracefully omit when not provided.
 async function buildBrandOutroClip(
   { name, brokerage, phone, email, licenseNumber, cta },
@@ -1174,8 +1174,8 @@ async function buildBrandOutroClip(
   drawtextChain.push(
     `drawbox=x=(w-280)/2:y=${accentRuleY}:w=280:h=2:color=0xC7A76C:t=fill`
   );
-  // Equal Housing + EstateMotion attribution footer (MLS compliance)
-  const footerText = ffEscape("Equal Housing Opportunity  ·  Made with EstateMotion");
+  // Equal Housing + Vistalia attribution footer (MLS compliance)
+  const footerText = ffEscape("Equal Housing Opportunity  ·  Made with Vistalia");
   drawtextChain.push(
     `drawtext=fontfile='${FFMPEG_FONT_REGULAR}':text='${footerText}':fontcolor=white@0.55:fontsize=${footerSize}:x=(w-text_w)/2:y=${footerY}`
   );

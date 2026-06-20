@@ -64,7 +64,7 @@ try {
     photoScenes: manifest.scenes.filter((scene) => scene.type === "photo").length,
     introScene: manifest.scenes.some((scene) => scene.type === "intro"),
     statScene: manifest.scenes.some((scene) => scene.type === "stats"),
-    brandedOutro: "Rendered by EstateMotionRender end card",
+    brandedOutro: "Rendered by VistaliaRender end card",
     motions: [...new Set(manifest.scenes.map((scene) => scene.cameraMotion || scene.renderMotion).filter(Boolean))],
     transitions: [...new Set(manifest.scenes.map((scene) => scene.transition).filter(Boolean))],
     downloadedBytes: mp4Buffer.length
@@ -107,7 +107,7 @@ async function createSampleListingImages() {
       <rect x="${150 + (index % 5) * 42}" y="${180 + (index % 4) * 34}" width="520" height="310" rx="22" fill="rgba(255,255,255,.12)"/>
       <rect x="${820 - (index % 4) * 35}" y="${245 + (index % 5) * 24}" width="520" height="420" rx="26" fill="rgba(0,0,0,.15)"/>
       <text x="120" y="1024" fill="#F8F5EF" font-size="92" font-family="Arial" font-weight="900">${label}</text>
-      <text x="126" y="1106" fill="#C7A76C" font-size="38" font-family="Arial" font-weight="800">EstateMotion verification photo ${index + 1}</text>
+      <text x="126" y="1106" fill="#C7A76C" font-size="38" font-family="Arial" font-weight="800">Vistalia verification photo ${index + 1}</text>
     </svg>`;
     await fs.writeFile(path.join(assetDir, `${id}.svg`), svg);
   }));
@@ -168,7 +168,7 @@ function createManifest(baseUrl) {
     scene.beatCut = Number(cursor.toFixed(2));
   });
   return {
-    app: "EstateMotion",
+    app: "Vistalia",
     product: "Professional real estate listing video renderer",
     project: {
       id: "async-verification",

@@ -1,4 +1,4 @@
-// EstateMotion — Depth-based parallax renderer (Path B core).
+// Vistalia — Depth-based parallax renderer (Path B core).
 //
 // Takes a photo + its depth map + a virtual camera path. Produces an MP4
 // clip of the virtual camera moving through the 3D scene reconstructed

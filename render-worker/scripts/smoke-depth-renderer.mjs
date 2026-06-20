@@ -1,4 +1,4 @@
-// EstateMotion — depth-renderer end-to-end smoke test.
+// Vistalia — depth-renderer end-to-end smoke test.
 //
 // Generates a synthetic test photo + a matching depth gradient so this
 // runs WITHOUT any network access or Replicate calls. Validates that

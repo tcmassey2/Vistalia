@@ -1,4 +1,4 @@
-// EstateMotion v25 Phase 1b — Veo smoke-test runner (fal.ai).
+// Vistalia v25 Phase 1b — Veo smoke-test runner (fal.ai).
 //
 // Hits the worker's POST /test/veo endpoint with one Supabase image URL
 // + one motion prompt and prints the resulting clip URL on success.

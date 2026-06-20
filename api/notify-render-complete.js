@@ -1,4 +1,4 @@
-// EstateMotion — /api/notify-render-complete
+// Vistalia — /api/notify-render-complete
 //
 // Called by the render-worker when a render finishes successfully. Sends
 // a "your video is ready" email to the agent with the master URL +

@@ -1,4 +1,4 @@
-// EstateMotion — /api/contact
+// Vistalia — /api/contact
 //
 // Receives the help-page contact form and forwards to support via Resend.
 // Public endpoint (no auth) but rate-limited to prevent spam.
@@ -23,7 +23,7 @@ export default async function handler(request, response) {
   const body = parseBody(request.body);
   const email = String(body?.email || "").trim().slice(0, 200);
   const name = String(body?.name || "").trim().slice(0, 200);
-  const subject = String(body?.subject || "").trim().slice(0, 200) || "EstateMotion contact form";
+  const subject = String(body?.subject || "").trim().slice(0, 200) || "Vistalia contact form";
   const message = String(body?.message || "").trim().slice(0, 4000);
   const honeypot = String(body?.website || "").trim();  // bot-trap field
 
@@ -48,7 +48,7 @@ export default async function handler(request, response) {
 
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#111;background:#fff;padding:24px;">
-      <h2 style="margin:0 0 12px;font-size:18px;">New EstateMotion contact form</h2>
+      <h2 style="margin:0 0 12px;font-size:18px;">New Vistalia contact form</h2>
       <p style="margin:4px 0;"><strong>From:</strong> ${safeName} &lt;${safeEmail}&gt;</p>
       <p style="margin:4px 0;"><strong>Subject:</strong> ${safeSubject}</p>
       <hr style="border:none;border-top:1px solid #ddd;margin:14px 0;">
