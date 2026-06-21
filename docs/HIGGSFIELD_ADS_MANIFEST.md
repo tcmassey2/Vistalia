@@ -44,6 +44,22 @@ music. Voice is the AI persona's, NOT Troy's (founder stays off-camera).
 *Audio: ElevenLabs music beds via sonilo_music (12s `8ed5f06b`, 16s `6e6cfb91`). Dive-in
 solo ad (`vistalia-ad-dive-in.mp4`) uses pro-narrator VO `df3f7919` (Sloane).*
 
+## Vistalia — UGC BATCH 2 (June 21) — segment-targeted, 2 new spokespersons
+Targeting strategy: `marketing/VISTALIA_AD_TARGETING.md`. Seamless audio (music ducked under
+voice, swells the instant she/he stops, synced to the cut). New music bed `75f18f0a` (16s).
+**New reusable spokespersons:** young male agent `97468690`
+(`vistalia-spokesperson-male_97468690.png`); seasoned 50s female `943f81fd`
+(`vistalia-spokesperson-senior_943f81fd.png`).
+
+| Finished ad (`marketing/assembled/`) | Persona | Segment | Hook job ID |
+|---|---|---|---|
+| `vistalia-ugc-win-the-listing.mp4` | woman 30s–40s | win-the-listing (high intent) | 545b0f22-57d8-475f-85de-bbfce2b7b5ac |
+| `vistalia-ugc-roi.mp4` | woman 30s–40s | ROI / budget / part-time | d10904e6-b7e6-4324-89fe-91ccc778e43d |
+| `vistalia-ugc-new-agent.mp4` | young man | new licensees / younger / male | 5b851fd6-587f-4ebe-8d16-04d5cd5dc1c3 |
+| `vistalia-ugc-not-techy.mp4` | woman 50s | demographic core / anti-objection | 1f91da4a-fe80-4379-801d-b8239f5914a7 |
+
+*(First new-agent take `6ea73882` had a 1.4s dead pause — re-rendered as `5b851fd6`.)*
+
 ## EstateMotion (the SaaS — prior brand name)
 
 | File | What it is | Mode | Date | Job ID |
