@@ -60,6 +60,21 @@ voice, swells the instant she/he stops, synced to the cut). New music bed `75f18
 
 *(First new-agent take `6ea73882` had a 1.4s dead pause — re-rendered as `5b851fd6`.)*
 
+## Vistalia — FINAL LAUNCH BATCH (June 21) — diversity, objection-killers, hero
+**New reusable spokespersons:** Latina woman `7372631e`
+(`vistalia-spokesperson-latina_7372631e.png`); Black man `f6c93d70`
+(`vistalia-spokesperson-blackmale_f6c93d70.png`).
+
+| Finished ad (`marketing/assembled/`) | Persona | Purpose | Hook job ID |
+|---|---|---|---|
+| `vistalia-ugc-mls-safe.mp4` | Latina woman | objection-killer: MLS-safe / you approve every scene | 7b0ed11d-0edb-4f2d-81aa-c872f0d6a558 |
+| `vistalia-ugc-not-fake.mp4` | Black man | objection-killer: "I thought it'd look fake — it doesn't" | 783f35da-ebf4-4f8c-bb6f-cdda38805db1 |
+| `vistalia-launch-hero.mp4` | faceless | launch-moment hero: "Introducing Vistalia → first one free" | (assembled from reveals 391da4d6 / 4bc613d6 / 73bee506) |
+
+*Full persona roster now: white woman 30s–40s, white man late-20s, white woman 50s, Latina
+woman 30s, Black man 30s. Spans the female-majority + age + ethnic spread of the 3M.
+Targeting rationale: `marketing/VISTALIA_AD_TARGETING.md`.*
+
 ## EstateMotion (the SaaS — prior brand name)
 
 | File | What it is | Mode | Date | Job ID |
