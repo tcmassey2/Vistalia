@@ -240,7 +240,16 @@ async function enforceTierGuard(request, manifest) {
 
   const requestedEngine = String(manifest.engine || "remotion").toLowerCase();
   const available = Array.isArray(state.available_engines) ? state.available_engines : ["remotion"];
-  if (!available.includes(requestedEngine)) {
+  // v26.11: mirror api/render.js — veo and runway are the SAME entitlement (the
+  // worker upgrades runway→veo). Treat them as interchangeable so a tier that
+  // grants either grants both, and so per-scene regen works even though
+  // tier_plans still lists 'runway' rather than 'veo'. Without this, every Edit
+  // Studio re-render on an AI render 402'd ("Cinematic AI regen isn't included").
+  const AI_ENGINES = new Set(["veo", "runway"]);
+  const entitled =
+    available.includes(requestedEngine) ||
+    (AI_ENGINES.has(requestedEngine) && available.some((e) => AI_ENGINES.has(String(e).toLowerCase())));
+  if (!entitled) {
     const engineLabel =
       requestedEngine === "depth" ? "Cinematic Depth" :
       requestedEngine === "runway" ? "Cinematic AI" :

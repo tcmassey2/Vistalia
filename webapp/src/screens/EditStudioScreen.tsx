@@ -47,6 +47,11 @@ export default function EditStudioScreen() {
 
   // Per-scene UI state, keyed by sceneIndex.
   const [sceneState, setSceneState] = useState<Record<number, SceneUiState>>({});
+  // Bumped only after a successful regen, to cache-bust the master that the
+  // worker overwrites in place. Previously we busted with Date.now() inline on
+  // every render, which changed the <video> src constantly and made the preview
+  // reload forever instead of playing.
+  const [previewVersion, setPreviewVersion] = useState(0);
 
   const stateFor = (s: SceneClipMeta): SceneUiState =>
     sceneState[s.sceneIndex] || {
@@ -112,6 +117,7 @@ export default function EditStudioScreen() {
             mp4Url: status.mp4Url || masterUrl,
             scenes: freshScenes
           });
+          setPreviewVersion((v) => v + 1);
           patchScene(sceneIndex, {
             status: "done",
             phase: "Updated",
@@ -183,12 +189,13 @@ export default function EditStudioScreen() {
             <div className="text-[11px] font-mono uppercase tracking-wider text-ink-muted mb-2 px-1">Final video</div>
             {masterUrl ? (
               <video
-                key={masterUrl}
-                src={bust(masterUrl)}
+                key={`${masterUrl}:${previewVersion}`}
+                src={withVersion(masterUrl, previewVersion)}
                 controls
                 playsInline
+                preload="metadata"
                 poster={renderJob.thumbnailUrl}
-                className="w-full rounded-xl bg-black aspect-[9/16] object-cover"
+                className="w-full rounded-xl bg-black aspect-[9/16] object-contain"
               />
             ) : (
               <div className="w-full rounded-xl bg-surface-input aspect-[9/16] grid place-items-center text-ink-dim text-sm">
@@ -339,4 +346,11 @@ function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 function bust(url: string) {
   if (!url) return url;
   return url + (url.includes("?") ? "&" : "?") + "v=" + Date.now();
+}
+// Stable cache-bust: the URL is untouched on first load (version 0) and only
+// gets a ?v=N suffix after a regen, so the preview src doesn't change — and the
+// video doesn't reload — on unrelated re-renders.
+function withVersion(url: string, version: number) {
+  if (!url || version <= 0) return url;
+  return url + (url.includes("?") ? "&" : "?") + "v=" + version;
 }
