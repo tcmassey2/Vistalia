@@ -152,9 +152,15 @@
     box-shadow: 0 0 0 1px theme("colors.gold.DEFAULT") inset, 0 8px 24px -6px rgba(199, 167, 108, 0.25);
   }
 
-  /* Subtle entrance animation for content sections */
+  /* Subtle entrance animation for content sections.
+     fill-mode is `backwards` (NOT `both`): with `both`, the element retained
+     the final keyframe's `transform: translateY(0)` forever, and any lingering
+     transform turns it into the containing block for its `position: fixed`
+     descendants — which pushed modal overlays (e.g. the library detail modal)
+     off-screen instead of centering them in the viewport. `backwards` keeps the
+     no-initial-flash entrance but drops the transform once the animation ends. */
   .fade-up-in {
-    animation: fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: fade-up 380ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
   @keyframes fade-up {
     from { opacity: 0; transform: translateY(8px); }
