@@ -7,7 +7,7 @@ import { events, track } from "../lib/analytics";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
 import { resolveTrack } from "../lib/music-catalog";
-import { isAiVideoEngine } from "../lib/engine-labels";
+import { isAiVideoEngine, engineLabel as engineDisplayLabel } from "../lib/engine-labels";
 import MusicSelector from "../components/MusicSelector";
 import { fireConfetti } from "../lib/confetti";
 import PaywallModal from "../components/PaywallModal";
@@ -2896,10 +2896,12 @@ function ActiveRenderPanel() {
   if (!renderJob) return null;
 
   const isRunway = isAiVideoEngine(renderJob.engine);
-  const engineLabel = renderJob.engine === "runway" ? "Cinematic AI" : "Quick Reel";
-  const engineSubLabel = renderJob.engine === "runway"
-    ? "Runway Gen-4 Turbo · 1080p · 30s"
-    : "Cinematic motion · 1080p · ~90 sec";
+  // v26.11: label off the canonical helper (veo → "Cinematic AI") instead of a
+  // stale `=== "runway"` check that mislabeled every Veo render as "Quick Reel".
+  // Duration reflects the user's actual 30s/60s choice, not a hardcoded ~90s.
+  const engineLabel = engineDisplayLabel(renderJob.engine);
+  const targetSec = useStore.getState().targetDurationSec || 30;
+  const engineSubLabel = `${isRunway ? "Cinematic motion" : "Ken Burns motion"} · 1080p · ~${targetSec}s`;
 
   // ETA — keep it stable. Recompute once a second, not on every frame.
   // Read displayed via ref so it doesn't trigger re-renders.
