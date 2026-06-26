@@ -11,7 +11,7 @@ import {
   signOut
 } from "../lib/supabase";
 import { events, track } from "../lib/analytics";
-import HCaptcha from "../components/HCaptcha";
+import Turnstile from "../components/Turnstile";
 import { env } from "../lib/env";
 
 type Mode = "signin" | "signup" | "forgot" | "reset" | "totp";
@@ -36,7 +36,7 @@ export default function AuthScreen() {
   // SAME token from its internal cache and Supabase 422s with
   // 'captcha protection: request disallowed (already-seen-response)'.
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
-  const captchaRequired = Boolean(env().HCAPTCHA_SITE_KEY);
+  const captchaRequired = Boolean(env().TURNSTILE_SITE_KEY);
 
   // Reset both the local token AND force the widget to re-render.
   // Call after any failed submit OR after a successful submit that
@@ -329,7 +329,7 @@ export default function AuthScreen() {
                   email-confirm resend). The widget remounts when mode changes,
                   which forces a fresh challenge each time. */}
               {captchaRequired && (mode === "signup" || mode === "signin" || mode === "forgot") && (
-                <HCaptcha
+                <Turnstile
                   // Remount on mode switch OR after any failed/successful
                   // submit (captchaResetKey bumps). Forces a fresh iframe
                   // so hCaptcha can't cache and replay the burned token —

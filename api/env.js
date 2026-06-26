@@ -45,7 +45,10 @@ function publicEnv() {
     // hCaptcha public site key. Required by Supabase auth when CAPTCHA
     // is enabled in the Supabase Dashboard. Empty = signup form skips
     // the widget and Supabase accepts unverified signups.
-    HCAPTCHA_SITE_KEY: process.env.HCAPTCHA_SITE_KEY || ""
+    HCAPTCHA_SITE_KEY: process.env.HCAPTCHA_SITE_KEY || "",
+    // Cloudflare Turnstile — low-friction CAPTCHA. When set (and Supabase Auth's
+    // CAPTCHA provider is "Turnstile"), the auth screen shows the Turnstile widget.
+    TURNSTILE_SITE_KEY: process.env.TURNSTILE_SITE_KEY || ""
   };
 }
 
