@@ -54,3 +54,7 @@ EstateMotion Test Photos./
 # TypeScript incremental build cache (auto-generated, machine-specific)
 *.tsbuildinfo
 marketing/assembled/
+
+# Generated deliverables (decks, models) — keep local, not in source history
+/Vistalia-*.pptx
+/Vistalia-*.xlsx
