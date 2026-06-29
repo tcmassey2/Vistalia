@@ -329,19 +329,19 @@ footer{border-top:1px solid var(--edge);padding:40px 0 48px}
   <!-- Each card plays a real Vistalia clip on hover. Fill data-src + data-poster per card. -->
   <div class="styles" id="styles-grid">
     <div class="scard" style="--c1:#1d1a14" data-src="" data-poster="">
-      <span class="tag">EM-L1</span><span class="pace">Slow · 54s</span>
+      <span class="tag">VS-L1</span><span class="pace">Slow · 54s</span>
       <div class="info"><h3 class="serif">Cinematic Luxury</h3><div class="best">Premium · $1M+</div><p>Slow moves, editorial tone, premium feel.</p></div>
     </div>
     <div class="scard" style="--c1:#13181c" data-src="" data-poster="">
-      <span class="tag">EM-S2</span><span class="pace">Fast · 22s</span>
+      <span class="tag">VS-S2</span><span class="pace">Fast · 22s</span>
       <div class="info"><h3 class="serif">Modern Social</h3><div class="best">Reels · TikTok</div><p>Punchy pacing built for scroll-stop.</p></div>
     </div>
     <div class="scard" style="--c1:#15140f" data-src="" data-poster="">
-      <span class="tag">EM-M3</span><span class="pace">Clean · 45s</span>
+      <span class="tag">VS-M3</span><span class="pace">Clean · 45s</span>
       <div class="info"><h3 class="serif">MLS Clean</h3><div class="best">Standard listings</div><p>Neutral, factual, broker-compliant.</p></div>
     </div>
     <div class="scard" style="--c1:#161616" data-src="" data-poster="">
-      <span class="tag">EM-I4</span><span class="pace">Direct · 38s</span>
+      <span class="tag">VS-I4</span><span class="pace">Direct · 38s</span>
       <div class="info"><h3 class="serif">Investor Tour</h3><div class="best">Wholesale · deals</div><p>Direct walkthroughs for deal-flow agents.</p></div>
     </div>
   </div>
@@ -443,7 +443,11 @@ footer{border-top:1px solid var(--edge);padding:40px 0 48px}
       const env = window.ESTATEMOTION_ENV;
       if (!env || !env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) return;
       const { createClient } = await import(env.SUPABASE_JS_URL || "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
-      const sb = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
+      // Must match the webapp's storageKey (webapp/src/lib/supabase.ts) or
+      // getSession() reads the wrong localStorage entry and never sees the session.
+      const sb = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+        auth: { storageKey: "estatemotion.auth", persistSession: true, autoRefreshToken: false }
+      });
       const { data } = await sb.auth.getSession();
       if (!data || !data.session) return;
       const email = data.session.user && data.session.user.email ? data.session.user.email : '';

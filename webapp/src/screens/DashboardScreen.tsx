@@ -63,7 +63,17 @@ export default function DashboardScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const firstName = (session?.user?.email || "there").split("@")[0];
+  // Prefer the real name from OAuth/profile metadata (Google sign-in supplies
+  // full_name/name); fall back to the email local-part, then "there". Capitalize
+  // so we never greet someone with a bare lowercase handle.
+  const meta = (session?.user?.user_metadata ?? {}) as {
+    first_name?: string;
+    full_name?: string;
+    name?: string;
+  };
+  const metaFirst = (meta.first_name || meta.full_name || meta.name || "").trim().split(/\s+/)[0];
+  const rawName = metaFirst || (session?.user?.email || "").split("@")[0] || "there";
+  const firstName = rawName === "there" ? rawName : rawName.charAt(0).toUpperCase() + rawName.slice(1);
 
   const startWithSample = () => {
     newProject();

@@ -101,13 +101,13 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
             Trial complete
           </div>
           <div className="text-base sm:text-lg font-semibold tracking-tightish">
-            You've used your free video — buy videos to keep rendering.
+            You've used your free video — pick a plan to keep rendering.
           </div>
           <div className="text-xs text-ink-muted mt-0.5">
-            {usage.reason || "$100 per video, or save with a pack. Credits never expire."}
+            {usage.reason || "Plans from $49/mo, or $39 per one-off video. Credits never expire."}
           </div>
         </div>
-        <UpgradeButton onUpgrade={onUpgrade} label="Buy videos" primary />
+        <UpgradeButton onUpgrade={onUpgrade} label="See plans" primary />
       </div>
     );
   }
@@ -136,11 +136,11 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
           </div>
           <div className="text-xs text-ink-muted mt-1">
             {lowOnEither
-              ? "Buy videos any time — $100 each, or less in a pack. Credits never expire."
-              : "Your first video's on us. After that it's $100 per video, no subscription."}
+              ? "Add videos any time — $39 each, or subscribe from $49/mo."
+              : "Your first video's on us. After that, plans start at $49/mo — or $39 per one-off video."}
           </div>
         </div>
-        <UpgradeButton onUpgrade={onUpgrade} label="Buy videos" primary={lowOnEither} />
+        <UpgradeButton onUpgrade={onUpgrade} label="See plans" primary={lowOnEither} />
       </div>
     );
   }
@@ -162,7 +162,7 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
         </div>
         <div className="text-base sm:text-lg font-semibold tracking-tightish flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span>{usedThisCycle} of {quota} this cycle</span>
-          {cycleDaysLeft !== null && (
+          {cycleDaysLeft !== null && cycleDaysLeft <= 366 && (
             <>
               <span className="text-ink-dim">·</span>
               <span className="text-ink-muted text-sm font-normal">
@@ -229,5 +229,9 @@ const TIER_LABELS: Record<string, string> = {
   trial: "Free Trial",
   quick_reel: "Quick Reel",
   cinematic_ai: "Cinematic AI",
-  cinematic_4k: "Cinematic AI 4K"
+  cinematic_4k: "Cinematic AI 4K",
+  // q6 subscription tiers — without these, paid users render a raw lowercase
+  // "pro"/"studio" instead of a proper label.
+  pro: "Pro",
+  studio: "Studio"
 };
