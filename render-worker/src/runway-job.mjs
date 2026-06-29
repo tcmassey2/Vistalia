@@ -518,14 +518,20 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   const config = manifest.runwayConfig || {};
   const ratio = config.ratio === "16:9" || config.ratio === "wide" ? "16:9" : "9:16";
   // Veo 3.1 Fast buckets to 4s/6s/8s; our 5s scenes round up to 6s.
-  const duration = clamp(Number(scene.duration || 5) > 6.5 ? 8 : 6, 4, 8);
+  // v28 native 1080p: Veo 3.1 Fast only emits 1080p at an 8s duration. Always
+  // generate 8s @ 1080p, then trim back to the scene's intended length
+  // (targetDuration) in the normalize step. targetDuration keeps the EXACT prior
+  // pacing (6s default / 8s for long scenes) — only resolution changes: the clip
+  // now maps 1:1 onto the 1080x1920 master instead of being upscaled from 720p.
+  const targetDuration = clamp(Number(scene.duration || 5) > 6.5 ? 8 : 6, 4, 8);
 
   const { generateVeoClip } = await import("./veo-job.mjs");
   const result = await generateVeoClip({
     imageUrl,
     prompt,
     aspectRatio: ratio,
-    duration: `${duration}s`,
+    duration: "8s",
+    resolution: "1080p",
     sceneIndex,
     photoId: scene.photoId,
     tempDir
@@ -535,7 +541,7 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
     sceneIndex,
     photoId: scene.photoId,
     clipPath: result.clipPath,
-    duration,
+    duration: targetDuration,
     transition: scene.transition || "crossfade",
     overlay: scene.overlay || null,
     runwayTaskId: null,
@@ -744,6 +750,10 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   for (let i = 0; i < clipResults.length; i++) {
     const clip = clipResults[i];
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
+    // v28: trim the 8s native-1080p Veo clip back to its intended length here —
+    // free, since this normalize pass already re-encodes. Guarded so a missing
+    // duration can never produce an empty (-t 0) clip.
+    const trimArgs = Number(clip.duration) > 0 ? ["-t", String(clip.duration)] : [];
     const baseFilters = [
       `fps=30`,
       `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=lanczos`,
@@ -770,6 +780,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
         "-crf", ENCODE_CRF_MASTER,
         "-x264-params", X264_PARAMS,
         "-bufsize", BUFSIZE,
+        ...trimArgs,
         "-an",
         normalized
       ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
@@ -786,6 +797,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
         "-crf", ENCODE_CRF_MASTER,
         "-x264-params", X264_PARAMS,
         "-bufsize", BUFSIZE,
+        ...trimArgs,
         "-an",
         normalized
       ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
