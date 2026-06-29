@@ -140,14 +140,12 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   }
   const totalDurationSec = cursor;
 
-  // v28: the master video usually continues past the last PHOTO scene into a
-  // silent brand-outro card. The closing CTA line was being hard-clipped at the
-  // photo-scene boundary even though there was silent outro video right after
-  // it — that's the "voice cut off at the end". Probe the real master duration
-  // so the FINAL line can ring out into that outro room. Falls back to the
-  // photo-scene total if the probe fails (no regression on outro-less renders).
-  const masterDurSec = await probeMediaDuration(masterMp4);
-  const narrationTrackDurSec = masterDurSec > totalDurationSec ? masterDurSec : totalDurationSec;
+  // v28.1: voice is capped strictly to the PHOTO scenes — it must NEVER bleed
+  // over the silent brand-outro card (that read as unclean). Lines are sized to
+  // fit upstream: create-edit-plan sets each narrated scene's duration to its
+  // line's spoken length, so the line finishes naturally inside its own scene
+  // instead of being chopped or spilling into the outro.
+  const narrationTrackDurSec = totalDurationSec;
   let lastNarrIndex = -1;
   for (let i = 0; i < synthesized.length; i++) if (synthesized[i]) lastNarrIndex = i;
 
@@ -385,28 +383,6 @@ async function detectAudioStream(filePath) {
     proc.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
     proc.on("close", () => resolve(Boolean(stdout.trim())));
     proc.on("error", () => resolve(false));
-  });
-}
-
-// Probe a media file's total duration in seconds. Used to measure how much
-// video exists past the last photo scene (the brand-outro card) so the final
-// narration line can finish there instead of being clipped. Returns 0 on
-// failure, in which case the caller falls back to the photo-scene total.
-async function probeMediaDuration(filePath) {
-  return new Promise((resolve) => {
-    const proc = spawn("ffprobe", [
-      "-v", "error",
-      "-show_entries", "format=duration",
-      "-of", "default=nw=1:nk=1",
-      filePath
-    ], { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    proc.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-    proc.on("close", () => {
-      const d = parseFloat(stdout.trim());
-      resolve(Number.isFinite(d) && d > 0 ? d : 0);
-    });
-    proc.on("error", () => resolve(0));
   });
 }
 

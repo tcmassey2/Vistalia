@@ -522,8 +522,8 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   const narrationGuidance = includeNarration
     ? [
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
-        `Vary length and cadence so it doesn't sound monotonous: mix 4-10 word short observations ("Crown molding throughout", "Quartz countertops, soft-close cabinets") with 12-22 word longer lines on hero scenes (intro, kitchen, primary bedroom, outdoor, outro).`,
-        `Scene 1 is the intro — name the property briefly. Final scene is the CTA — push to action ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
+        `Keep EVERY line short enough to be spoken comfortably within its scene's length at a natural pace (~2 words/sec): a 4s scene fits ~6-8 words, a 6s scene ~10-12, an 8s scene ~14 max. A line must finish with a beat of breathing room before its scene ends — never write a line that would run past its scene. Vary cadence: mix 4-8 word observations ("Crown molding throughout", "Quartz countertops, soft-close cabinets") with slightly longer lines only on the longest hero scenes.`,
+        `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
         `The agent's name is "${brandKit.fullName || "the listing agent"}", brokerage "${brandKit.brokerage || "their brokerage"}". Refer to them only on scene 1 and the outro CTA — don't repeat the name throughout.`,
         `Narration MUST stay grounded in the listing facts provided (price, beds, baths, sq ft, address) and what is visible in the photo. Never invent features, views, schools, or neighborhoods.`,
         `For detail or repeat-room shots, narrate the small thing the viewer sees — finishes, fixtures, light quality. Short observations work great here.`
@@ -795,25 +795,35 @@ function normalizeEditPlan(plan, photos, context) {
     // Cap at MAX_PLAN_SCENES (24) — was hard-capped at 12, which is why
     // 2-minute renders silently turned into 1-minute renders.
     .slice(0, MAX_PLAN_SCENES)
-    .map((scene, index) => ({
-      photoId: scene.photoId,
-      order: index + 1,
-      roomType: ROOM_TYPES.includes(scene.roomType) ? scene.roomType : inferRoomType(photos.find((photo) => photo.id === scene.photoId), index),
-      visibleFeatures: cleanStringArray(scene.visibleFeatures).slice(0, 5),
-      qualityScore: clamp(Number(scene.qualityScore || 70), 0, 100),
-      duration: clamp(Number(scene.duration || defaultDuration), 1.2, maxDuration),
-      cameraMotion: CAMERA_MOTIONS.includes(scene.cameraMotion) ? scene.cameraMotion : "parallax_zoom",
-      transition: TRANSITIONS.includes(scene.transition) ? scene.transition : "crossfade",
-      overlay: {
-        headline: cleanText(scene.overlay?.headline || overlayFor(scene.roomType, context.listingDetails, index).headline, 70),
-        subline: cleanText(scene.overlay?.subline || overlayFor(scene.roomType, context.listingDetails, index).subline, 90)
-      },
-      // Narration: only include if non-empty. Treat null / "" / whitespace
-      // as silent. This becomes the source-of-truth for the worker's
-      // synthesizer. v23: word-count clamp prevents 60+ word run-ons that
-      // ElevenLabs would synthesize through the next scene boundary.
-      narrationLine: clampNarrationToWords(cleanText(scene.narrationLine || "", 240), 22)
-    }));
+    .map((scene, index) => {
+      const duration = clamp(Number(scene.duration || defaultDuration), 1.2, maxDuration);
+      // v28.1: size each line to ITS scene so the voice finishes inside the scene
+      // — never chopped mid-word, never bleeding into the next scene or the
+      // silent brand-outro card. Conservative ~2.3 spoken words/sec, minus the
+      // 0.35s lead-in + 0.6s tail the mixer reserves. A scene too short to speak
+      // a clean phrase stays silent rather than cramming a clipped one. This is
+      // the source-of-truth narration the worker synthesizes.
+      const speakSec = duration - 0.35 - 0.6;
+      const wordBudget = Math.floor(speakSec * 2.3);
+      const narrationLine = wordBudget >= 3
+        ? clampNarrationToWords(cleanText(scene.narrationLine || "", 240), wordBudget)
+        : "";
+      return {
+        photoId: scene.photoId,
+        order: index + 1,
+        roomType: ROOM_TYPES.includes(scene.roomType) ? scene.roomType : inferRoomType(photos.find((photo) => photo.id === scene.photoId), index),
+        visibleFeatures: cleanStringArray(scene.visibleFeatures).slice(0, 5),
+        qualityScore: clamp(Number(scene.qualityScore || 70), 0, 100),
+        duration,
+        cameraMotion: CAMERA_MOTIONS.includes(scene.cameraMotion) ? scene.cameraMotion : "parallax_zoom",
+        transition: TRANSITIONS.includes(scene.transition) ? scene.transition : "crossfade",
+        overlay: {
+          headline: cleanText(scene.overlay?.headline || overlayFor(scene.roomType, context.listingDetails, index).headline, 70),
+          subline: cleanText(scene.overlay?.subline || overlayFor(scene.roomType, context.listingDetails, index).subline, 90)
+        },
+        narrationLine
+      };
+    });
   // v26.0: AI engines ("runway" legacy or "veo") get BOTH prompts on every
   // scene. veoPrompt drives production (Veo 3.1 Fast); runwayPrompt is kept
   // for the VEO_PRODUCTION=false rollback path. Cost: bytes in the manifest.
