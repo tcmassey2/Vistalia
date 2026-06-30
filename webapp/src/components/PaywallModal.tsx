@@ -3,12 +3,14 @@ import { startCheckout, type CheckoutTier } from "../lib/api";
 import { useStore } from "../lib/store";
 
 /**
- * PaywallModal — the free-video → paid moment.
+ * PaywallModal — the free-video → paid moment (q6 subscription model).
  *
- * Shown when a user is out of render credits / past their free trial video
- * and tries to render. v26.8 pay-per-video model (no subscriptions): the
- * three credit packs — $100 single, $375 5-pack (featured), $650 10-pack.
- * All collected cash, which funds the ad flywheel.
+ * Two plans (Pro / Studio), billed monthly or annually, plus a $39 one-off
+ * "pay as you go" video. Annual is the DEFAULT toggle: it shows a lower
+ * monthly-equivalent headline (Reel-E plays this exact card) and ~2 months
+ * free vs paying monthly. Tier slugs map to Stripe in create-checkout-session:
+ *   pro / pro_annual / studio / studio_annual  → subscriptions
+ *   payg                                        → one-time $39 (1 credit)
  */
 
 interface PaywallModalProps {
@@ -18,60 +20,48 @@ interface PaywallModalProps {
   reason?: string;
 }
 
-interface PackCard {
-  slug: CheckoutTier;
+type Billing = "annual" | "monthly";
+
+interface Plan {
   name: string;
-  price: string;
-  unit: string;
-  save?: string;
+  videos: string;
+  popular?: boolean;
+  monthly: { price: number; tier: CheckoutTier };
+  annual: { perMo: number; yearly: number; tier: CheckoutTier };
   features: string[];
-  featured?: boolean;
 }
 
-const PACKS: PackCard[] = [
+const PLANS: Plan[] = [
   {
-    slug: "single",
-    name: "Single video",
-    price: "$100",
-    unit: "1 video",
+    name: "Pro",
+    videos: "5 videos / month",
+    popular: true,
+    monthly: { price: 49, tier: "pro" },
+    annual: { perMo: 41, yearly: 490, tier: "pro_annual" },
     features: [
-      "One cinematic listing video",
-      "All social formats (9:16, 1:1, 16:9)",
-      "Free scene regeneration",
-      "Your branding on the outro"
+      "5 cinematic listing videos / month",
+      "Narrated in your own cloned voice",
+      "60-second tours + all formats",
+      "Priority rendering"
     ]
   },
   {
-    slug: "pack5",
-    name: "5-video pack",
-    price: "$375",
-    unit: "5 videos",
-    save: "Save 25% — $75 / video",
-    featured: true,
+    name: "Studio",
+    videos: "10 videos / month",
+    monthly: { price: 99, tier: "studio" },
+    annual: { perMo: 83, yearly: 990, tier: "studio_annual" },
     features: [
-      "Five cinematic listing videos",
-      "Credits never expire",
-      "Everything in single, plus",
-      "Priority rendering queue"
-    ]
-  },
-  {
-    slug: "pack10",
-    name: "10-video pack",
-    price: "$650",
-    unit: "10 videos",
-    save: "Save 35% — $65 / video",
-    features: [
-      "Ten cinematic listing videos",
-      "Credits never expire",
-      "Best per-video price",
-      "Priority rendering queue"
+      "10 cinematic listing videos / month",
+      "Everything in Pro",
+      "Front-of-queue rendering",
+      "Priority support"
     ]
   }
 ];
 
 export default function PaywallModal({ open, onClose, reason }: PaywallModalProps) {
   const session = useStore((s) => s.session);
+  const [billing, setBilling] = useState<Billing>("annual"); // default = annual
   const [busy, setBusy] = useState<CheckoutTier | null>(null);
   const [error, setError] = useState("");
 
@@ -84,12 +74,12 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
 
   if (!open) return null;
 
-  const handleBuy = async (slug: CheckoutTier) => {
-    setBusy(slug);
+  const handleBuy = async (tier: CheckoutTier) => {
+    setBusy(tier);
     setError("");
     try {
       const result = await startCheckout({
-        tier: slug,
+        tier,
         email: session?.user?.email || "",
         returnUrl: `${window.location.origin}/app/`
       });
@@ -113,15 +103,15 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Buy a video"
+        aria-label="Choose a plan"
         className="spring-in relative w-full max-w-3xl bg-surface rounded-2xl border border-edge shadow-2xl my-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between px-6 sm:px-8 py-5 border-b border-edge-soft">
           <div>
-            <h2 className="font-display text-2xl font-semibold tracking-tighter2">Get your next video</h2>
+            <h2 className="font-display text-2xl font-semibold tracking-tighter2">Keep rendering</h2>
             <p className="text-xs text-ink-muted mt-1.5">
-              {reason || "You've used your free video. Buy credits to keep rendering — they never expire."}
+              {reason || "You've used your free video. Pick a plan to keep creating cinematic listings in your own voice."}
             </p>
           </div>
           <button
@@ -134,32 +124,66 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
           </button>
         </div>
 
-        <div className="px-6 sm:px-8 py-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {PACKS.map((pack) => {
-            const isBusy = busy === pack.slug;
+        {/* Billing toggle — annual is preselected */}
+        <div className="flex items-center justify-center gap-3 pt-6">
+          <div className="inline-flex items-center rounded-full border border-edge bg-surface-input p-1">
+            <button
+              type="button"
+              onClick={() => setBilling("annual")}
+              className={
+                "px-4 h-8 rounded-full text-xs font-semibold transition-colors " +
+                (billing === "annual" ? "bg-gold text-paper" : "text-ink-muted hover:text-ink")
+              }
+            >
+              Annual
+            </button>
+            <button
+              type="button"
+              onClick={() => setBilling("monthly")}
+              className={
+                "px-4 h-8 rounded-full text-xs font-semibold transition-colors " +
+                (billing === "monthly" ? "bg-gold text-paper" : "text-ink-muted hover:text-ink")
+              }
+            >
+              Monthly
+            </button>
+          </div>
+          <span className="text-[11px] font-semibold text-emerald-400">
+            {billing === "annual" ? "2 months free" : "Save with annual"}
+          </span>
+        </div>
+
+        <div className="px-6 sm:px-8 py-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {PLANS.map((plan) => {
+            const isAnnual = billing === "annual";
+            const tier = isAnnual ? plan.annual.tier : plan.monthly.tier;
+            const bigPrice = isAnnual ? plan.annual.perMo : plan.monthly.price;
+            const isBusy = busy === tier;
             return (
               <div
-                key={pack.slug}
+                key={plan.name}
                 className={
                   "relative rounded-xl border p-5 flex flex-col gap-3 transition-colors " +
-                  (pack.featured ? "border-gold bg-gold/5" : "border-edge bg-surface-input")
+                  (plan.popular ? "border-gold bg-gold/5" : "border-edge bg-surface-input")
                 }
               >
-                {pack.featured && (
+                {plan.popular && (
                   <span className="absolute -top-3 left-5 text-[9px] font-bold tracking-widest px-2 py-1 rounded-full bg-gold text-paper uppercase">
-                    Best value
+                    Most popular
                   </span>
                 )}
-                <div className="text-sm font-semibold tracking-tightish text-ink">{pack.name}</div>
+                <div className="text-sm font-semibold tracking-tightish text-ink">{plan.name}</div>
                 <div className="font-display text-4xl font-semibold tracking-tighter2 text-ink">
-                  {pack.price}
-                  <span className="font-sans text-sm font-medium text-ink-muted ml-1">/ {pack.unit}</span>
+                  ${bigPrice}
+                  <span className="font-sans text-sm font-medium text-ink-muted ml-1">/ mo</span>
                 </div>
-                {pack.save
-                  ? <div className="text-xs font-semibold text-emerald-400 -mt-1">{pack.save}</div>
-                  : <div className="text-xs -mt-1 invisible">placeholder</div>}
+                <div className="text-xs -mt-1 h-4">
+                  {isAnnual
+                    ? <span className="text-emerald-400 font-semibold">billed ${plan.annual.yearly}/yr · 2 months free</span>
+                    : <span className="text-ink-muted">{plan.videos}</span>}
+                </div>
                 <ul className="flex flex-col gap-2 text-xs text-ink-muted leading-relaxed flex-1">
-                  {pack.features.map((f) => (
+                  {plan.features.map((f) => (
                     <li key={f} className="flex items-start gap-2">
                       <span className="text-gold mt-0.5 flex-shrink-0">✓</span>
                       <span>{f}</span>
@@ -168,20 +192,36 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
                 </ul>
                 <button
                   type="button"
-                  onClick={() => handleBuy(pack.slug)}
+                  onClick={() => handleBuy(tier)}
                   disabled={isBusy || !!busy}
                   className={
                     "card-press h-11 px-4 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed " +
-                    (pack.featured
+                    (plan.popular
                       ? "bg-gold text-paper hover:bg-gold-light"
                       : "bg-surface-raised text-ink border border-edge hover:border-gold")
                   }
                 >
-                  {isBusy ? "Opening Stripe…" : pack.featured ? "Get the 5-pack →" : "Buy one video"}
+                  {isBusy ? "Opening Stripe…" : `Start ${plan.name}`}
                 </button>
               </div>
             );
           })}
+        </div>
+
+        {/* One-off pay-as-you-go */}
+        <div className="mx-6 sm:mx-8 mb-2 rounded-xl border border-edge bg-surface-input px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-sm font-semibold text-ink">Just one listing?</div>
+            <div className="text-xs text-ink-muted mt-0.5">Pay as you go — one cinematic video, no subscription.</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleBuy("payg")}
+            disabled={busy === "payg" || !!busy}
+            className="card-press h-10 px-4 rounded-lg text-sm font-semibold bg-surface-raised text-ink border border-edge hover:border-gold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+          >
+            {busy === "payg" ? "Opening Stripe…" : "$39 / video →"}
+          </button>
         </div>
 
         {error && (
@@ -190,8 +230,8 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
           </div>
         )}
 
-        <div className="px-6 sm:px-8 pb-6 flex items-center justify-between gap-4 flex-wrap">
-          <span className="text-xs text-ink-muted">Credits never expire. Use them whenever you list.</span>
+        <div className="px-6 sm:px-8 pb-6 pt-2 flex items-center justify-between gap-4 flex-wrap">
+          <span className="text-xs text-ink-muted">Cancel anytime. Your first video was on us.</span>
           <span className="text-[11px] text-ink-dim">Payments by Stripe. We never see your card.</span>
         </div>
       </div>

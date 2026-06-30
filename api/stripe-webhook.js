@@ -25,8 +25,8 @@ export const config = {
 // any subscriber still on a pre-v26 price.
 const PRODUCT_TIERS = {
   [process.env.STRIPE_PRODUCT_LAUNCH || "prod_UWBRgVofDDfSGD"]: "launch",
-  [process.env.STRIPE_PRODUCT_PRO || "prod_UWBRaEsEqwILzN"]: "pro",
-  [process.env.STRIPE_PRODUCT_STUDIO || "prod_Ug0YMKAVXKEYqh"]: "studio"
+  [process.env.STRIPE_PRODUCT_PRO || "prod_UnjP2x6bU76sCR"]: "pro",
+  [process.env.STRIPE_PRODUCT_STUDIO || "prod_UnjRqWSQ0zJd4m"]: "studio"
 };
 
 const TIER_FROM_PRICE = (priceId, productId) => {
