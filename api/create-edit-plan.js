@@ -778,6 +778,58 @@ function validateEditPlan(plan, photos) {
   return { valid: true, error: "" };
 }
 
+// ── Beat-timed transitions (v29) ──────────────────────────────────────────
+// Per-track musical grids, measured offline (librosa) from the bundled
+// render-worker/music/*.mp3. We snap scene CUT points to these so transitions
+// land on the beat. `beat`/`bar` = seconds between beats / bars; `firstBeat` =
+// where the first beat lands. Music plays from t=0, so cuts snap to the
+// phase-aligned grid (firstBeat + n*unit) — no music re-timing needed.
+const BEAT_GRID = {
+  "luxury.mp3":   { beat: 0.395, bar: 1.579, firstBeat: 1.30 },
+  "social.mp3":   { beat: 0.395, bar: 1.579, firstBeat: 0.86 },
+  "mls.mp3":      { beat: 0.348, bar: 1.393, firstBeat: 3.34 },
+  "investor.mp3": { beat: 0.604, bar: 2.414, firstBeat: 3.09 },
+  "default.mp3":  { beat: 0.511, bar: 2.043, firstBeat: 2.67 }
+};
+// Per-style default track (display name → filename) + snap aggressiveness.
+// Modern Social = punchy downbeat ("bar") cuts; others = subtle nearest-beat.
+const STYLE_DEFAULT_TRACK = {
+  "Cinematic Luxury": "luxury.mp3",
+  "Modern Social": "social.mp3",
+  "MLS Clean": "mls.mp3",
+  "Investor Tour": "investor.mp3"
+};
+const STYLE_SNAP_MODE = { "Modern Social": "bar" }; // everything else → "beat"
+
+// Snap scene cut points to the music beat grid so transitions land on the beat.
+// Works on cumulative boundaries; each scene stays within [MIN, 8s]. Fail-safe:
+// returns input unchanged if the grid is missing/invalid, so a render can never
+// break on this.
+function snapDurationsToBeat(durations, grid, mode) {
+  if (!grid) return durations;
+  const unit = mode === "bar" ? grid.bar : grid.beat;
+  if (!(unit > 0)) return durations;
+  const MIN_D = mode === "bar" ? Math.max(2, unit) : 2.0;
+  const MAX_D = 8;
+  const out = [];
+  let cum = 0;
+  for (let i = 0; i < durations.length; i++) {
+    const targetEnd = cum + durations[i];
+    let k = Math.round((targetEnd - grid.firstBeat) / unit);
+    let d = grid.firstBeat + k * unit - cum;
+    if (d < MIN_D) d = MIN_D;
+    if (d > MAX_D) {
+      const k2 = Math.floor((cum + MAX_D - grid.firstBeat) / unit);
+      const d2 = grid.firstBeat + k2 * unit - cum;
+      d = d2 >= MIN_D && d2 <= MAX_D ? d2 : MAX_D;
+    }
+    d = Number(d.toFixed(3));
+    out.push(d);
+    cum += d;
+  }
+  return out;
+}
+
 function normalizeEditPlan(plan, photos, context) {
   const photoIds = new Set(photos.map((photo) => photo.id));
   const engine = RENDER_ENGINES.includes(context.engine) ? context.engine : "remotion";
@@ -789,41 +841,52 @@ function normalizeEditPlan(plan, photos, context) {
   // desynced from the actual 6s Veo clips).
   const maxDuration = engine === "runway" ? 10 : engine === "veo" ? 8 : 5;
   const defaultDuration = engine === "runway" ? 5 : engine === "veo" ? 6 : 2.4;
-  const scenes = [...(plan.scenes || [])]
+  // Resolve the music track (explicit, else the style default) and how hard to
+  // snap cuts to its beat — Modern Social = punchy downbeats, others = subtle.
+  const trackFile = String(context.musicTrack || STYLE_DEFAULT_TRACK[context.selectedStyle] || "").trim();
+  const beatGrid = BEAT_GRID[trackFile] || null;
+  const snapMode = STYLE_SNAP_MODE[context.selectedStyle] || "beat";
+
+  const baseScenes = [...(plan.scenes || [])]
     .filter((scene) => photoIds.has(scene.photoId))
     .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
     // Cap at MAX_PLAN_SCENES (24) — was hard-capped at 12, which is why
     // 2-minute renders silently turned into 1-minute renders.
     .slice(0, MAX_PLAN_SCENES)
-    .map((scene, index) => {
-      const duration = clamp(Number(scene.duration || defaultDuration), 1.2, maxDuration);
-      // v28.1: size each line to ITS scene so the voice finishes inside the scene
-      // — never chopped mid-word, never bleeding into the next scene or the
-      // silent brand-outro card. Conservative ~2.3 spoken words/sec, minus the
-      // 0.35s lead-in + 0.6s tail the mixer reserves. A scene too short to speak
-      // a clean phrase stays silent rather than cramming a clipped one. This is
-      // the source-of-truth narration the worker synthesizes.
-      const speakSec = duration - 0.35 - 0.6;
-      const wordBudget = Math.floor(speakSec * 2.3);
-      const narrationLine = wordBudget >= 3
-        ? clampNarrationToWords(cleanText(scene.narrationLine || "", 240), wordBudget)
-        : "";
-      return {
-        photoId: scene.photoId,
-        order: index + 1,
-        roomType: ROOM_TYPES.includes(scene.roomType) ? scene.roomType : inferRoomType(photos.find((photo) => photo.id === scene.photoId), index),
-        visibleFeatures: cleanStringArray(scene.visibleFeatures).slice(0, 5),
-        qualityScore: clamp(Number(scene.qualityScore || 70), 0, 100),
-        duration,
-        cameraMotion: CAMERA_MOTIONS.includes(scene.cameraMotion) ? scene.cameraMotion : "parallax_zoom",
-        transition: TRANSITIONS.includes(scene.transition) ? scene.transition : "crossfade",
-        overlay: {
-          headline: cleanText(scene.overlay?.headline || overlayFor(scene.roomType, context.listingDetails, index).headline, 70),
-          subline: cleanText(scene.overlay?.subline || overlayFor(scene.roomType, context.listingDetails, index).subline, 90)
-        },
-        narrationLine
-      };
-    });
+    .map((scene, index) => ({
+      photoId: scene.photoId,
+      order: index + 1,
+      roomType: ROOM_TYPES.includes(scene.roomType) ? scene.roomType : inferRoomType(photos.find((photo) => photo.id === scene.photoId), index),
+      visibleFeatures: cleanStringArray(scene.visibleFeatures).slice(0, 5),
+      qualityScore: clamp(Number(scene.qualityScore || 70), 0, 100),
+      duration: clamp(Number(scene.duration || defaultDuration), 1.2, maxDuration),
+      cameraMotion: CAMERA_MOTIONS.includes(scene.cameraMotion) ? scene.cameraMotion : "parallax_zoom",
+      transition: TRANSITIONS.includes(scene.transition) ? scene.transition : "crossfade",
+      overlay: {
+        headline: cleanText(scene.overlay?.headline || overlayFor(scene.roomType, context.listingDetails, index).headline, 70),
+        subline: cleanText(scene.overlay?.subline || overlayFor(scene.roomType, context.listingDetails, index).subline, 90)
+      },
+      rawNarration: cleanText(scene.narrationLine || "", 240)
+    }));
+
+  // v29 beat-timed transitions: snap each scene's CUT to the music beat grid so
+  // transitions land on the beat. Done BEFORE narration sizing so the voice
+  // still fits its (snapped) scene. Fail-safe: durations unchanged if no grid.
+  const snappedDurations = beatGrid
+    ? snapDurationsToBeat(baseScenes.map((s) => s.duration), beatGrid, snapMode)
+    : baseScenes.map((s) => s.duration);
+
+  const scenes = baseScenes.map((s, index) => {
+    const duration = snappedDurations[index];
+    // v28.1: size narration to ITS (beat-snapped) scene — never chopped, never
+    // bleeding into the next scene or the brand-outro card. ~2.3 spoken words/s
+    // minus the mixer's 0.35s lead-in + 0.6s tail. Too short → silent.
+    const speakSec = duration - 0.35 - 0.6;
+    const wordBudget = Math.floor(speakSec * 2.3);
+    const narrationLine = wordBudget >= 3 ? clampNarrationToWords(s.rawNarration, wordBudget) : "";
+    const { rawNarration, ...rest } = s;
+    return { ...rest, duration, narrationLine };
+  });
   // v26.0: AI engines ("runway" legacy or "veo") get BOTH prompts on every
   // scene. veoPrompt drives production (Veo 3.1 Fast); runwayPrompt is kept
   // for the VEO_PRODUCTION=false rollback path. Cost: bytes in the manifest.
