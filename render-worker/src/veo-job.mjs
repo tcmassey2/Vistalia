@@ -94,6 +94,25 @@ const DEFAULT_SAFETY = "4";
      FAL_NO_OUTPUT        - queue completed but no video URL returned
      FAL_DOWNLOAD_FAILED  - couldn't fetch the mp4 from fal.ai's CDN
    ================================================================= */
+// ── Global fal concurrency gate (per worker process) ───────────────────────
+// Concurrent renders (the pull-queue + autoscaling) all hit fal.ai. Without a
+// cap they collectively blow past fal's account rate limit and 429 each other.
+// This semaphore bounds in-flight fal jobs PER WORKER to FAL_MAX_CONCURRENCY.
+// Set it to (your fal plan's concurrency limit ÷ your max worker instances).
+const FAL_MAX_CONCURRENCY = Math.max(1, Number(process.env.FAL_MAX_CONCURRENCY) || 6);
+const FAL_MAX_RETRIES = Math.max(0, Number(process.env.FAL_MAX_RETRIES) || 3);
+let falInFlight = 0;
+const falWaiters = [];
+function acquireFalSlot() {
+  if (falInFlight < FAL_MAX_CONCURRENCY) { falInFlight++; return Promise.resolve(); }
+  return new Promise((resolve) => falWaiters.push(resolve));
+}
+function releaseFalSlot() {
+  const next = falWaiters.shift();
+  if (next) next();                       // hand the slot off; count stays reserved
+  else falInFlight = Math.max(0, falInFlight - 1);
+}
+
 export async function generateVeoClip({
   imageUrl,
   prompt,
@@ -191,34 +210,62 @@ export async function generateVeoClip({
   // The orphaned fal job simply finishes unused on fal's side.
   const SUBSCRIBE_TIMEOUT_MS = Number(process.env.FAL_SCENE_TIMEOUT_MS) || 360000; // 6 min
   let result;
-  let timeoutTimer = null;
+  // Take a global fal slot first so concurrent renders can't exceed fal's
+  // account rate limit. Released in the finally below no matter the outcome.
+  await acquireFalSlot();
   try {
-    // subscribe() blocks until the queue completes (60-180s typical for
-    // Veo 3 Fast). It internally handles status polling so we don't have
-    // to roll our own poll loop like we did with Vertex AI direct.
-    result = await Promise.race([
-      fal.subscribe(model, {
-        input,
-        logs: true,
-        onQueueUpdate: (update) => {
-          if (update.status === "IN_PROGRESS" && Array.isArray(update.logs)) {
-            for (const log of update.logs) {
-              console.info(`[fal/${model}] scene ${sceneIndex + 1}: ${log.message}`);
+    let attempt = 0;
+    // Retry transient fal errors — short-window 429 rate limits and 5xx — with
+    // jittered exponential backoff before falling through to the retry-once /
+    // refund path. A DAILY 429 (quota exhausted) is terminal, not retried.
+    while (true) {
+      let timeoutTimer = null;
+      try {
+        // subscribe() blocks until the queue completes (60-180s typical for
+        // Veo 3 Fast). It internally handles status polling.
+        result = await Promise.race([
+          fal.subscribe(model, {
+            input,
+            logs: true,
+            onQueueUpdate: (update) => {
+              if (update.status === "IN_PROGRESS" && Array.isArray(update.logs)) {
+                for (const log of update.logs) {
+                  console.info(`[fal/${model}] scene ${sceneIndex + 1}: ${log.message}`);
+                }
+              }
             }
-          }
+          }),
+          new Promise((_, reject) => {
+            timeoutTimer = setTimeout(() => {
+              const e = new Error(
+                `fal.subscribe for scene ${sceneIndex + 1} on ${model} exceeded ` +
+                `${Math.round(SUBSCRIBE_TIMEOUT_MS / 1000)}s — treating the scene as a stalled job.`
+              );
+              e.code = "FAL_TIMEOUT";
+              reject(e);
+            }, SUBSCRIBE_TIMEOUT_MS);
+          })
+        ]);
+        break; // success
+      } catch (err) {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        const status = err?.status || err?.cause?.status || 0;
+        let bodyText = "";
+        try { bodyText = JSON.stringify(err?.body ?? err?.cause?.body ?? "").toLowerCase(); } catch { /* ignore */ }
+        const isDailyCap = status === 429 && /(daily|quota|exhaust|insufficient)/.test(bodyText);
+        const isTransient = (status === 429 && !isDailyCap) || (status >= 500 && status < 600);
+        if (err?.code !== "FAL_TIMEOUT" && isTransient && attempt < FAL_MAX_RETRIES) {
+          attempt++;
+          const wait = Math.min(30000, 800 * 2 ** attempt) + Math.floor(Math.random() * 600);
+          console.warn(`[fal] scene ${sceneIndex + 1} got ${status} — backoff retry ${attempt}/${FAL_MAX_RETRIES} in ${wait}ms`);
+          await new Promise((r) => setTimeout(r, wait));
+          continue;
         }
-      }),
-      new Promise((_, reject) => {
-        timeoutTimer = setTimeout(() => {
-          const e = new Error(
-            `fal.subscribe for scene ${sceneIndex + 1} on ${model} exceeded ` +
-            `${Math.round(SUBSCRIBE_TIMEOUT_MS / 1000)}s — treating the scene as a stalled job.`
-          );
-          e.code = "FAL_TIMEOUT";
-          reject(e);
-        }, SUBSCRIBE_TIMEOUT_MS);
-      })
-    ]);
+        throw err; // not retryable / out of retries → outer catch wraps it
+      } finally {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+      }
+    }
   } catch (err) {
     // A stall/timeout is already a clean, typed error — surface it as-is so the
     // retry path and logs stay legible (no body to parse on a timeout).
@@ -242,8 +289,7 @@ export async function generateVeoClip({
     wrapped.cause = err;
     throw wrapped;
   } finally {
-    // Always clear the watchdog so it can't fire late or keep the event loop alive.
-    if (timeoutTimer) clearTimeout(timeoutTimer);
+    releaseFalSlot();
   }
 
   // Output schema:
