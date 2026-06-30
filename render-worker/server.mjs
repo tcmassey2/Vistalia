@@ -240,8 +240,17 @@ const server = http.createServer(async (request, response) => {
       updatedAt: now
     };
     jobs.set(jobId, job);
+    if (QUEUE_ENABLED) {
+      try {
+        await enqueueRenderJob(jobId, body); // any worker instance claims + runs it
+      } catch (e) {
+        console.warn(`[queue] enqueue failed, running inline: ${e?.message}`);
+        runRenderJob(jobId, body);           // safe fallback (e.g. migration not applied yet)
+      }
+    } else {
+      runRenderJob(jobId, body);
+    }
     sendJson(response, 202, job);
-    runRenderJob(jobId, body);
   } catch (error) {
     sendJson(response, 500, {
       status: "failed",
@@ -283,6 +292,95 @@ function setCorsHeaders(response) {
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(payload));
+}
+
+/* ============================================================
+   Render PULL queue (horizontal scaling).
+   With Supabase configured, POST /render ENQUEUES a job (render_jobs row,
+   status=queued); this worker — like every other instance — polls and claims
+   jobs with FOR UPDATE SKIP LOCKED, running at most RENDER_CONCURRENCY at once.
+   Falls back to inline rendering when Supabase / the queue objects aren't
+   available, so it's safe to deploy before the migration is applied.
+   ============================================================ */
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const QUEUE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_KEY);
+const RENDER_CONCURRENCY = Math.max(1, Number(process.env.RENDER_CONCURRENCY || 2));
+const WORKER_ID = `worker-${process.pid}-${Math.random().toString(36).slice(2, 7)}`;
+let activeRenders = 0;
+
+const sbHeaders = {
+  apikey: SUPABASE_SERVICE_KEY,
+  Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+  "Content-Type": "application/json"
+};
+
+async function sbRpc(fn, payload) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST", headers: sbHeaders, body: JSON.stringify(payload || {})
+  });
+  if (!res.ok) throw new Error(`${fn} ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+  return res.json().catch(() => null);
+}
+
+// Enqueue a render job (idempotent on job_id).
+async function enqueueRenderJob(jobId, body) {
+  const userId = body?.userId || body?.manifest?.userId || null;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/render_jobs`, {
+    method: "POST",
+    headers: { ...sbHeaders, Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ job_id: jobId, user_id: userId, status: "queued", phase: "Queued", progress: 3, manifest: body })
+  });
+  if (!res.ok) throw new Error(`enqueue ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+}
+
+// Mirror an in-memory job's state to render_jobs (best-effort). PATCH by job_id
+// is a no-op for non-queue ids (regen / smoke), so it's safe in shared updateJob.
+function persistJobStatus(jobId, job) {
+  if (!QUEUE_ENABLED || !jobId) return;
+  const patch = {};
+  if (job.status) patch.status = job.status;
+  if (job.phase != null) patch.phase = job.phase;
+  if (typeof job.progress === "number") patch.progress = job.progress;
+  if (job.mp4Url) patch.mp4_url = job.mp4Url;
+  if (job.thumbnailUrl) patch.thumbnail_url = job.thumbnailUrl;
+  if (job.error) patch.error = job.error;
+  if (job.status === "completed") patch.result = job;
+  if (Object.keys(patch).length === 0) return;
+  fetch(`${SUPABASE_URL}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(jobId)}`, {
+    method: "PATCH", headers: { ...sbHeaders, Prefer: "return=minimal" }, body: JSON.stringify(patch)
+  }).catch(() => {});
+}
+
+// Poll the queue and start jobs up to the concurrency cap. Each claim is atomic
+// (SKIP LOCKED) so multiple worker instances never collide on the same job.
+async function pollAndProcess() {
+  if (!QUEUE_ENABLED) return;
+  try {
+    while (activeRenders < RENDER_CONCURRENCY) {
+      const claimed = await sbRpc("claim_render_job", { p_worker_id: WORKER_ID });
+      if (!claimed || !claimed.job_id) break;
+      activeRenders++;
+      jobs.set(claimed.job_id, {
+        status: "rendering", phase: "Claimed", progress: 5, jobId: claimed.job_id,
+        mp4Url: "", thumbnailUrl: "", error: "",
+        createdAt: claimed.created_at || new Date().toISOString(), updatedAt: new Date().toISOString()
+      });
+      runRenderJob(claimed.job_id, claimed.manifest)
+        .catch((e) => console.error(`[queue] render ${claimed.job_id} crashed: ${e?.message}`))
+        .finally(() => { activeRenders--; });
+    }
+  } catch (e) {
+    console.warn(`[queue] poll error: ${e?.message}`);
+  }
+}
+
+if (QUEUE_ENABLED) {
+  setInterval(pollAndProcess, 2500).unref();
+  setInterval(() => { sbRpc("requeue_stuck_render_jobs", { p_timeout_minutes: 20 }).catch(() => {}); }, 5 * 60 * 1000).unref();
+  console.info(`[queue] pull-queue ON · worker=${WORKER_ID} · concurrency=${RENDER_CONCURRENCY}`);
+} else {
+  console.info("[queue] pull-queue OFF (no Supabase env) — rendering inline.");
 }
 
 async function runRenderJob(jobId, body) {
@@ -394,11 +492,9 @@ async function runRegenerateJob(progressKey, body) {
 
 function updateJob(jobId, patch) {
   const current = jobs.get(jobId) || { jobId };
-  jobs.set(jobId, {
-    ...current,
-    ...patch,
-    updatedAt: new Date().toISOString()
-  });
+  const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+  jobs.set(jobId, next);
+  persistJobStatus(jobId, next); // mirror to render_jobs (no-op when off-queue)
 }
 
 // v26: the jobs/jobAssets Maps previously grew until worker restart — a
