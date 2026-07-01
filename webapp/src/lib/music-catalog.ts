@@ -58,6 +58,52 @@ export const MUSIC_CATALOG: MusicTrack[] = [
     isStyleDefault: false,
     durationSec: 103
   },
+  // + Pixabay picks (free / redistribution-safe)
+  {
+    id: "lux-leberch-piano",
+    filename: "leberch-piano-516448.mp3",
+    label: "Piano — Leberch",
+    vibe: "Bright cinematic piano, gentle forward motion",
+    style: "cinematic-luxury",
+    isStyleDefault: false,
+    durationSec: 122
+  },
+  {
+    id: "lux-emotional",
+    filename: "jonasblakewood-emotional-527472.mp3",
+    label: "Emotional",
+    vibe: "Warm ambient swell — heartfelt, unhurried",
+    style: "cinematic-luxury",
+    isStyleDefault: false,
+    durationSec: 136
+  },
+  {
+    id: "lux-inspiring",
+    filename: "tunetank-inspiring-cinematic-music-409347.mp3",
+    label: "Inspiring Cinematic",
+    vibe: "Slow, wide, uplifting build",
+    style: "cinematic-luxury",
+    isStyleDefault: false,
+    durationSec: 132
+  },
+  {
+    id: "lux-softness",
+    filename: "atlasaudio-cinematic-softness-511863.mp3",
+    label: "Cinematic Softness",
+    vibe: "Soft, elegant, whisper-quiet under narration",
+    style: "cinematic-luxury",
+    isStyleDefault: false,
+    durationSec: 120
+  },
+  {
+    id: "lux-paulyudin-piano",
+    filename: "paulyudin-piano-piano-music-508963.mp3",
+    label: "Piano — PaulYudin",
+    vibe: "Reflective solo piano, refined restraint",
+    style: "cinematic-luxury",
+    isStyleDefault: false,
+    durationSec: 131
+  },
 
   // ───────── Energetic Social (viral) ─────────
   {
@@ -68,6 +114,52 @@ export const MUSIC_CATALOG: MusicTrack[] = [
     style: "modern-social",
     isStyleDefault: true,
     durationSec: 141
+  },
+  // + Pixabay picks
+  {
+    id: "social-mountain-pop",
+    filename: "the_mountain-pop-490010.mp3",
+    label: "Pop — The_Mountain",
+    vibe: "Bright soft-house pop, high energy",
+    style: "modern-social",
+    isStyleDefault: false,
+    durationSec: 103
+  },
+  {
+    id: "social-jbw-pop",
+    filename: "jonasblakewood-pop-524132.mp3",
+    label: "Pop — JonasBlakewood",
+    vibe: "Punchy, scroll-stopping pop",
+    style: "modern-social",
+    isStyleDefault: false,
+    durationSec: 141
+  },
+  {
+    id: "social-friends-freq",
+    filename: "jonasblakewood-pop-dance-friends-frequencies-445891.mp3",
+    label: "Pop Dance — Friends Frequencies",
+    vibe: "Feel-good dance-pop groove",
+    style: "modern-social",
+    isStyleDefault: false,
+    durationSec: 132
+  },
+  {
+    id: "social-uplifting-pop",
+    filename: "eliveta-uplifting-pop-491240.mp3",
+    label: "Uplifting Pop",
+    vibe: "Sunny, optimistic, energetic",
+    style: "modern-social",
+    isStyleDefault: false,
+    durationSec: 145
+  },
+  {
+    id: "social-prettyjohn-pop",
+    filename: "prettyjohn1-pop-pop-music-503314.mp3",
+    label: "Pop — prettyjohn1",
+    vibe: "Short, snappy pop hit",
+    style: "modern-social",
+    isStyleDefault: false,
+    durationSec: 63
   },
 
   // ───────── MLS Clean ─────────
@@ -80,6 +172,43 @@ export const MUSIC_CATALOG: MusicTrack[] = [
     isStyleDefault: true,
     durationSec: 131
   },
+  // + Pixabay picks
+  {
+    id: "mls-corporate-soft",
+    filename: "nastelbom-corporate-soft-488321.mp3",
+    label: "Corporate Soft",
+    vibe: "Gentle, neutral bed — steps out of the way",
+    style: "mls-clean",
+    isStyleDefault: false,
+    durationSec: 151
+  },
+  {
+    id: "mls-leberch-corporate",
+    filename: "leberch-corporate-509707.mp3",
+    label: "Corporate — Leberch",
+    vibe: "Clean, steady, professional",
+    style: "mls-clean",
+    isStyleDefault: false,
+    durationSec: 208
+  },
+  {
+    id: "mls-elegant-brand",
+    filename: "daily-business-anthe-elegant-corporate-brand-541377.mp3",
+    label: "Elegant Corporate Brand",
+    vibe: "Polished, brand-forward, light",
+    style: "mls-clean",
+    isStyleDefault: false,
+    durationSec: 73
+  },
+  {
+    id: "mls-corporate-bg",
+    filename: "jonasblakewood-corporate-background-524146.mp3",
+    label: "Corporate Background",
+    vibe: "Understated bed — vanishes under VO",
+    style: "mls-clean",
+    isStyleDefault: false,
+    durationSec: 183
+  },
 
   // ───────── Investor Tour ─────────
   {
@@ -90,6 +219,43 @@ export const MUSIC_CATALOG: MusicTrack[] = [
     style: "investor-tour",
     isStyleDefault: true,
     durationSec: 81
+  },
+  // + Pixabay picks
+  {
+    id: "investor-mountain-corp",
+    filename: "the_mountain-corporate-455905.mp3",
+    label: "Corporate — The_Mountain",
+    vibe: "Confident, assured, mid-tempo",
+    style: "investor-tour",
+    isStyleDefault: false,
+    durationSec: 122
+  },
+  {
+    id: "investor-atlas-corp",
+    filename: "atlasaudio-corporate-corporate-music-507826.mp3",
+    label: "Corporate — AtlasAudio",
+    vibe: "Driving, business-forward",
+    style: "investor-tour",
+    isStyleDefault: false,
+    durationSec: 103
+  },
+  {
+    id: "investor-energetic",
+    filename: "prettyjohn1-corporate-corporate-music-483403.mp3",
+    label: "Corporate Energetic",
+    vibe: "Upbeat momentum for numbers",
+    style: "investor-tour",
+    isStyleDefault: false,
+    durationSec: 81
+  },
+  {
+    id: "investor-upbeat-corp",
+    filename: "jonasblakewood-upbeat-corporate-533853.mp3",
+    label: "Upbeat Corporate",
+    vibe: "Optimistic, forward-driving",
+    style: "investor-tour",
+    isStyleDefault: false,
+    durationSec: 129
   }
 ];
 

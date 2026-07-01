@@ -789,7 +789,31 @@ const BEAT_GRID = {
   "social.mp3":   { beat: 0.395, bar: 1.579, firstBeat: 0.86 },
   "mls.mp3":      { beat: 0.348, bar: 1.393, firstBeat: 3.34 },
   "investor.mp3": { beat: 0.604, bar: 2.414, firstBeat: 3.09 },
-  "default.mp3":  { beat: 0.511, bar: 2.043, firstBeat: 2.67 }
+  "default.mp3":  { beat: 0.511, bar: 2.043, firstBeat: 2.67 },
+  "luxury-poradovskyi.mp3": { beat: 0.627, bar: 2.508, firstBeat: 0.21 },
+  // ── Pixabay picks (measured via librosa) ──
+  // Cinematic Luxury
+  "leberch-piano-516448.mp3":                            { beat: 0.372, bar: 1.486, firstBeat: 0.16 },
+  "jonasblakewood-emotional-527472.mp3":                 { beat: 0.511, bar: 2.043, firstBeat: 0.12 },
+  "tunetank-inspiring-cinematic-music-409347.mp3":       { beat: 1.091, bar: 4.365, firstBeat: 0.07 },
+  "atlasaudio-cinematic-softness-511863.mp3":            { beat: 0.813, bar: 3.251, firstBeat: 0.39 },
+  "paulyudin-piano-piano-music-508963.mp3":              { beat: 0.488, bar: 1.950, firstBeat: 0.07 },
+  // Modern Social
+  "the_mountain-pop-490010.mp3":                         { beat: 0.511, bar: 2.043, firstBeat: 0.07 },
+  "jonasblakewood-pop-524132.mp3":                       { beat: 0.464, bar: 1.858, firstBeat: 0.21 },
+  "jonasblakewood-pop-dance-friends-frequencies-445891.mp3": { beat: 0.650, bar: 2.601, firstBeat: 0.14 },
+  "eliveta-uplifting-pop-491240.mp3":                    { beat: 0.720, bar: 2.879, firstBeat: 0.35 },
+  "prettyjohn1-pop-pop-music-503314.mp3":                { beat: 0.488, bar: 1.950, firstBeat: 0.07 },
+  // MLS Clean
+  "nastelbom-corporate-soft-488321.mp3":                 { beat: 0.604, bar: 2.415, firstBeat: 0.07 },
+  "leberch-corporate-509707.mp3":                        { beat: 0.534, bar: 2.136, firstBeat: 0.14 },
+  "daily-business-anthe-elegant-corporate-brand-541377.mp3": { beat: 0.534, bar: 2.136, firstBeat: 0.07 },
+  "jonasblakewood-corporate-background-524146.mp3":      { beat: 0.511, bar: 2.043, firstBeat: 1.30 },
+  // Investor Tour
+  "the_mountain-corporate-455905.mp3":                   { beat: 0.511, bar: 2.043, firstBeat: 1.53 },
+  "atlasaudio-corporate-corporate-music-507826.mp3":     { beat: 0.372, bar: 1.486, firstBeat: 0.07 },
+  "prettyjohn1-corporate-corporate-music-483403.mp3":    { beat: 0.580, bar: 2.322, firstBeat: 0.07 },
+  "jonasblakewood-upbeat-corporate-533853.mp3":          { beat: 0.534, bar: 2.136, firstBeat: 0.21 }
 };
 // Per-style default track (display name → filename) + snap aggressiveness.
 // Modern Social = punchy downbeat ("bar") cuts; others = subtle nearest-beat.
