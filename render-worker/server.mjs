@@ -419,15 +419,17 @@ async function runRenderJob(jobId, body) {
       error: error.message || "Vistalia render worker failed.",
       errorCode: error.code || ""
     });
-    // v26.4: honor the refund promise. Aborted Veo renders refund the
-    // user's render credit via the refund_render_credit RPC (migration 12,
-    // idempotent per jobId). Fire-and-forget — refund failure must not
-    // mask the render error, but it IS loud in the logs.
-    if (error.code === "VEO_SCENE_FAILED") {
-      refundRenderCredit(body?.manifest?.project?.userId, jobId, error.code).catch((err) =>
-        console.error(`[server] ⚠️ REFUND FAILED for job ${jobId}: ${err.message} — refund manually via render_credit_refunds.`)
-      );
-    }
+    // v26.4: honor the refund promise. Launch-audit fix: refund on EVERY
+    // failure, not just VEO_SCENE_FAILED — stitch, voice-mix, upload, and
+    // overall-timeout failures all charged the user with no refund. The
+    // refund_render_credit RPC is ledger-driven (migration 15): it reverses
+    // exactly what THIS job consumed (quota vs purchased credit), no-ops if
+    // nothing was consumed or already refunded, and no-ops for anonymous
+    // remotion renders (no userId). Fire-and-forget — refund failure must
+    // not mask the render error, but it IS loud in the logs.
+    refundRenderCredit(body?.manifest?.project?.userId, jobId, error.code || "RENDER_FAILED").catch((err) =>
+      console.error(`[server] ⚠️ REFUND FAILED for job ${jobId}: ${err.message} — refund manually via render_credit_refunds.`)
+    );
   }
 }
 

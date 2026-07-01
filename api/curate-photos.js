@@ -28,6 +28,7 @@
 //     another. Each can be metered independently if we add quotas.
 
 import { rateLimit } from "./_lib/rate-limit.js";
+import { requireUser } from "./_lib/auth.js";
 
 // v23: Vercel function timeout. Default for Node serverless is 10s (Hobby)
 // or 60s (Pro). The OpenAI Vision call alone can take 50-90s for 25-photo
@@ -102,6 +103,12 @@ export default async function handler(request, response) {
     response.status(405).json({ status: "failed", error: "Use POST /api/curate-photos." });
     return;
   }
+
+  // Launch-audit fix: require a signed-in user, matching classify-image.
+  // This endpoint was fully anonymous — each call is a paid OpenAI Vision
+  // request, so it was an open cost faucet for anyone with the URL.
+  const auth = await requireUser(request, response);
+  if (!auth.ok) return;
 
   // Each curate call is one OpenAI Vision request (~$0.10). 30/hour caps
   // the worst-case spend at $3/hour per user; honest users never need

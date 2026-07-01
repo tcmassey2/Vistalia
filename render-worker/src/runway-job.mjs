@@ -52,6 +52,29 @@ const NON_PHOTO_TYPES = new Set(["intro", "outro", "stat", "card", "title", "sta
                 under high-detail-frame stress can grow indefinitely.
    COLOR_GRADE — unchanged from v18.
 */
+// Temp-dir hygiene (launch audit). Prefix matches the mkdtemp below; keep in
+// sync with regenerate-job.mjs if its prefix ever changes.
+const TEMP_DIR_PREFIX = "estatemotion-";
+const TEMP_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2h
+function sweepStaleTempDirs() {
+  const base = os.tmpdir();
+  fs.readdir(base)
+    .then(async (entries) => {
+      const cutoff = Date.now() - TEMP_MAX_AGE_MS;
+      for (const name of entries) {
+        // estatemotion-runway- / estatemotion-regen- / estatemotion- (render-job)
+        // plus the /test/veo smoke-test dirs.
+        if (!name.startsWith(TEMP_DIR_PREFIX) && !name.startsWith("veo-smoke-")) continue;
+        const p = path.join(base, name);
+        const st = await fs.stat(p).catch(() => null);
+        if (st && st.mtimeMs < cutoff) {
+          await fs.rm(p, { recursive: true, force: true }).catch(() => {});
+        }
+      }
+    })
+    .catch(() => {}); // best-effort — never block or fail a render
+}
+
 const ENCODE_PRESET = "superfast";
 const ENCODE_CRF_MASTER = "19";
 const ENCODE_CRF_DERIVED = "20";
@@ -92,6 +115,14 @@ export async function renderRunwayJob(body, options = {}) {
 
   const jobId = options.jobId || createJobId(manifest);
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "estatemotion-runway-"));
+  // Launch-audit fix: reap temp dirs from crashed/failed/zombie jobs. Each
+  // job writes 100-500MB under os.tmpdir() and (pre-fix) NOTHING ever
+  // deleted it — the worker disk filled until renders started failing.
+  // Success-path dirs are removed explicitly below; this sweeper catches
+  // every other exit (throw, timeout, worker restart mid-job). 2h cutoff
+  // comfortably exceeds the 18-min render hard cap, and leaves
+  // storageSkipped fallback files downloadable for 2h.
+  sweepStaleTempDirs();
   const photoScenes = manifest.scenes
     .filter((scene) => !NON_PHOTO_TYPES.has(String(scene.type || "photo").toLowerCase()))
     .slice(0, MAX_SCENES);
@@ -345,6 +376,14 @@ export async function renderRunwayJob(body, options = {}) {
     narration,
     scenes: scenesMeta
   }).catch(() => {});
+
+  // Launch-audit fix: deliverables are in Supabase Storage — free this
+  // job's temp dir (master, per-scene sources, variants; 100-500MB).
+  // storageSkipped keeps files on disk because they're served locally as
+  // the fallback; the stale sweeper reclaims those after 2h.
+  if (!upload.storageSkipped) {
+    fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
 
   return {
     status: "complete",

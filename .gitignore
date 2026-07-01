@@ -58,3 +58,8 @@ marketing/assembled/
 # Generated deliverables (decks, models) — keep local, not in source history
 /Vistalia-*.pptx
 /Vistalia-*.xlsx
+
+# Business/tax documents — never commit (SS-4 carries SSN/EIN)
+SS-4*
+*.pdf
+!docs/**/*.pdf

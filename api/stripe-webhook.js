@@ -176,17 +176,49 @@ async function onSubscriptionChanged(subscription) {
   const priceId = item?.price?.id;
   const productId = typeof item?.price?.product === "string" ? item.price.product : item?.price?.product?.id;
   const tier = TIER_FROM_PRICE(priceId, productId) || "trial";
-  await updateProfile(userId, {
+  const patch = {
     stripe_subscription_id: subscription.id,
     subscription_status: subscription.status,
     tier,
     monthly_video_quota: QUOTA_FOR_TIER[tier],
     cancel_at_period_end: !!subscription.cancel_at_period_end,
-    current_period_end: subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null,
-    // Reset usage at new billing period if period changed
-    billing_cycle_start: subscription.current_period_start ? new Date(subscription.current_period_start * 1000).toISOString() : new Date().toISOString(),
-    videos_used_this_month: 0
-  });
+    current_period_end: subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null
+  };
+  // Launch-audit fix: only reset monthly usage when the billing PERIOD
+  // actually advanced. Stripe fires subscription.updated on cancel-at-
+  // period-end toggles, plan switches, etc. — the old unconditional
+  // `videos_used_this_month: 0` let any subscriber refill their quota by
+  // toggling cancellation in the billing portal (and Stripe event replays
+  // did the same silently). Renewals still reset: current_period_start
+  // advances → mismatch → reset.
+  const newCycleStart = subscription.current_period_start
+    ? new Date(subscription.current_period_start * 1000).toISOString()
+    : null;
+  const existing = await fetchProfileColumns(userId, "billing_cycle_start");
+  const storedCycleStart = existing?.billing_cycle_start || null;
+  if (newCycleStart && newCycleStart !== storedCycleStart) {
+    patch.billing_cycle_start = newCycleStart;
+    patch.videos_used_this_month = 0;
+  }
+  await updateProfile(userId, patch);
+}
+
+// Minimal profile read for the period-change comparison above.
+async function fetchProfileColumns(userId, columns) {
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey) return null;
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/profiles?user_id=eq.${encodeURIComponent(userId)}&select=${encodeURIComponent(columns)}&limit=1`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json().catch(() => []);
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch {
+    return null;
+  }
 }
 
 // Brokerage subscriptions update the organizations row (introduced by

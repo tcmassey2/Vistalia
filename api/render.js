@@ -334,8 +334,13 @@ async function enforceTierGuard(request, manifest) {
 
   const auth = String(request.headers.authorization || "");
   if (!auth.startsWith("Bearer ")) {
-    // No JWT — anonymous request. Only allow Remotion engine, no Runway.
-    if (String(manifest.engine || "remotion").toLowerCase() === "runway") {
+    // Launch-audit fix: anonymous requests may ONLY use the free Remotion
+    // (Ken Burns) engine. The old check blocked just "runway" — written
+    // before the v26.3 engine rename — so an unauthenticated POST with
+    // engine "veo" (the production engine!) or "depth" sailed through and
+    // burned real fal.ai money with no account attached.
+    const anonEngine = String(manifest.engine || "remotion").toLowerCase();
+    if (anonEngine !== "remotion") {
       return {
         ok: false,
         status: 401,
