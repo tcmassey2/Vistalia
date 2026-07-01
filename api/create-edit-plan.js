@@ -785,11 +785,6 @@ function validateEditPlan(plan, photos) {
 // where the first beat lands. Music plays from t=0, so cuts snap to the
 // phase-aligned grid (firstBeat + n*unit) — no music re-timing needed.
 const BEAT_GRID = {
-  "luxury.mp3":   { beat: 0.395, bar: 1.579, firstBeat: 1.30 },
-  "social.mp3":   { beat: 0.395, bar: 1.579, firstBeat: 0.86 },
-  "mls.mp3":      { beat: 0.348, bar: 1.393, firstBeat: 3.34 },
-  "investor.mp3": { beat: 0.604, bar: 2.414, firstBeat: 3.09 },
-  "default.mp3":  { beat: 0.511, bar: 2.043, firstBeat: 2.67 },
   "luxury-poradovskyi.mp3": { beat: 0.627, bar: 2.508, firstBeat: 0.21 },
   // ── Pixabay picks (measured via librosa) ──
   // Cinematic Luxury
@@ -818,10 +813,10 @@ const BEAT_GRID = {
 // Per-style default track (display name → filename) + snap aggressiveness.
 // Modern Social = punchy downbeat ("bar") cuts; others = subtle nearest-beat.
 const STYLE_DEFAULT_TRACK = {
-  "Cinematic Luxury": "luxury.mp3",
-  "Modern Social": "social.mp3",
-  "MLS Clean": "mls.mp3",
-  "Investor Tour": "investor.mp3"
+  "Cinematic Luxury": "luxury-poradovskyi.mp3",
+  "Modern Social": "the_mountain-pop-490010.mp3",
+  "MLS Clean": "nastelbom-corporate-soft-488321.mp3",
+  "Investor Tour": "the_mountain-corporate-455905.mp3"
 };
 const STYLE_SNAP_MODE = { "Modern Social": "bar" }; // everything else → "beat"
 

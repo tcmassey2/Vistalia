@@ -1,5 +1,11 @@
 # EstateMotion — Music Refresh Shopping List
 
+> ⚠️ **DEPRECATED (superseded June 2026).** This described the old 5-file
+> generic-slot system (`luxury.mp3` / `social.mp3` / etc.), now retired. The
+> library is catalog-driven — see `webapp/src/lib/music-catalog.ts` and
+> `docs/PIXABAY_MUSIC_PICKS.md`. Kept for history only.
+
+
 **Source:** [Pixabay Music](https://pixabay.com/music/) — all tracks CC0, no attribution required, no account needed for download.
 
 **Target dir:** `render-worker/music/`

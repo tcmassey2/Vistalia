@@ -1565,10 +1565,6 @@ function ratioForRunway(ratio, model = "gen4_turbo") {
 function pickMusicUrl(manifest) {
   // Resolve absolute paths for the bundled music directory.
   const musicDir = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "music");
-  const candidate = (name) => [
-    path.join(musicDir, `${name}.mp3`),
-    path.join(musicDir, `${name}.m4a`)
-  ];
 
   // 0. Music selector: if the manifest explicitly names a track filename
   //    (set by the webapp's MusicSelector component from the typed catalog),
@@ -1595,17 +1591,24 @@ function pickMusicUrl(manifest) {
     slot = "luxury"; // default for "Cinematic Luxury" or unrecognized
   }
 
-  // 1. Slot-specific local file (luxury/social/mls/investor).
-  for (const localPath of candidate(slot)) {
-    if (existsSync(localPath)) return localPath;
-  }
+  // Per-style default filenames — all Pixabay Content License (verified
+  // source). The webapp normally sends an explicit manifest.musicTrack
+  // (handled above); this slot path only fires for legacy/empty manifests.
+  const SLOT_DEFAULT_FILE = {
+    luxury:   "luxury-poradovskyi.mp3",
+    social:   "the_mountain-pop-490010.mp3",
+    mls:      "nastelbom-corporate-soft-488321.mp3",
+    investor: "the_mountain-corporate-455905.mp3"
+  };
 
-  // 2. Fall through to a generic default.mp3 if the slot file isn't bundled
-  //    yet. Means every render gets music as long as ANY local track exists,
-  //    even if the agent only uploaded one of the four style tracks.
-  for (const localPath of candidate("default")) {
-    if (existsSync(localPath)) return localPath;
-  }
+  // 1. Slot default local file.
+  const slotPath = path.join(musicDir, SLOT_DEFAULT_FILE[slot] || SLOT_DEFAULT_FILE.luxury);
+  if (existsSync(slotPath)) return slotPath;
+
+  // 2. Ultimate local fallback: the verified luxury track (always bundled),
+  //    so every render still gets music even if a slot file is missing.
+  const fallbackPath = path.join(musicDir, "luxury-poradovskyi.mp3");
+  if (existsSync(fallbackPath)) return fallbackPath;
 
   // 3. Env-var-configured URLs (legacy fallback path).
   const envSlotMap = {

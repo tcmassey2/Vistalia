@@ -1,8 +1,19 @@
-# EstateMotion music library
+# Vistalia music library
+
+> **Current state (catalog-driven).** The library is now defined by the typed
+> catalog in `webapp/src/lib/music-catalog.ts` (24 tracks across 4 styles). The
+> webapp sends the chosen track's exact filename as `manifest.musicTrack` and the
+> worker plays that file. The old generic slot files (`luxury.mp3`, `social.mp3`,
+> `mls.mp3`, `investor.mp3`, `default.mp3`) were **retired** because their
+> provenance couldn't be verified — every current track is a Pixabay
+> Content-License file with a documented source. Per-style default filenames live
+> in `SLOT_DEFAULT_FILE` (`runway-job.mjs`) and `STYLE_DEFAULT_TRACK`
+> (`api/create-edit-plan.js`). The section below is retained for historical
+> context on how the folder worked.
 
 Background music tracks for the four style packs. The render worker reads
-them automatically — drop the files here with the right filenames and
-they're picked up on the next render. No code change needed.
+them automatically — drop the files here, add a catalog entry, and they're
+picked up on the next render.
 
 ## Required filenames
 
@@ -105,13 +116,15 @@ The MP3 files for all 4 styles total roughly 8-12MB. Negligible repo size.
 
 ## Music selection rules
 
-The `pickMusicUrl` function in `runway-job.mjs` picks the slot based on
-the manifest's `selectedStyle` (or `musicMood` legacy field):
+The `pickMusicUrl` function in `runway-job.mjs` first uses the explicit
+`manifest.musicTrack` filename (set by the webapp's MusicSelector from the
+typed catalog). For legacy/empty manifests it falls back to the per-style
+default in `SLOT_DEFAULT_FILE`:
 
-- "Cinematic Luxury" / unrecognized → `luxury.mp3`
-- "Modern Social" / "viral" / "upbeat" → `social.mp3`
-- "MLS Clean" / "ambient" → `mls.mp3`
-- "Investor Tour" / "minimal" → `investor.mp3`
+- "Cinematic Luxury" / unrecognized → `luxury-poradovskyi.mp3`
+- "Modern Social" / "viral" / "upbeat" → `the_mountain-pop-490010.mp3`
+- "MLS Clean" / "ambient" → `nastelbom-corporate-soft-488321.mp3`
+- "Investor Tour" / "minimal" → `the_mountain-corporate-455905.mp3`
 
 You can preview which slot a render will use by checking `manifest.musicMood`
 in the worker logs.

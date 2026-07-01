@@ -15,7 +15,8 @@
 // Worker contract:
 //   - manifest.musicTrack = "<filename.mp3>" → worker uses exactly this file
 //   - manifest.musicTrack = undefined / null → worker falls back to the
-//     style default (luxury.mp3 / social.mp3 / mls.mp3 / investor.mp3)
+//     per-style default (see STYLE_DEFAULT_TRACK in api/create-edit-plan.js
+//     and SLOT_DEFAULT_FILE in render-worker/src/runway-job.mjs)
 
 import type { StyleId } from "./types";
 
@@ -32,31 +33,13 @@ export type MusicTrack = {
 export const MUSIC_CATALOG: MusicTrack[] = [
   // ───────── Cinematic Luxury ─────────
   {
-    id: "luxury-default",
-    filename: "luxury.mp3",
-    label: "Cinematic Luxury",
-    vibe: "Slow build, piano-led — the original luxury default",
-    style: "cinematic-luxury",
-    isStyleDefault: true,
-    durationSec: 189
-  },
-  {
     id: "luxury-poradovskyi",
     filename: "luxury-poradovskyi.mp3",
     label: "Poradovskyi — Luxury Real Estate",
-    vibe: "Refined cinematic, modern restraint",
+    vibe: "Refined cinematic, modern restraint — verified Pixabay",
     style: "cinematic-luxury",
-    isStyleDefault: false,
+    isStyleDefault: true,
     durationSec: 125
-  },
-  {
-    id: "universal-fallback",
-    filename: "default.mp3",
-    label: "Universal Cinematic",
-    vibe: "Safe-bet cinematic — works under any listing",
-    style: "cinematic-luxury",
-    isStyleDefault: false,
-    durationSec: 103
   },
   // + Pixabay picks (free / redistribution-safe)
   {
@@ -107,22 +90,12 @@ export const MUSIC_CATALOG: MusicTrack[] = [
 
   // ───────── Energetic Social (viral) ─────────
   {
-    id: "viral-default",
-    filename: "social.mp3",
-    label: "Energetic Social",
-    vibe: "Modern beat, social-pacing — the viral default",
-    style: "modern-social",
-    isStyleDefault: true,
-    durationSec: 141
-  },
-  // + Pixabay picks
-  {
     id: "social-mountain-pop",
     filename: "the_mountain-pop-490010.mp3",
     label: "Pop — The_Mountain",
     vibe: "Bright soft-house pop, high energy",
     style: "modern-social",
-    isStyleDefault: false,
+    isStyleDefault: true,
     durationSec: 103
   },
   {
@@ -164,22 +137,12 @@ export const MUSIC_CATALOG: MusicTrack[] = [
 
   // ───────── MLS Clean ─────────
   {
-    id: "mls-default",
-    filename: "mls.mp3",
-    label: "Clean MLS",
-    vibe: "Light, unobtrusive — disappears under narration",
-    style: "mls-clean",
-    isStyleDefault: true,
-    durationSec: 131
-  },
-  // + Pixabay picks
-  {
     id: "mls-corporate-soft",
     filename: "nastelbom-corporate-soft-488321.mp3",
     label: "Corporate Soft",
     vibe: "Gentle, neutral bed — steps out of the way",
     style: "mls-clean",
-    isStyleDefault: false,
+    isStyleDefault: true,
     durationSec: 151
   },
   {
@@ -212,22 +175,12 @@ export const MUSIC_CATALOG: MusicTrack[] = [
 
   // ───────── Investor Tour ─────────
   {
-    id: "investor-default",
-    filename: "investor.mp3",
-    label: "Confident Investor",
-    vibe: "Mid-tempo confident — supports number-heavy narration",
-    style: "investor-tour",
-    isStyleDefault: true,
-    durationSec: 81
-  },
-  // + Pixabay picks
-  {
     id: "investor-mountain-corp",
     filename: "the_mountain-corporate-455905.mp3",
     label: "Corporate — The_Mountain",
     vibe: "Confident, assured, mid-tempo",
     style: "investor-tour",
-    isStyleDefault: false,
+    isStyleDefault: true,
     durationSec: 122
   },
   {
