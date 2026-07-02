@@ -546,8 +546,11 @@ const VEO_FIDELITY_SUFFIX =
   " Photorealistic. Do not add, remove, or alter any object, surface, fixture, or " +
   "architectural feature. No people, no animals. Absolutely NO text, captions, words, " +
   "letters, numbers, signage, watermarks, on-screen UI, or graphic overlays of any kind " +
-  "anywhere in the frame. The scene must remain exactly as photographed apart from the " +
-  "camera motion described.";
+  "anywhere in the frame. Every piece of furniture and every object is bolted in place " +
+  "in world space: nothing slides, drifts, follows, or travels with the camera — only " +
+  "the camera moves, with correct perspective parallax, through a completely static " +
+  "scene. The scene must remain exactly as photographed apart from the camera motion " +
+  "described.";
 
 // Per-scene Veo generation, mapped to the same clipResults shape that
 // generateClip / generateKenBurnsFallback return so the stitch pipeline
