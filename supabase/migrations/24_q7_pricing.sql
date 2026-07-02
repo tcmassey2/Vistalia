@@ -15,6 +15,11 @@ update public.tier_plans set price_cents = 14900 where tier = 'studio';
 
 -- 2. Same function as migration 14, reason copy updated for q7
 --    ($39 payg replaces the $100 single; quota-reached mentions $12 overage).
+--    DROP first: the live function's return row differs from migration 14 as
+--    written (Postgres 42P13 — cannot change return type via CREATE OR
+--    REPLACE). Same precedent as migration 07. All API callers read the row
+--    generically or use fields this shape provides, so the drop is safe.
+drop function if exists public.get_user_tier_state(uuid);
 create or replace function public.get_user_tier_state(p_user_id uuid)
 returns table (
   tier text,
@@ -69,3 +74,5 @@ language sql security definer as $$
   cross join constants c
   where p.user_id = p_user_id;
 $$;
+
+revoke all on function public.get_user_tier_state(uuid) from public, anon, authenticated;
