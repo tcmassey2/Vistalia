@@ -63,3 +63,6 @@ marketing/assembled/
 SS-4*
 *.pdf
 !docs/**/*.pdf
+
+# Local-only business docs & media — never commit
+_local/
