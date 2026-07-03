@@ -72,6 +72,19 @@ export default async function handler(request, response) {
       const payload = parseBody(text);
       response.status(workerResponse.status).json(payload || { status: workerResponse.ok ? "rendering" : "failed", message: text });
     } catch (error) {
+      // v33 FREEZE FIX (test-8): the worker being UNREACHABLE (crash-restart,
+      // deploy roll) used to 500 every poll for ~15-20s, and five consecutive
+      // client errors abandoned a render that the pull queue then completed.
+      // The render_jobs row keeps advancing through restarts (heartbeat +
+      // persistJobStatus), so serve IT whenever the worker can't answer.
+      try {
+        const jobId = new URL(request.url || "", "http://localhost").searchParams.get("jobId");
+        const fallback = jobId ? await fetchRenderJobFromSupabase(jobId) : null;
+        if (fallback) {
+          response.status(200).json({ ...fallback, viaFallback: true });
+          return;
+        }
+      } catch { /* fall through to the 500 */ }
       response.status(500).json({ status: "failed", error: error.message || "Could not fetch render status." });
     }
     return;
