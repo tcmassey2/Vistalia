@@ -70,12 +70,35 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   const voiceId = resolveVoiceId(brandKit?.voiceId, brandKit?.style);
 
   // ============================================================
-  // v32 CONTINUOUS NARRATION (primary path)
-  // One flowing script, ONE ElevenLabs call, laid over the whole photo
-  // section. No per-scene windows → nothing to chop, natural prosody across
-  // cuts. The per-line path below remains as the fallback for manifests
-  // without a narrationScript (older plans, Edit Studio regen).
+  // v33 ALIGNED-CONTINUOUS NARRATION (primary path)
+  // The per-scene lines (written per photo, in scene order — the mapping IS
+  // the plan) are joined and synthesized in ONE ElevenLabs call for a single
+  // continuous performance, using the with-timestamps endpoint. Character
+  // timing tells us exactly where each sentence lives in the audio; each
+  // sentence is cut at its true boundary and placed at ITS scene's start.
+  // Alignment is correct BY CONSTRUCTION — test-7's script narrated the
+  // kitchen over rooftop-deck footage because a whole-script read follows
+  // the model's imagined tour order, not the actual scene order.
+  // Fallback chain: aligned → whole-script layover → per-line synth.
   // ============================================================
+  {
+    const alignedLines = photoScenes
+      .map((scene, index) => ({ scene, index, text: String(scene.narrationLine || "").trim() }))
+      .filter((l) => l.text.length >= 3);
+    if (alignedLines.length >= 2) {
+      try {
+        return await applyAlignedNarration({
+          masterMp4, photoScenes, realDur, crossfadeOverlapSec,
+          lines: alignedLines, voiceId, tempDir, jobId, onProgress
+        });
+      } catch (err) {
+        console.warn(`[voice] aligned narration failed (${err.message}) — trying whole-script layover.`);
+      }
+    }
+  }
+
+  // v32 CONTINUOUS (whole-script layover) — fallback when aligned synthesis
+  // is unavailable. Prosody is perfect but sync is only tour-order soft.
   if (typeof narrationScript === "string" && narrationScript.trim().split(/\s+/).length >= 8) {
     try {
       return await applyContinuousNarration({
@@ -395,6 +418,177 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     voiceId,
     narrationLineCount: narrationScenes.length
   };
+}
+
+/* ============================================================
+   v33 — aligned-continuous narration
+   ============================================================ */
+
+async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfadeOverlapSec, lines, voiceId, tempDir, jobId, onProgress }) {
+  // Visible timeline (same model as everywhere): scene k starts at the sum
+  // of visible durations before it.
+  const sceneStarts = [];
+  const sceneVisible = [];
+  let cursor = 0;
+  for (const sc of photoScenes) {
+    const d = realDur(sc, Number(sc.duration || 3));
+    const vis = Math.max(0.8, d - crossfadeOverlapSec);
+    sceneStarts.push(cursor);
+    sceneVisible.push(vis);
+    cursor += vis;
+  }
+  const trackDurSec = cursor;
+  const leadInSec = 0.35;
+
+  // One text, one performance. Ensure sentence-final punctuation per line so
+  // the read pauses naturally at what will become our cut points.
+  const texts = lines.map((l) => (/[.!?]$/.test(l.text) ? l.text : `${l.text}.`));
+  const joined = texts.join(" ");
+
+  onProgress?.({ phase: "Synthesizing voiceover", fraction: 0.2 });
+  const { audioPath, alignment } = await synthesizeWithTimestamps({
+    text: joined, voiceId, tempDir, jobId,
+    settingsOverride: { stability: 0.55, similarity_boost: 0.85, style: 0.15, use_speaker_boost: true }
+  });
+  if (!alignment?.characters?.length) throw new Error("no character alignment returned");
+
+  // Map each line's character range in `joined` to audio time.
+  const chars = alignment.characters;
+  const starts = alignment.character_start_times_seconds;
+  const ends = alignment.character_end_times_seconds;
+  const segs = [];
+  let charCursor = 0;
+  for (let i = 0; i < texts.length; i++) {
+    const t = texts[i];
+    const from = charCursor;               // first char of this line in `joined`
+    const to = charCursor + t.length;      // exclusive
+    charCursor = to + 1;                   // skip the joining space
+    // Guard against provider-side normalization shifting characters: clamp.
+    const a = Math.min(from, chars.length - 1);
+    const b = Math.min(to - 1, chars.length - 1);
+    const segStart = Math.max(0, (starts[a] ?? 0) - 0.03);
+    const segEnd = Math.min((ends[b] ?? segStart + 1) + 0.05, ends[ends.length - 1] ?? segStart + 1);
+    segs.push({ index: lines[i].index, segStart, segEnd, dur: Math.max(0.2, segEnd - segStart) });
+  }
+
+  // Placement: sentence i starts at its scene start (+lead-in); its window
+  // runs to the NEXT narrated scene's start (flowing-window model). Overruns
+  // get per-segment atempo ≤1.15, then trim+fade as last resort.
+  const placements = segs.map((s, i) => {
+    const startAt = sceneStarts[s.index] + leadInSec;
+    const nextStart = i + 1 < segs.length ? sceneStarts[segs[i + 1].index] : trackDurSec;
+    const cap = Math.max(0.6, nextStart - startAt - 0.15);
+    let tempo = 1;
+    if (s.dur > cap) tempo = Math.min(1.15, s.dur / cap);
+    const effective = s.dur / tempo;
+    const trimmed = effective > cap + 0.05;
+    console.info(
+      `[voice] aligned line ${i + 1} → scene ${s.index + 1}: audio ${s.segStart.toFixed(2)}-${s.segEnd.toFixed(2)}s ` +
+      `(${s.dur.toFixed(2)}s) @ t=${startAt.toFixed(2)}s, window ${cap.toFixed(2)}s` +
+      (tempo > 1.005 ? ` atempo ${tempo.toFixed(3)}` : "") + (trimmed ? " TRIM" : "")
+    );
+    return { ...s, startAt, cap, tempo, trimmed };
+  });
+
+  onProgress?.({ phase: "Building narration track", fraction: 0.6 });
+  const steps = placements.map((p, i) => {
+    const chain = [
+      `atrim=start=${p.segStart.toFixed(3)}:end=${p.segEnd.toFixed(3)}`,
+      "asetpts=PTS-STARTPTS",
+      p.tempo > 1.005 ? `atempo=${p.tempo.toFixed(4)}` : null,
+      p.trimmed ? `atrim=duration=${p.cap.toFixed(2)}` : null,
+      "afade=t=in:st=0:d=0.04",
+      p.trimmed ? `afade=t=out:st=${Math.max(0, p.cap - 0.3).toFixed(2)}:d=0.30` : null,
+      `adelay=${Math.round(p.startAt * 1000)}|${Math.round(p.startAt * 1000)}`,
+      `apad=whole_dur=${Math.round(trackDurSec * 1000)}ms`
+    ].filter(Boolean).join(",");
+    return `[1:a]${chain}[s${i}]`;
+  });
+  const mixIns = placements.map((_, i) => `[s${i}]`).join("");
+  const filterComplex =
+    `${steps.join(";")};[0:a]${mixIns}amix=inputs=${placements.length + 1}:duration=first:dropout_transition=0,atrim=duration=${trackDurSec}[narr]`;
+
+  const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
+  await runFFmpeg([
+    "-y", "-threads", "1",
+    "-f", "lavfi", "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${trackDurSec}`,
+    "-i", audioPath,
+    "-filter_complex", filterComplex,
+    "-map", "[narr]",
+    "-c:a", "libmp3lame", "-b:a", "128k",
+    "-t", String(trackDurSec),
+    narrationTrackPath
+  ], { timeoutMs: 120000, label: "voice:aligned-track" });
+
+  onProgress?.({ phase: "Mixing narration with music", fraction: 0.85 });
+  const duckWindows = placements.map((p) => {
+    const end = Math.min(trackDurSec, p.startAt + Math.min(p.dur / p.tempo, p.cap) + 0.15);
+    return [Math.max(0, p.startAt - 0.1), end];
+  });
+  const duckExpr = duckWindows.map(([s, e]) => `between(t,${s.toFixed(2)},${e.toFixed(2)})`).join("+");
+  const volumeExpr = `if(${duckExpr},${DUCK_LEVEL},1)`;
+  const mixedMp4 = path.join(tempDir, `${jobId}-narrated.mp4`);
+  const masterHasAudio = await detectAudioStream(masterMp4);
+
+  if (masterHasAudio) {
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", masterMp4, "-i", narrationTrackPath,
+      "-filter_complex",
+      `[0:a:0]volume=eval=frame:volume='${volumeExpr}'[ducked];[ducked][1:a]amix=inputs=2:duration=first:dropout_transition=0:weights=1 ${VOICE_WEIGHT.toFixed(2)},loudnorm=I=-16:TP=-1.5:LRA=11[aout]`,
+      "-map", "0:v:0", "-map", "[aout]",
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+      "-shortest", mixedMp4
+    ], { timeoutMs: 90000, label: "voice:aligned-final-mix" });
+  } else {
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", masterMp4, "-i", narrationTrackPath,
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+      "-map", "0:v:0", "-map", "1:a:0",
+      "-shortest", mixedMp4
+    ], { timeoutMs: 60000, label: "voice:aligned-mix-narration-only" });
+  }
+
+  await fs.unlink(audioPath).catch(() => {});
+  await fs.unlink(narrationTrackPath).catch(() => {});
+
+  return {
+    masterMp4: mixedMp4,
+    narrationApplied: true,
+    voiceId,
+    narrationLineCount: placements.length,
+    aligned: true
+  };
+}
+
+// Single TTS call returning audio + character-level timing.
+async function synthesizeWithTimestamps({ text, voiceId, tempDir, jobId, settingsOverride = null }) {
+  const response = await fetchWithTimeout(
+    `${ELEVENLABS_BASE}/text-to-speech/${encodeURIComponent(voiceId)}/with-timestamps`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": process.env.ELEVENLABS_API_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        text,
+        model_id: DEFAULT_MODEL,
+        voice_settings: settingsOverride || { stability: 0.55, similarity_boost: 0.85, style: 0.15, use_speaker_boost: true }
+      })
+    },
+    SYNTH_TIMEOUT_MS * 2
+  );
+  if (!response.ok) {
+    const err = await response.text().catch(() => "");
+    throw new Error(`ElevenLabs with-timestamps failed (${response.status}): ${err.slice(0, 200)}`);
+  }
+  const data = await response.json();
+  if (!data?.audio_base64) throw new Error("with-timestamps returned no audio");
+  const audioPath = path.join(tempDir, `${jobId}-aligned-full.mp3`);
+  await fs.writeFile(audioPath, Buffer.from(data.audio_base64, "base64"));
+  return { audioPath, alignment: data.alignment || data.normalized_alignment || null };
 }
 
 /* ============================================================
