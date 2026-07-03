@@ -537,7 +537,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   const scriptWordTarget = Math.round(clampedDuration * 1.7);
   const narrationGuidance = includeNarration
     ? [
-        `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour, approximately ${scriptWordTarget} words (hard maximum ${Math.round(scriptWordTarget * 1.15)}). Write it as flowing spoken prose in the same order as the scenes: open by naming the property, walk through the spaces with natural transitions ("Through the entry…", "Out back…"), and END with a SHORT final call-to-action sentence of 8 words or fewer (the very end of the read is the most exposed to timing trims — a long final sentence risks being clipped). No scene numbers, no headings, no stage directions — only words to be read aloud. It will be read continuously over the whole video, so it must read as one connected piece, not disconnected captions.`,
+        `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Keep EVERY line SHORT — the narrator reads slowly and deliberately (~1.9 words/sec): a 3s scene fits ~3-4 words, a 4s scene ~5-6, a 5-6s hero scene ~8-9 max. A line must finish with a beat of breathing room before its scene ends — never write a line that would run past its scene. When in doubt, write FEWER words. Vary cadence: mix 3-5 word observations ("Crown molding throughout", "Quartz counters, soft-close") with slightly longer lines only on the longest hero scenes.`,
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
@@ -632,6 +632,31 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
 
 function motionModel() {
   return process.env.OPENAI_MOTION_MODEL || process.env.OPENAI_MOTION_DIRECTOR_MODEL || DEFAULT_MODEL;
+}
+
+// v32.3: never ship a skeleton script. Target ≈ 1.7 words/sec; below 60% of
+// that, the model under-delivered (test-6: 8 words → 34s of silence) — fall
+// back to the per-scene lines joined into one read. They're grounded per-room
+// and collectively right-sized, so the floor is always a competent script.
+function enforceScriptFloor(script, scenes, targetDurationSec) {
+  const target = Math.round(targetDurationSec * 1.7);
+  const words = String(script || "").trim() ? script.trim().split(/\s+/).length : 0;
+  if (words >= Math.round(target * 0.6)) {
+    console.info(`[plan] narrationScript length OK: ${words}/${target} words`);
+    return script;
+  }
+  const joined = (scenes || [])
+    .map((s) => String(s.narrationLine || "").trim())
+    .filter(Boolean)
+    .join(" ");
+  const joinedWords = joined ? joined.split(/\s+/).length : 0;
+  console.warn(
+    `[plan] narrationScript UNDER FLOOR (${words}/${target} words) — ` +
+    (joinedWords >= 8
+      ? `rebuilt from ${joinedWords} words of per-scene lines.`
+      : `per-scene lines also empty; leaving script as-is.`)
+  );
+  return joinedWords >= 8 ? joined : script;
 }
 
 function editPlanTextFormat(photoIds, targetSceneCount, options = {}) {
@@ -1065,9 +1090,17 @@ function normalizeEditPlan(plan, photos, context) {
     // Kills the per-scene window model that chopped lines mid-sentence (or
     // forced robotic 3-word fragments) — rounds 1-4 of the July smoke tests.
     // Per-scene narrationLine fields remain for Edit Studio regen + fallback.
-    narrationScript: cleanText(
-      plan.narrationScript || "",
-      Math.max(400, Math.round((Number(context.targetDurationSec) || 30) * 2.2 * 7))
+    // v32.3 LENGTH FLOOR (test-6 regression): the model once returned an
+    // 8-word script (opener + CTA, 34s of silence). If the script is under
+    // 60% of target words, rebuild it from the per-scene lines — always
+    // grounded, always full-coverage. Loud in the logs either way.
+    narrationScript: enforceScriptFloor(
+      cleanText(
+        plan.narrationScript || "",
+        Math.max(400, Math.round((Number(context.targetDurationSec) || 30) * 2.2 * 7))
+      ),
+      scenes,
+      Number(context.targetDurationSec) || 30
     ),
     scenes: finalScenes
   };
