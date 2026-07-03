@@ -61,7 +61,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             "You receive the ORIGINAL listing photo first, then 3 frames IN TIME ORDER " +
             "from a video generated FROM that photo. The video may only move the camera — " +
             "the scene itself must match the photo and behave rigidly. Respond with strict JSON: " +
-            '{"text_artifacts": boolean, "object_artifacts": boolean, "motion_artifacts": boolean, "notes": "≤20 words"}. ' +
+            '{"text_artifacts": boolean, "object_artifacts": boolean, "motion_artifacts": boolean, "occlusion_artifacts": boolean, "notes": "≤20 words"}. ' +
             "text_artifacts=true if ANY text, numbers, symbols, captions, or watermark-like " +
             "shapes appear in frames that are not present in the original photo. " +
             "object_artifacts=true if any object is severely warped, floating, duplicated, " +
@@ -72,6 +72,10 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             "it slides across the floor, or it drifts against the direction everything else " +
             "moves. Correct camera motion: ALL objects shift consistently with perspective " +
             "(near objects shift more than far ones) and keep their exact spot on the floor. " +
+            "occlusion_artifacts=true if in ANY frame the camera has moved into or through " +
+            "a foreground object — a large blurry surface (beam, wall, furniture, plant) " +
+            "fills or wipes a major part of the frame, or the room becomes mostly blocked. " +
+            "A well-framed shot keeps the space clearly visible in every frame. " +
             "Small softness/blur/lighting shifts are NOT artifacts. Be tolerant of minor " +
             "differences; flag only clearly visible defects a home buyer would notice."
         },
@@ -120,6 +124,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
     if (verdict.text_artifacts === true) reasons.push("text artifacts");
     if (verdict.object_artifacts === true) reasons.push("object artifacts");
     if (verdict.motion_artifacts === true) reasons.push("motion artifacts (object moves with camera)");
+    if (verdict.occlusion_artifacts === true) reasons.push("occlusion (camera collides with foreground)");
     const pass = reasons.length === 0;
     console.info(
       `[qc] scene ${sceneIndex + 1} (${roomType || "?"}): ${pass ? "PASS" : `FAIL (${reasons.join(", ")})`}` +

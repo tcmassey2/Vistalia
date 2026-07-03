@@ -214,25 +214,33 @@ const RUNWAY_STYLE_PROMPTS = {
 // equipment ("dolly", "slider", "tripod"). The Jan-2026 Veo 3.1 update sharply
 // improved prompt adherence, so naming a rig makes Veo render the rig (and an
 // operator). These describe the move and the stability, with no nouns to render.
+// v32.4: every forward move now carries a CLEAR-PATH clause — test-6 pushed
+// the camera INTO a ceiling beam, wiping the frame with blurred wood. All
+// pixels were "real", so fidelity checks couldn't object; the trajectory was
+// the defect. Name it in the prompt AND in QC (occlusion_artifacts).
+const CLEAR_PATH =
+  " The camera path stays clear: it never moves into or through any foreground object, " +
+  "beam, wall, plant, or furniture, and the room stays fully visible and well-framed for " +
+  "the entire move.";
 const VEO_MOTION_PROMPTS = {
   push_in:
     "The camera moves slowly and smoothly forward toward the focal point of the room, " +
-    "about 6% total travel. Perfectly stable, no handheld sway, no vertical drift.",
+    "about 6% total travel. Perfectly stable, no handheld sway, no vertical drift." + CLEAR_PATH,
   pull_out:
     "The camera moves slowly backward to reveal the full space, about 6% total travel. " +
-    "Perfectly stable, constant speed, no drift.",
+    "Perfectly stable, constant speed, no drift." + CLEAR_PATH,
   lateral_pan:
     "The camera moves slowly sideways from left to right, level horizon throughout. " +
-    "No rotation, no vertical movement.",
+    "No rotation, no vertical movement." + CLEAR_PATH,
   vertical_reveal:
     "The view tilts gently upward from the lower foreground to reveal the full height of " +
-    "the space. Slow, constant speed, perfectly stable.",
+    "the space. Slow, constant speed, perfectly stable." + CLEAR_PATH,
   parallax_zoom:
     "The camera moves slowly forward with natural depth parallax between foreground and " +
-    "background. About 6% travel. Stable, deliberate, no shake.",
+    "background. About 6% travel. Stable, deliberate, no shake." + CLEAR_PATH,
   detail_sweep:
     "The camera moves slowly across the architectural detail at close range, shallow depth " +
-    "of field, tight framing. Constant speed."
+    "of field, tight framing. Constant speed, and the subject never becomes blocked or smeared."
 };
 
 // Per-mode art direction, written as a DP brief. Each mode also carries a
@@ -577,7 +585,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
                 // camera). Depth-axis moves (push/pull) are the most stable
                 // on image-to-video. Keep laterals rare and only where
                 // there's real depth to traverse.
-                ? "Engine is Cinematic AI (Veo image-to-video). Set scene duration to 3-3.5 seconds for most scenes; the exterior hero and one or two showcase rooms may run 4-6 seconds; never exceed 6. Camera motion: strongly prefer push_in and pull_out (most stable). Use lateral_pan or parallax_zoom ONLY for wide, open, deep spaces (large great rooms, exteriors with long sightlines) — never in furnished rooms shot at close or medium range. Use detail_sweep only on true close-up detail shots."
+                ? "Engine is Cinematic AI (Veo image-to-video). Set scene duration to 3-3.5 seconds for most scenes; the exterior hero and one or two showcase rooms may run 4-6 seconds; never exceed 6. Camera motion: strongly prefer push_in and pull_out (most stable). Use lateral_pan or parallax_zoom ONLY for wide, open, deep spaces (large great rooms, exteriors with long sightlines) — never in furnished rooms shot at close or medium range. Use detail_sweep only on true close-up detail shots. For rooms with prominent exposed ceiling beams, low soffits, or large foreground obstructions near the camera, choose pull_out instead of push_in — a forward move risks colliding with the foreground."
                 : "Engine is Quick Reel (Ken Burns photo motion). Scene duration 2.0–3.0s for kitchen/living, 1.6–2.4s for detail shots, 2.6–3.2s for hero shots.",
               narrationGuidance,
               "Return strict JSON only."
