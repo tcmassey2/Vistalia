@@ -10,6 +10,7 @@ import {
 } from "../lib/api";
 import { cn } from "../lib/cn";
 import { engineLabel, isAiVideoEngine } from "../lib/engine-labels";
+import { downloadVideo, deliverableFilename } from "../lib/download";
 
 /**
  * Library detail modal — shown when an agent clicks a render in their
@@ -154,14 +155,10 @@ export default function LibraryDetailModal({
           </div>
         </div>
 
-        {/* v23: Engine breakdown badge — honest disclosure of which scenes
-            ran on Cinematic AI vs Ken Burns fallback. Shown for Runway
-            renders that have per-scene engine data. */}
-        {isRunwayRender && hasScenes && (
-          <div className="px-6 sm:px-8 mt-4">
-            <EngineBreakdownBadge scenes={entry.scenes as any[]} />
-          </div>
-        )}
+        {/* v33.3: the engine-breakdown badge ("7 of 9 scenes used Cinematic
+            AI · 2 motion-only fallback") was internal telemetry leaking into
+            customer UI — removed. Per-scene regen below still lets users fix
+            any scene they don't like, which is the actionable version. */}
 
         {/* v23.2 Render Details panel — diagnostic strip showing exactly
             what shipped on this render. Eliminates the "is it actually
@@ -172,14 +169,33 @@ export default function LibraryDetailModal({
           <RenderDetailsPanel entry={entry} />
         </div>
 
-        {/* Single-master download row (replaces the old multi-variant
-            + social-shorts bundle). One render = one 9:16 master mp4. */}
-        <div className="px-6 sm:px-8 mt-6">
+        {/* v33.3 Downloads — every format the render produced, one click
+            each, real file downloads (blob-forced; the download attribute is
+            ignored cross-origin and used to NAVIGATE to the mp4). */}
+        <div className="px-6 sm:px-8 mt-6 flex flex-col gap-2.5">
+          <h3 className="text-sm font-semibold tracking-tightish">Downloads</h3>
           <DeliverablePill
-            label="Download master (9:16)"
-            sublabel="Vertical · Reels / TikTok / Shorts ready"
+            label="Vertical · 9:16"
+            sublabel="Instagram Reels · TikTok · YouTube Shorts"
             url={inferredUrls.vertical}
+            filename={deliverableFilename(heading, "vertical")}
           />
+          {inferredUrls.square && (
+            <DeliverablePill
+              label="Square · 1:1"
+              sublabel="Instagram & Facebook feed"
+              url={inferredUrls.square}
+              filename={deliverableFilename(heading, "square")}
+            />
+          )}
+          {inferredUrls.wide && (
+            <DeliverablePill
+              label="Wide · 16:9"
+              sublabel="YouTube · MLS portals · Zillow"
+              url={inferredUrls.wide}
+              filename={deliverableFilename(heading, "wide")}
+            />
+          )}
         </div>
 
         {/* Per-scene regenerate — only relevant for runway renders that have
@@ -387,24 +403,21 @@ function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
   // Diagnostic panel applies to any AI engine (runway or depth).
   const isRunway = isAiVideoEngine(entry.engine);
 
+  // v33.3 CUSTOMER-FACING rows only. Engine/model names, hallucination-guard
+  // levels, prompt versions, plan tier, and vendor names are internal
+  // telemetry — they confused (and mildly alarmed) real users in launch QA.
+  // Keep what an agent actually cares about; internals live in worker logs.
   const rows: Array<{ label: string; value: string; ok: boolean | null }> = [
     {
-      label: "Engine",
-      value: isRunway
-        ? `Cinematic AI · ${cfg.runwayModelRequested || "gen4_turbo"}`
-        : "Quick Reel · Remotion Ken Burns",
-      ok: true
-    },
-    {
-      label: "Style pack",
+      label: "Style",
       value: cfg.selectedStyle || "—",
       ok: true
     },
     {
       label: "Narration",
       value: entry.narrationApplied
-        ? `Applied · ${entry.narrationVoiceId ? entry.narrationVoiceId.slice(0, 12) + "…" : "default voice"}`
-        : "Skipped (ElevenLabs unavailable or disabled)",
+        ? (entry.narrationVoiceId && !/^[a-z]+-[a-z]+$/.test(entry.narrationVoiceId) ? "On · your cloned voice" : "On")
+        : "Off",
       ok: entry.narrationApplied
     },
     {
@@ -414,40 +427,13 @@ function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
     },
     {
       label: "Address card",
-      value: cfg.disableAddressCard ? "Off" : "Included (3.5s opener)",
+      value: cfg.disableAddressCard ? "Off" : "Included",
       ok: !cfg.disableAddressCard
-    },
-    {
-      label: "Hallucination guard",
-      value: cfg.hallucinationGuard
-        ? cfg.hallucinationGuard === "off"
-          ? "Off (pure AI motion — kitchens may morph)"
-          : cfg.hallucinationGuard === "strict"
-            ? "Strict (kitchens always Ken Burns)"
-            : "Balanced (smart per-scene)"
-        : (cfg.complianceMode ? "Compliance mode (all Ken Burns)" : "Balanced (default)"),
-      ok: true
-    },
-    {
-      label: "Prompt version",
-      value: entry.promptVersion || "(pre-v23.0)",
-      ok: true
-    },
-    {
-      label: "Plan tier",
-      value: cfg.userTier || "—",
-      ok: true
     }
   ];
 
-  // Per-scene engine breakdown summary (Runway only).
-  const sceneSummary = isRunway && entry.scenes.length > 0 ? (() => {
-    const total = entry.scenes.length;
-    const cinematic = entry.scenes.filter((s) =>
-      (s.engineUsed || (s.wasFallback ? "ken_burns" : "cinematic_ai")) === "cinematic_ai"
-    ).length;
-    return `${cinematic} of ${total} scenes used Cinematic AI · ${total - cinematic} motion fallback`;
-  })() : null;
+  const sceneSummary = null;
+  void isRunway;
 
   return (
     <div className="rounded-xl border border-edge-soft bg-surface-input/40 overflow-hidden">
@@ -504,18 +490,29 @@ function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
   );
 }
 
-function DeliverablePill({ label, sublabel, url }: { label: string; sublabel: string; url: string }) {
+function DeliverablePill({ label, sublabel, url, filename }: { label: string; sublabel: string; url: string; filename: string }) {
+  const [busy, setBusy] = useState(false);
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await downloadVideo(url, filename);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <a
       href={url}
-      download
+      onClick={handleDownload}
       className="card-press flex items-center justify-between gap-3 p-3 bg-surface-input hover:bg-surface-raised border border-edge hover:border-gold rounded-lg transition-colors"
     >
       <div>
         <div className="font-mono text-base font-semibold text-gold">{label}</div>
         <div className="text-xs text-ink-muted">{sublabel}</div>
       </div>
-      <span className="text-ink-muted text-sm">↓</span>
+      <span className="text-ink-muted text-sm">{busy ? "Saving…" : "↓"}</span>
     </a>
   );
 }
@@ -681,7 +678,7 @@ function ScenesRegenGrid({
       </div>
       <div className="text-[11px] text-ink-dim leading-relaxed">
         Each regen takes 60–180 seconds and re-stitches the full video.
-        Cinematic AI regen uses one Runway credit (~$0.25). Replace with Ken Burns is free and guarantees no AI hallucinations.
+        Regenerate re-creates a scene with fresh AI motion and re-stitches your video (60–180 seconds). Photo Motion swaps in a simple, artifact-free zoom — instant peace of mind for compliance-sensitive listings.
       </div>
     </div>
   );
@@ -725,7 +722,7 @@ function SceneCell({
         </div>
         {scene.wasFallback && (
           <div className="absolute top-1.5 right-1.5 bg-paper/85 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-ink-muted">
-            Ken Burns
+            Photo Motion
           </div>
         )}
         {isActive && (
@@ -774,10 +771,10 @@ function SceneCell({
             type="button"
             disabled={disabled || isActive || !scene.clipUrl}
             onClick={() => onRegen(scene.sceneIndex, "kenburns")}
-            title={!scene.clipUrl ? "This scene wasn't persisted — can't regen." : "Replace with a safe Ken Burns motion clip"}
+            title={!scene.clipUrl ? "This scene wasn't persisted — can't regen." : "Replace with simple, artifact-free photo motion"}
             className="px-2 py-1.5 text-[10px] uppercase tracking-wider font-semibold bg-surface-raised hover:bg-surface-input text-ink-muted hover:text-ink border border-edge hover:border-ink-muted rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            Use KB
+            Photo Motion
           </button>
         </div>
       </div>

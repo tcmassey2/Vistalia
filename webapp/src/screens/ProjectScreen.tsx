@@ -6,6 +6,7 @@ import VoiceSection from "../components/VoiceSection";
 import { events, track } from "../lib/analytics";
 import type { Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
+import { downloadVideo, deliverableFilename } from "../lib/download";
 import { resolveTrack } from "../lib/music-catalog";
 import { isAiVideoEngine, engineLabel as engineDisplayLabel } from "../lib/engine-labels";
 import MusicSelector from "../components/MusicSelector";
@@ -318,7 +319,7 @@ function RenderSafetyControl() {
       id: "max",
       label: "MLS-Safe",
       description:
-        "Ken Burns photo motion on every scene. Zero AI hallucination, no Runway credits used, faster renders. The right choice for MLS-required compliance."
+        "Simple photo motion on every scene. Zero AI artifacts and faster renders. The right choice for MLS-required compliance."
     }
   ];
 
@@ -953,8 +954,11 @@ function BrandKitArea({ userId }: { userId: string }) {
       setError("Sign in expired. Refresh the page.");
       return;
     }
-    if (!file.type.startsWith("image/")) {
-      setError("Headshot must be an image (JPG, PNG, or WebP).");
+    // v33: explicitly reject SVG — it passes the generic image/ check but the
+    // render worker's ffmpeg can't rasterize it (test-8: the headshot slot
+    // held vistalia-mark.svg and every outro fell back to text-only).
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type)) {
+      setError("Headshot must be a JPG, PNG, or WebP photo (SVG isn't supported).");
       return;
     }
     setUploading(true);
@@ -2366,7 +2370,7 @@ function RenderControls() {
 
   const pollUntilDone = async (jobId: string) => {
     const startTime = Date.now();
-    const maxMs = 18 * 60 * 1000; // matches worker's overall job timeout
+    const maxMs = 26 * 60 * 1000; // worker's overall cap is 25 min (v31 audit) + 1 min slack
     let prevProgress = 0;
     let prevPhase = "";
     let lastProgressMovedAt = Date.now();
@@ -2473,10 +2477,19 @@ function RenderControls() {
           return;
         }
         consecutiveErrors++;
+        // v33 FREEZE FIX (test-8): NEVER abandon the poll on transient errors.
+        // A worker crash-restart is a ~15-20s outage — five 3s polls — and the
+        // old `return` here froze the UI at 15% while the pull queue recovered
+        // and COMPLETED the render. Surface a soft warning, slow the poll, and
+        // keep going; the loop still ends on completed/failed, true 404
+        // (library recovery above), or the overall timeout.
+        if (consecutiveErrors === maxConsecutiveErrors) {
+          setError(
+            `Having trouble reaching the render service — still trying. Your render is likely still running; the worker may be restarting.`
+          );
+        }
         if (consecutiveErrors >= maxConsecutiveErrors) {
-          const msg = err instanceof Error ? err.message : "Status check failed.";
-          setError(`Lost contact with the render worker: ${msg}`);
-          return;
+          await new Promise((r) => setTimeout(r, 7000)); // back off to ~10s effective
         }
       }
     }
@@ -2565,6 +2578,7 @@ function RenderControls() {
 function RenderStatusPanel() {
   const renderJob = useStore((s) => s.renderJob);
   const goToScreen = useStore((s) => s.goToScreen);
+  const projectTitle = useStore((s) => s.projectTitle);
 
   // v2.1: one-time confetti reward when a render lands successfully. Keyed on
   // jobId so it fires once per finished video, not on every re-render.
@@ -2676,7 +2690,12 @@ function RenderStatusPanel() {
               <a
                 key={pill.ratio}
                 href={pill.url}
-                download
+                onClick={(e) => {
+                  // v33.3: `download` is ignored cross-origin (Supabase URLs),
+                  // so clicks used to NAVIGATE to the mp4. Blob-force it.
+                  e.preventDefault();
+                  downloadVideo(pill.url, deliverableFilename(projectTitle || "listing", pill.ratio.replace(":", "x")));
+                }}
                 className="card-press flex items-center justify-between gap-3 p-3 bg-surface-input hover:bg-surface-raised border border-edge hover:border-gold rounded-lg transition-colors"
               >
                 <div>

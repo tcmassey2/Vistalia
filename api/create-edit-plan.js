@@ -667,6 +667,23 @@ function enforceScriptFloor(script, scenes, targetDurationSec) {
   return joinedWords >= 8 ? joined : script;
 }
 
+// v33.3: map classify-image categories → scene roomTypes. Categories come
+// from a dedicated one-photo-per-call vision pass, so when present they
+// outrank the Motion Director's roomType guess.
+function roomTypeFromCategory(category) {
+  const c = String(category || "").toLowerCase();
+  if (!c) return "";
+  if (c.includes("exterior")) return "exterior";
+  if (c.includes("kitchen")) return "kitchen";
+  if (c.includes("living")) return "living";
+  if (c.includes("bedroom")) return "bedroom";
+  if (c.includes("bathroom")) return "bathroom";
+  if (c.includes("outdoor") || c.includes("backyard")) return "outdoor";
+  if (c.includes("amenity")) return "amenity";
+  if (c.includes("detail")) return "detail";
+  return "";
+}
+
 function editPlanTextFormat(photoIds, targetSceneCount, options = {}) {
   return {
     type: "json_schema",
@@ -990,7 +1007,19 @@ function normalizeEditPlan(plan, photos, context) {
     .map((scene, index) => ({
       photoId: scene.photoId,
       order: index + 1,
-      roomType: ROOM_TYPES.includes(scene.roomType) ? scene.roomType : inferRoomType(photos.find((photo) => photo.id === scene.photoId), index),
+      // v33.3 ROOM RECONCILIATION: the per-photo classifier (curate/classify,
+      // one image per call) is more reliable than the Motion Director's
+      // 16-images-in-one-context juggling, which mislabeled scenes in launch
+      // QA (bedroom tagged "detail", living room tagged "kitchen") — and
+      // narration lines are WRITTEN from roomType, so mislabels became
+      // "the kitchen offers ample cabinetry" spoken over a living room.
+      // Category wins when present; Motion Director fills the gaps.
+      roomType: (() => {
+        const photo = photos.find((p) => p.id === scene.photoId);
+        const fromCategory = roomTypeFromCategory(photo?.category);
+        if (fromCategory) return fromCategory;
+        return ROOM_TYPES.includes(scene.roomType) ? scene.roomType : inferRoomType(photo, index);
+      })(),
       visibleFeatures: cleanStringArray(scene.visibleFeatures).slice(0, 5),
       qualityScore: clamp(Number(scene.qualityScore || 70), 0, 100),
       duration: clamp(Number(scene.duration || defaultDuration), 1.2, maxDuration),
@@ -1037,6 +1066,10 @@ function normalizeEditPlan(plan, photos, context) {
   const MIN_NARRATABLE_SEC = 2.8;
   const isNarrated = snappedDurations.map((d) => d >= MIN_NARRATABLE_SEC);
   if (isNarrated.length > 0) isNarrated[0] = true; // the opener always speaks
+  // v33.2 (test-9): the FINAL scene always speaks too — it carries the CTA.
+  // Without this, a run of short trailing scenes donated all their airtime
+  // forward and the video's last third played in dead silence.
+  if (isNarrated.length > 1) isNarrated[isNarrated.length - 1] = true;
   const narrationWindows = snappedDurations.map((d, i) => {
     if (!isNarrated[i]) return 0;
     let w = d;
@@ -1057,9 +1090,13 @@ function normalizeEditPlan(plan, photos, context) {
     // absorbs residual overruns with ≤1.15x atempo, so budget + measurement
     // together make truncation rare instead of routine.
     const speakSec = narrationWindows[index] - 0.35 - 0.6;
-    const wordBudget = Math.floor(speakSec * 1.9);
+    // v33.2: the final scene's CTA gets a floor of 6 words even when the
+    // scene is short — a brief CTA reads fine with the aligned mixer's
+    // flow/atempo absorption, and a silent ending reads broken.
+    const isLastScene = index === baseScenes.length - 1;
+    const wordBudget = Math.max(Math.floor(speakSec * 1.9), isLastScene ? 6 : 0);
     const narrationLine = isNarrated[index] && wordBudget >= 3
-      ? clampNarrationToWords(s.rawNarration, wordBudget)
+      ? clampNarrationSentenceSafe(s.rawNarration, wordBudget)
       : "";
     const { rawNarration, ...rest } = s;
     return { ...rest, duration, narrationLine };
@@ -1436,6 +1473,42 @@ function clampNarrationToWords(text, maxWords = 22) {
   // Land on punctuation if there's any in the kept window — much smoother.
   const lastSentence = truncated.match(/^(.+[.!?])\s+/);
   return (lastSentence ? lastSentence[1] : truncated).trim();
+}
+
+// v33.2 SENTENCE-SAFE clamp (test-9: hard word cuts shipped amputated speech —
+// "nestled in a serene." / "boasts peaceful."). The aligned mixer absorbs
+// moderate overruns (flow into donated windows + ≤1.15x atempo), so integrity
+// beats budget: keep the whole line up to 1.35x budget; otherwise cut at the
+// last sentence end, else at the last clause boundary (comma/and/with), and
+// only hard-cut as a last resort — always ending with a period.
+function clampNarrationSentenceSafe(text, maxWords) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return "";
+  const words = trimmed.split(/\s+/);
+  if (words.length <= Math.ceil(maxWords * 1.35)) return trimmed;
+  const slack = words.slice(0, Math.ceil(maxWords * 1.35)).join(" ");
+  // 1) A full sentence inside the slack window — best cut.
+  const lastSentence = slack.match(/^(.+[.!?])(?:\s|$)/);
+  if (lastSentence) return lastSentence[1].trim();
+  // 2) Cut at the LAST comma inside the slack window — clause stays whole.
+  const lastComma = slack.lastIndexOf(",");
+  if (lastComma > slack.length * 0.4) {
+    return `${slack.slice(0, lastComma).trim()}.`;
+  }
+  // 3) Use the whole slack window (≤1.35x budget — the aligned mixer absorbs
+  //    that), stripped of any dangling function words so it ends on content:
+  //    "…peaceful views and" → "…peaceful views."
+  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including)$/i;
+  const slackWords = slack.replace(/[,;:\s]+$/, "").split(/\s+/);
+  while (slackWords.length > 3 && FUNCTION_WORDS.test(slackWords[slackWords.length - 1])) {
+    slackWords.pop();
+  }
+  if (slackWords.length >= 3) {
+    return `${slackWords.join(" ").replace(/[,;:\s]+$/, "")}.`;
+  }
+  // 4) Last resort: hard cut at budget.
+  const within = words.slice(0, maxWords).join(" ");
+  return `${within.replace(/[,;:\s]+$/, "")}.`;
 }
 
 // v23: structural validation of an edit plan. Returns { ok: bool, errors: [] }.
