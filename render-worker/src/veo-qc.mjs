@@ -58,14 +58,20 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
           role: "system",
           content:
             "You are a strict quality inspector for AI-generated real-estate video. " +
-            "You receive the ORIGINAL listing photo first, then 3 frames from a video " +
-            "generated FROM that photo. The video may only move the camera — the scene " +
-            "itself must match the photo. Respond with strict JSON: " +
-            '{"text_artifacts": boolean, "object_artifacts": boolean, "notes": "≤20 words"}. ' +
+            "You receive the ORIGINAL listing photo first, then 3 frames IN TIME ORDER " +
+            "from a video generated FROM that photo. The video may only move the camera — " +
+            "the scene itself must match the photo and behave rigidly. Respond with strict JSON: " +
+            '{"text_artifacts": boolean, "object_artifacts": boolean, "motion_artifacts": boolean, "notes": "≤20 words"}. ' +
             "text_artifacts=true if ANY text, numbers, symbols, captions, or watermark-like " +
             "shapes appear in frames that are not present in the original photo. " +
             "object_artifacts=true if any object is severely warped, floating, duplicated, " +
             "melted, or if a prominent new object appears that is not in the photo. " +
+            "motion_artifacts=true if, comparing the 3 frames AS A SEQUENCE from one " +
+            "continuous camera move, any furniture or object moves RELATIVE TO THE ROOM: " +
+            "it stays glued to the same frame position while walls/floor shift behind it, " +
+            "it slides across the floor, or it drifts against the direction everything else " +
+            "moves. Correct camera motion: ALL objects shift consistently with perspective " +
+            "(near objects shift more than far ones) and keep their exact spot on the floor. " +
             "Small softness/blur/lighting shifts are NOT artifacts. Be tolerant of minor " +
             "differences; flag only clearly visible defects a home buyer would notice."
         },
@@ -113,6 +119,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
     const reasons = [];
     if (verdict.text_artifacts === true) reasons.push("text artifacts");
     if (verdict.object_artifacts === true) reasons.push("object artifacts");
+    if (verdict.motion_artifacts === true) reasons.push("motion artifacts (object moves with camera)");
     const pass = reasons.length === 0;
     console.info(
       `[qc] scene ${sceneIndex + 1} (${roomType || "?"}): ${pass ? "PASS" : `FAIL (${reasons.join(", ")})`}` +
@@ -138,7 +145,9 @@ async function extractFrames(clipPath, tempDir, sceneIndex) {
   });
   const d = dur > 0 ? dur : 4;
   for (let i = 0; i < 3; i++) {
-    const t = Math.max(0.2, d * [0.25, 0.5, 0.75][i]);
+    // v32.2: 15/50/85% — wider spread gives the motion-artifact check a
+    // larger camera-move baseline to judge relative object displacement.
+    const t = Math.max(0.2, d * [0.15, 0.5, 0.85][i]);
     const framePath = path.join(tempDir, `qc-${String(sceneIndex).padStart(3, "0")}-${i}.jpg`);
     await runFFmpeg(
       ["-y", "-ss", t.toFixed(2), "-i", clipPath, "-frames:v", "1", "-q:v", "5", "-vf", "scale=512:-2", framePath],
