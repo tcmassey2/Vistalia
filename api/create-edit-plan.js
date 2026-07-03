@@ -469,6 +469,11 @@ export default async function handler(request, response) {
     // strict mode threw SyntaxError and 500'd every request.)
     const preNormalizeValidation = validateNormalizedPlan(parsed, photos);
     const normalizedPlan = normalizeEditPlan(parsed, photos, { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec });
+    // v32 observability: make the continuous script's presence LOUD in the
+    // function logs — its absence was silent for a full smoke-test round.
+    console.info(
+      `[plan] narrationScript: ${normalizedPlan.narrationScript ? normalizedPlan.narrationScript.trim().split(/\s+/).length + " words" : "ABSENT (per-line fallback will run)"}`
+    );
     const postNormalizeValidation = validateNormalizedPlan(normalizedPlan, photos);
     if (!preNormalizeValidation.ok) {
       logMotionDirector("warn", "Pre-normalize validation found issues; normalize step repaired them.", {
@@ -652,6 +657,15 @@ function editPlanSchema(photoIds, targetSceneCount, { includeNarration = false }
       exportFormat: { type: "string" },
       selectedStyle: { type: "string" },
       musicMood: { type: "string" },
+      // v32 continuous narration: ONE flowing voiceover for the whole tour.
+      // ROOT-CAUSE NOTE (round-5 smoke test): this field was instructed in
+      // the prompt but MISSING from this strict schema — strict structured
+      // outputs cannot return unlisted properties, so the model never
+      // produced it and the mixer silently fell back to the per-line path.
+      // Schema is the contract; prompt text alone is dead letter.
+      ...(includeNarration ? {
+        narrationScript: { type: ["string", "null"], maxLength: 1400 }
+      } : {}),
       introCard: {
         type: "object",
         additionalProperties: false,
@@ -716,7 +730,9 @@ function editPlanSchema(photoIds, targetSceneCount, { includeNarration = false }
         }
       }
     },
-    required: ["heroPhotoId", "exportFormat", "selectedStyle", "musicMood", "introCard", "outroCard", "scenes"]
+    required: includeNarration
+      ? ["heroPhotoId", "exportFormat", "selectedStyle", "musicMood", "narrationScript", "introCard", "outroCard", "scenes"]
+      : ["heroPhotoId", "exportFormat", "selectedStyle", "musicMood", "introCard", "outroCard", "scenes"]
   };
 }
 

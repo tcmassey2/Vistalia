@@ -415,7 +415,13 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
 
   onProgress?.({ phase: "Synthesizing voiceover", fraction: 0.2 });
   const mp3Path = path.join(tempDir, `${jobId}-narration-script.mp3`);
-  await synthesizeToFile({ text: script, voiceId, outPath: mp3Path });
+  // Long-form read profile: the v27 per-line settings (stability 0.45,
+  // style 0.30) were tuned for 5-word expressive fragments and can wander
+  // or glitch over a 50+ word read. Steadier profile for the single pass.
+  await synthesizeToFile({
+    text: script, voiceId, outPath: mp3Path,
+    settingsOverride: { stability: 0.55, similarity_boost: 0.85, style: 0.15, use_speaker_boost: true }
+  });
 
   const rawDur = await probeAudioDuration(mp3Path);
   const dur = rawDur > 0 ? rawDur : availSec;
@@ -500,7 +506,7 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
    Helpers
    ============================================================ */
 
-async function synthesizeToFile({ text, voiceId, outPath, previousText = "", nextText = "" }) {
+async function synthesizeToFile({ text, voiceId, outPath, previousText = "", nextText = "", settingsOverride = null }) {
   const response = await fetchWithTimeout(
     `${ELEVENLABS_BASE}/text-to-speech/${encodeURIComponent(voiceId)}`,
     {
@@ -521,7 +527,9 @@ async function synthesizeToFile({ text, voiceId, outPath, previousText = "", nex
         ...(nextText ? { next_text: nextText } : {}),
         // v27.1 expressiveness: lower stability + higher style read as a warm,
         // natural human read instead of the old flat/monotone 0.55/0.18.
-        voice_settings: {
+        // v32: continuous long-form reads pass settingsOverride (steadier
+        // profile) — the expressive per-line profile wanders on 50+ words.
+        voice_settings: settingsOverride || {
           stability: 0.45,
           similarity_boost: 0.85,
           style: 0.30,
