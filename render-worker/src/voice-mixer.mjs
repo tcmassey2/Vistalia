@@ -175,25 +175,36 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     .map((entry, i) => {
       if (!entry) return null;
       const sceneDur = sceneDurs[i];
-      // The LAST line has no following line to overlap, and the master video
-      // continues into the silent brand-outro card — so let it use ALL the room
-      // up to the master end (minus a tail) instead of the tight per-scene cap.
-      // Every other line stays strictly inside its scene window so it can never
-      // bleed into the next line.
+      // v31.1 flowing narration: a line's window runs to the start of the NEXT
+      // NARRATED scene, not the next cut. With dense v31 plans (alternating
+      // ~4s/2s scenes on some beat grids) short scenes carry no line of their
+      // own — their airtime belongs to the previous line so sentences flow
+      // across quick cuts instead of being chopped into fragments. Overlap
+      // with the next LINE remains impossible: the window ends where the
+      // next narrated scene begins.
       const isLast = i === lastNarrIndex;
-      const windowEndSec = isLast
-        ? Math.max(sceneStarts[i] + sceneDur, narrationTrackDurSec)
-        : sceneStarts[i] + sceneDur;
+      let windowEndSec = sceneStarts[i] + sceneDur;
+      if (isLast) {
+        // Last line: run up to the master end (video continues into the
+        // silent brand-outro card).
+        windowEndSec = Math.max(windowEndSec, narrationTrackDurSec);
+      } else {
+        for (let j = i + 1; j < synthesized.length; j++) {
+          if (synthesized[j]) { windowEndSec = sceneStarts[j]; break; }
+          windowEndSec = sceneStarts[j] + sceneDurs[j];
+        }
+      }
+      const windowDur = windowEndSec - sceneStarts[i];
       // Two guards: subtractive (window - leadIn - tail) AND, for non-final
-      // lines only, proportional (90% of sceneDur). Min of the two is the cap.
-      const cap1 = windowEndSec - sceneStarts[i] - leadInSec - TAIL_BUFFER_SEC;
-      const cap2 = isLast ? Infinity : sceneDur * 0.90;
+      // lines only, proportional (90% of the full window). Min of the two.
+      const cap1 = windowDur - leadInSec - TAIL_BUFFER_SEC;
+      const cap2 = isLast ? Infinity : windowDur * 0.90;
       const maxNarrationSec = Math.max(0.6, Math.min(cap1, cap2));
       const sceneEndMs = Math.round(windowEndSec * 1000);
       return {
         mp3Path: entry.mp3Path,
         sceneStartSec: sceneStarts[i],
-        sceneDurSec: sceneDur,
+        sceneDurSec: windowDur,
         delayMs: Math.round((sceneStarts[i] + leadInSec) * 1000),
         maxNarrationSec,
         sceneEndMs
@@ -214,9 +225,18 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   const narrationActiveWindows = synthesized
     .map((entry, i) => {
       if (!entry) return null;
-      // Keep music ducked through the (possibly extended) last line.
-      const endSec = (i === lastNarrIndex ? narrationTrackDurSec : sceneStarts[i] + sceneDurs[i]) - 0.2;
-      return [sceneStarts[i] + leadInSec, endSec];
+      // Duck music through each line's FULL (v31.1 extended) window — to the
+      // next narrated scene, or master end for the last line.
+      let endSec = sceneStarts[i] + sceneDurs[i];
+      if (i === lastNarrIndex) {
+        endSec = narrationTrackDurSec;
+      } else {
+        for (let j = i + 1; j < synthesized.length; j++) {
+          if (synthesized[j]) { endSec = sceneStarts[j]; break; }
+          endSec = sceneStarts[j] + sceneDurs[j];
+        }
+      }
+      return [sceneStarts[i] + leadInSec, endSec - 0.2];
     })
     .filter(Boolean);
 

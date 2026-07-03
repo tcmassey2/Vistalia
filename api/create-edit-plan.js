@@ -563,7 +563,12 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
                 // cheap 4s bucket after xfade compensation); allow 4-6s only
                 // for hero shots. Faster cutting also matches Reels/TikTok
                 // pacing and the per-style beat cadences.
-                ? "Engine is Cinematic AI (Veo image-to-video). Set scene duration to 3-3.5 seconds for most scenes; the exterior hero and one or two showcase rooms may run 4-6 seconds; never exceed 6. Pick subtle, stable camera motion appropriate to each room."
+                // v31.2 launch bias: lateral/parallax moves are where
+                // object-glide artifacts live (objects tracking with the
+                // camera). Depth-axis moves (push/pull) are the most stable
+                // on image-to-video. Keep laterals rare and only where
+                // there's real depth to traverse.
+                ? "Engine is Cinematic AI (Veo image-to-video). Set scene duration to 3-3.5 seconds for most scenes; the exterior hero and one or two showcase rooms may run 4-6 seconds; never exceed 6. Camera motion: strongly prefer push_in and pull_out (most stable). Use lateral_pan or parallax_zoom ONLY for wide, open, deep spaces (large great rooms, exteriors with long sightlines) — never in furnished rooms shot at close or medium range. Use detail_sweep only on true close-up detail shots."
                 : "Engine is Quick Reel (Ken Burns photo motion). Scene duration 2.0–3.0s for kitchen/living, 1.6–2.4s for detail shots, 2.6–3.2s for hero shots.",
               narrationGuidance,
               "Return strict JSON only."
@@ -965,14 +970,35 @@ function normalizeEditPlan(plan, photos, context) {
     }
   }
 
+  // v31.1 flowing narration: dense plans on some beat grids alternate long
+  // (~4s) and short (~2s) scenes. Short scenes can't hold a spoken line, so
+  // instead of leaving choppy silent gaps, each short scene's airtime is
+  // DONATED to the preceding narrated line — lines are written longer and the
+  // voice flows across quick cuts. The worker's voice-mixer extends each
+  // line's window to the next narrated scene with the same rule.
+  const MIN_NARRATABLE_SEC = 2.8;
+  const isNarrated = snappedDurations.map((d) => d >= MIN_NARRATABLE_SEC);
+  if (isNarrated.length > 0) isNarrated[0] = true; // the opener always speaks
+  const narrationWindows = snappedDurations.map((d, i) => {
+    if (!isNarrated[i]) return 0;
+    let w = d;
+    for (let j = i + 1; j < snappedDurations.length && !isNarrated[j]; j++) {
+      w += snappedDurations[j];
+    }
+    return w;
+  });
+
   const scenes = baseScenes.map((s, index) => {
     const duration = snappedDurations[index];
-    // v28.1: size narration to ITS (beat-snapped) scene — never chopped, never
-    // bleeding into the next scene or the brand-outro card. ~2.3 spoken words/s
-    // minus the mixer's 0.35s lead-in + 0.6s tail. Too short → silent.
-    const speakSec = duration - 0.35 - 0.6;
+    // Size narration to the line's full WINDOW (its scene + any following
+    // silent short scenes) — never chopped, never bleeding into the next
+    // line or the brand-outro card. ~2.3 spoken words/s minus the mixer's
+    // 0.35s lead-in + 0.6s tail. Too short → silent.
+    const speakSec = narrationWindows[index] - 0.35 - 0.6;
     const wordBudget = Math.floor(speakSec * 2.3);
-    const narrationLine = wordBudget >= 3 ? clampNarrationToWords(s.rawNarration, wordBudget) : "";
+    const narrationLine = isNarrated[index] && wordBudget >= 3
+      ? clampNarrationToWords(s.rawNarration, wordBudget)
+      : "";
     const { rawNarration, ...rest } = s;
     return { ...rest, duration, narrationLine };
   });

@@ -21,6 +21,7 @@ import { applyVoiceNarration } from "./voice-mixer.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
 import { runFFmpeg, timed } from "./ffmpeg-runner.mjs";
 import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
+import { qcVeoClip, qcEnabled } from "./veo-qc.mjs";
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -164,6 +165,8 @@ export async function renderRunwayJob(body, options = {}) {
 
   let scenesCompleted = 0;
   let fallbackCount = 0;
+  let qcRetryCount = 0;      // v31.2: clips regenerated constrained after QC fail
+  let qcKenBurnsCount = 0;   // v31.2: clips downgraded to the Ken Burns floor
   let guardForcedCount = 0;
   // Per-scene failure recovery: when Runway fails on a single scene we
   // generate a Ken-Burns–style fallback clip from the same photo using
@@ -194,6 +197,7 @@ export async function renderRunwayJob(body, options = {}) {
             `→ constrained prompt. risk=${guardDecision.risk}/100, reason="${guardDecision.reason}"`
           );
         }
+        let usedConstrained = constrained;
         try {
           result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained });
         } catch (error) {
@@ -202,6 +206,7 @@ export async function renderRunwayJob(body, options = {}) {
           console.warn(`[veo] scene ${index + 1} failed (${error.message}). Retrying once, constrained.`);
           try {
             result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
+            usedConstrained = true;
             fallbackCount++; // counted as "retried", surfaces in phase text
           } catch (retryError) {
             // No partial videos, no silent quality downgrades. Fail the
@@ -212,6 +217,52 @@ export async function renderRunwayJob(body, options = {}) {
             );
             err.code = "VEO_SCENE_FAILED";
             throw err;
+          }
+        }
+
+        // v31.2 VERIFY-THEN-DELIVER: prompts alone provably don't stop Veo
+        // hallucinations (July 2 smoke test drew a "4%" over a couch WITH the
+        // strict no-text suffix in the prompt). Inspect every generated clip
+        // against its source photo with a cheap vision check; ladder on
+        // failure: cinematic → constrained regen → Ken Burns floor. Detected
+        // garbage never ships. QC fails OPEN on infrastructure errors, so
+        // renders are never less reliable than they were without it.
+        if (qcEnabled() && result) {
+          const qcPhoto = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
+          const qcSrcUrl = pickImageUrl(scene, qcPhoto);
+          let verdict = await qcVeoClip({
+            clipPath: result.clipPath, sourceImageUrl: qcSrcUrl,
+            sceneIndex: index, roomType: scene.roomType, tempDir
+          });
+          if (verdict.checked && !verdict.pass && !usedConstrained) {
+            console.warn(`[qc] scene ${index + 1} failed QC (${verdict.reasons.join(", ")}) — regenerating constrained.`);
+            qcRetryCount++;
+            try {
+              const retry = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
+              const verdict2 = await qcVeoClip({
+                clipPath: retry.clipPath, sourceImageUrl: qcSrcUrl,
+                sceneIndex: index, roomType: scene.roomType, tempDir
+              });
+              if (verdict2.checked && !verdict2.pass) {
+                verdict = verdict2; // fall through to KB floor below
+              } else {
+                result = retry;
+                verdict = verdict2;
+              }
+            } catch (qcRetryErr) {
+              console.warn(`[qc] scene ${index + 1} constrained regen failed (${qcRetryErr.message}) — Ken Burns floor.`);
+              verdict = { checked: true, pass: false, reasons: ["regen failed"] };
+            }
+          }
+          if (verdict.checked && !verdict.pass) {
+            // Ken Burns floor: static but artifact-free. Match the Veo clip's
+            // beat-snapped duration exactly so stitch/voice math is untouched
+            // (the stock KB helper defaults to 5/10s clips).
+            console.warn(`[qc] scene ${index + 1} still failing (${verdict.reasons.join(", ")}) — using Ken Burns floor.`);
+            qcKenBurnsCount++;
+            const veoDuration = result.duration;
+            result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
+            result.duration = veoDuration;
           }
         }
       } else if (complianceMode || guardDecision.useKenBurns) {
@@ -254,11 +305,22 @@ export async function renderRunwayJob(body, options = {}) {
   );
 
   if (!complianceMode && guardLevel !== "off") {
+    // v31: name the actual mechanism per engine — on Veo, guard-forced scenes
+    // get the constrained prompt (same engine), NOT Ken Burns. The old wording
+    // sent a smoke-test debugging session down the wrong path.
     console.info(
       `[runway] Hallucination Guard summary — guard=${guardLevel}, ` +
-      `${guardForcedCount}/${photoScenes.length} scene${photoScenes.length === 1 ? "" : "s"} locked to Ken Burns by risk score, ` +
-      `${fallbackCount} additional scene${fallbackCount === 1 ? "" : "s"} fell back due to Runway errors.`
+      `${guardForcedCount}/${photoScenes.length} scene${photoScenes.length === 1 ? "" : "s"} ${isVeo ? "forced to CONSTRAINED Veo prompts" : "locked to Ken Burns"} by risk score, ` +
+      `${fallbackCount} additional scene${fallbackCount === 1 ? "" : "s"} ${isVeo ? "retried constrained after a failure" : "fell back due to Runway errors"}.`
     );
+  }
+  if (isVeo && qcEnabled()) {
+    console.info(
+      `[qc] Verify-then-deliver summary — ${qcRetryCount} scene${qcRetryCount === 1 ? "" : "s"} regenerated constrained after QC fail, ` +
+      `${qcKenBurnsCount} downgraded to the Ken Burns floor. Detected artifacts shipped: 0 by construction.`
+    );
+  } else if (isVeo) {
+    console.warn(`[qc] Verify-then-deliver DISABLED — set OPENAI_API_KEY on the worker to enable per-scene artifact QC.`);
   }
 
   options.onProgress?.({ phase: "Stitching final video", progress: 76 });
@@ -1904,15 +1966,18 @@ function decideUseKenBurns(scene, guardLevel) {
   const room = String(scene?.roomType || "").toLowerCase();
 
   // v27 AUDIT FIX: rotational objects (ceiling fans, chandeliers, pendants) are
-  // the single most damaging hallucination — they SPIN or morph. The old risk
-  // math let a living-room/bedroom ceiling fan (~35-55) sail under the 90
-  // balanced threshold straight onto the cinematic path. Now ANY scene naming a
-  // rotational object is forced safe regardless of score. On the Veo path this
-  // maps to the CONSTRAINED "nothing moves" prompt; on legacy Runway, Ken Burns.
-  const riskBlob = [
-    Array.isArray(scene?.visibleFeatures) ? scene.visibleFeatures.join(" ") : "",
-    scene?.runwayPrompt || "", scene?.veoPrompt || "", scene?.runway_prompt || ""
-  ].join(" ").toLowerCase();
+  // the single most damaging hallucination — they SPIN or morph. ANY scene
+  // whose photo contains one is forced safe regardless of score. On the Veo
+  // path this maps to the CONSTRAINED "nothing moves" prompt; legacy Runway,
+  // Ken Burns.
+  //
+  // v31 SMOKE-TEST FIX: scan ONLY visibleFeatures (the vision model's
+  // observations of the photo). The old blob included the PROMPTS — and every
+  // prompt ends with the universal constraint clause ("NO NEW CEILING FANS…
+  // NO fan blades"), so the guard read its own prohibition text, matched
+  // "fan", and forced 100% of scenes onto the flat constrained prompt on
+  // every render since v27. The styled cinematic prompts never ran.
+  const riskBlob = (Array.isArray(scene?.visibleFeatures) ? scene.visibleFeatures.join(" ") : "").toLowerCase();
   if (RISK_KEYWORDS.rotational.some((kw) => riskBlob.includes(kw))) {
     return { useKenBurns: true, risk, reason: `rotational object (fan/pendant) → constrained (risk ${risk})` };
   }
@@ -1963,14 +2028,11 @@ function computeHallucinationRisk(scene) {
   const room = String(scene?.roomType || "").toLowerCase();
   let score = ROOM_BASE_RISK[room] ?? 15;
 
-  // Build a lowercase search blob from visibleFeatures + runwayPrompt. The
-  // prompt is included because Motion Director sometimes names risky
-  // features that the visibleFeatures array missed.
-  const blobParts = [];
-  if (Array.isArray(scene?.visibleFeatures)) blobParts.push(scene.visibleFeatures.join(" "));
-  if (scene?.runwayPrompt) blobParts.push(scene.runwayPrompt);
-  if (scene?.runway_prompt) blobParts.push(scene.runway_prompt);
-  const blob = blobParts.join(" ").toLowerCase();
+  // v31 SMOKE-TEST FIX: score ONLY visibleFeatures. The blob used to include
+  // runwayPrompt, whose appended universal constraint clause names fans,
+  // fridges, signs, and text — inflating every scene's score ~+30 with
+  // keywords from our own prohibition sentences rather than the photo.
+  const blob = (Array.isArray(scene?.visibleFeatures) ? scene.visibleFeatures.join(" ") : "").toLowerCase();
 
   // v24.3: halved per-category bumps so non-kitchen/bath scenes rarely
   // hit the 80 threshold. Previous values (25/20/30/15/10) sent a
