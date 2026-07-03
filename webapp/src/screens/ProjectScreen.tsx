@@ -2248,6 +2248,9 @@ function RenderControls() {
         promptVersion: (planResult.editPlan as any).promptVersion || null,
         introCard: planResult.editPlan.introCard,
         outroCard: planResult.editPlan.outroCard,
+        // v32: one continuous voiceover script for the whole tour — the
+        // worker synthesizes it in a single TTS pass (no per-scene chops).
+        narrationScript: (planResult.editPlan as any).narrationScript || "",
         musicMood: planResult.editPlan.musicMood,
         // Music selector: explicit track filename overrides the style
         // default in the worker's pickMusicUrl. Resolved here so the

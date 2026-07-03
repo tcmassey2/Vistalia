@@ -126,6 +126,9 @@ export interface RenderManifest {
   app: "Vistalia";
   engine: RenderEngine;
   exportFormat: ExportFormat;
+  // v32: one continuous voiceover script for the whole tour — synthesized in
+  // a single TTS pass by the worker (replaces per-scene line scheduling).
+  narrationScript?: string;
   // The Remotion composition reads listing facts from manifest.project to
   // populate address overlays, lower-third price card, and the EndCard.
   // Keep these fields populated; missing values render as blank slots.

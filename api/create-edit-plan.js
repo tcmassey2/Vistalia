@@ -527,8 +527,12 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   // line; the AI is asked to vary length and cadence so it doesn't sound
   // monotonous.
   const narrationTargetCount = targetSceneCount;
+  // v32: the PRIMARY narration deliverable is one continuous script; the
+  // per-scene lines are kept for single-scene regen and as a fallback.
+  const scriptWordTarget = Math.round(clampedDuration * 1.7);
   const narrationGuidance = includeNarration
     ? [
+        `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour, approximately ${scriptWordTarget} words (hard maximum ${Math.round(scriptWordTarget * 1.15)}). Write it as flowing spoken prose in the same order as the scenes: open by naming the property, walk through the spaces with natural transitions ("Through the entry…", "Out back…"), and end with a short call to action. No scene numbers, no headings, no stage directions — only words to be read aloud. It will be read continuously over the whole video, so it must read as one connected piece, not disconnected captions.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Keep EVERY line SHORT — the narrator reads slowly and deliberately (~1.9 words/sec): a 3s scene fits ~3-4 words, a 4s scene ~5-6, a 5-6s hero scene ~8-9 max. A line must finish with a beat of breathing room before its scene ends — never write a line that would run past its scene. When in doubt, write FEWER words. Vary cadence: mix 3-5 word observations ("Crown molding throughout", "Quartz counters, soft-close") with slightly longer lines only on the longest hero scenes.`,
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
@@ -759,6 +763,11 @@ function deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTra
   });
   return normalizeEditPlan({
     source: "deterministic-fallback",
+    // v32: fallback continuous script = the per-scene lines joined into one
+    // read. Less elegant than the Motion Director's, but flows in one pass.
+    narrationScript: includeNarration
+      ? scenes.map((s) => String(s.narrationLine || "").trim()).filter(Boolean).join(" ")
+      : "",
     heroPhotoId: scenes[0]?.photoId || photos[0]?.id,
     exportFormat,
     selectedStyle,
@@ -1035,6 +1044,15 @@ function normalizeEditPlan(plan, photos, context) {
       subline: cleanText(plan.outroCard?.subline || context.listingDetails.brokerage || "", 100)
     },
     runwayConfig: isAiEngine ? defaultRunwayConfig(context.exportFormat) : null,
+    // v32 CONTINUOUS NARRATION: one flowing voiceover for the whole tour,
+    // synthesized in a single TTS pass and laid over the full photo section.
+    // Kills the per-scene window model that chopped lines mid-sentence (or
+    // forced robotic 3-word fragments) — rounds 1-4 of the July smoke tests.
+    // Per-scene narrationLine fields remain for Edit Studio regen + fallback.
+    narrationScript: cleanText(
+      plan.narrationScript || "",
+      Math.max(400, Math.round((Number(context.targetDurationSec) || 30) * 2.2 * 7))
+    ),
     scenes: finalScenes
   };
 }

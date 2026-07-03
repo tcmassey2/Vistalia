@@ -214,6 +214,9 @@ export async function regenerateScene(body, options = {}) {
             clipResults.filter((c) => c && c.photoId).map((c) => [c.photoId, Number(c.duration) || 0])
           ),
           crossfadeOverlapSec: manifest?.runwayConfig?.useCrossfades !== false ? 0.5 : 0,
+          // v32: continuous script (same one the original render used) so a
+          // single-scene regen re-lays the identical voiceover.
+          narrationScript: manifest?.narrationScript || "",
           brandKit: manifest.brandKit || {},
           tempDir,
           jobId,

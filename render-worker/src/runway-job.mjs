@@ -363,6 +363,8 @@ export async function renderRunwayJob(body, options = {}) {
           // lines), fatal at v31's 8-17 scenes where late lines get chopped
           // by their own scene-window caps.
           crossfadeOverlapSec: manifest?.runwayConfig?.useCrossfades !== false ? 0.5 : 0,
+          // v32: one continuous script for the whole tour (single TTS pass).
+          narrationScript: manifest?.narrationScript || "",
           brandKit: manifest.brandKit || {},
           tempDir,
           jobId,

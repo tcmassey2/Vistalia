@@ -41,7 +41,7 @@ const DUCK_LEVEL = Number(process.env.DUCK_LEVEL ?? 0.30);
 // manifest.voiceLevel.
 const VOICE_WEIGHT = Number(process.env.VOICE_LEVEL ?? 1.4);
 
-export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, crossfadeOverlapSec = 0, brandKit, tempDir, jobId, onProgress }) {
+export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, crossfadeOverlapSec = 0, narrationScript = "", brandKit, tempDir, jobId, onProgress }) {
   // v26.9: actual rendered clip duration per scene (keyed by photoId). When
   // present it overrides the manifest's stated duration so narration timing
   // matches the real video exactly — the single biggest narration-sync fix.
@@ -68,6 +68,24 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   // passes cloned IDs through. Before this, slugs were sent verbatim and every
   // preset-voice render shipped silent.
   const voiceId = resolveVoiceId(brandKit?.voiceId, brandKit?.style);
+
+  // ============================================================
+  // v32 CONTINUOUS NARRATION (primary path)
+  // One flowing script, ONE ElevenLabs call, laid over the whole photo
+  // section. No per-scene windows → nothing to chop, natural prosody across
+  // cuts. The per-line path below remains as the fallback for manifests
+  // without a narrationScript (older plans, Edit Studio regen).
+  // ============================================================
+  if (typeof narrationScript === "string" && narrationScript.trim().split(/\s+/).length >= 8) {
+    try {
+      return await applyContinuousNarration({
+        masterMp4, photoScenes, realDur, crossfadeOverlapSec,
+        script: narrationScript.trim(), voiceId, tempDir, jobId, onProgress
+      });
+    } catch (err) {
+      console.warn(`[voice] continuous narration failed (${err.message}) — falling back to per-line path.`);
+    }
+  }
 
   // ============================================================
   // STEP 1 — synthesize each narration line via ElevenLabs (parallel)
@@ -376,6 +394,105 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     narrationApplied: true,
     voiceId,
     narrationLineCount: narrationScenes.length
+  };
+}
+
+/* ============================================================
+   v32 — continuous narration
+   ============================================================ */
+
+async function applyContinuousNarration({ masterMp4, photoScenes, realDur, crossfadeOverlapSec, script, voiceId, tempDir, jobId, onProgress }) {
+  // Visible photo-section length (same model as the per-line path): each
+  // crossfade join eats crossfadeOverlapSec of clip.
+  let trackDurSec = 0;
+  for (const sc of photoScenes) {
+    const d = realDur(sc, Number(sc.duration || 3));
+    trackDurSec += Math.max(0.8, d - crossfadeOverlapSec);
+  }
+  const leadInSec = 0.35;
+  const tailGuardSec = 0.4;
+  const availSec = Math.max(3, trackDurSec - leadInSec - tailGuardSec);
+
+  onProgress?.({ phase: "Synthesizing voiceover", fraction: 0.2 });
+  const mp3Path = path.join(tempDir, `${jobId}-narration-script.mp3`);
+  await synthesizeToFile({ text: script, voiceId, outPath: mp3Path });
+
+  const rawDur = await probeAudioDuration(mp3Path);
+  const dur = rawDur > 0 ? rawDur : availSec;
+  let tempo = 1;
+  if (dur > availSec) tempo = Math.min(1.15, dur / availSec);
+  const effective = dur / tempo;
+  const trimmed = effective > availSec + 0.05;
+  console.info(
+    `[voice] continuous script: ${script.split(/\s+/).length} words, mp3 ${dur.toFixed(2)}s, ` +
+    `photo section ${trackDurSec.toFixed(2)}s, avail ${availSec.toFixed(2)}s` +
+    (tempo > 1.005 ? ` → atempo ${tempo.toFixed(3)}` : "") +
+    (trimmed ? " → TRIM+fade tail (script over budget)" : " → fits")
+  );
+
+  onProgress?.({ phase: "Building narration track", fraction: 0.6 });
+  const chain = [
+    tempo > 1.005 ? `atempo=${tempo.toFixed(4)}` : null,
+    `atrim=duration=${availSec.toFixed(2)}`,
+    "asetpts=PTS-STARTPTS",
+    "afade=t=in:st=0:d=0.08",
+    trimmed ? `afade=t=out:st=${Math.max(0, availSec - 0.6).toFixed(2)}:d=0.60` : null,
+    `adelay=${Math.round(leadInSec * 1000)}|${Math.round(leadInSec * 1000)}`,
+    `apad=whole_dur=${Math.round(trackDurSec * 1000)}ms`
+  ].filter(Boolean).join(",");
+  const filterComplex =
+    `[1:a]${chain}[n0];[0:a][n0]amix=inputs=2:duration=first:dropout_transition=0,atrim=duration=${trackDurSec}[narr]`;
+
+  const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
+  await runFFmpeg([
+    "-y", "-threads", "1",
+    "-f", "lavfi", "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${trackDurSec}`,
+    "-i", mp3Path,
+    "-filter_complex", filterComplex,
+    "-map", "[narr]",
+    "-c:a", "libmp3lame", "-b:a", "128k",
+    "-t", String(trackDurSec),
+    narrationTrackPath
+  ], { timeoutMs: 90000, label: "voice:continuous-track" });
+
+  onProgress?.({ phase: "Mixing narration with music", fraction: 0.85 });
+  const speechEnd = Math.min(trackDurSec, leadInSec + Math.min(effective, availSec) + 0.2);
+  const volumeExpr = `if(between(t,${(leadInSec - 0.1).toFixed(2)},${speechEnd.toFixed(2)}),${DUCK_LEVEL},1)`;
+  const mixedMp4 = path.join(tempDir, `${jobId}-narrated.mp4`);
+  const masterHasAudio = await detectAudioStream(masterMp4);
+
+  if (masterHasAudio) {
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", masterMp4,
+      "-i", narrationTrackPath,
+      "-filter_complex",
+      `[0:a:0]volume=eval=frame:volume='${volumeExpr}'[ducked];[ducked][1:a]amix=inputs=2:duration=first:dropout_transition=0:weights=1 ${VOICE_WEIGHT.toFixed(2)},loudnorm=I=-16:TP=-1.5:LRA=11[aout]`,
+      "-map", "0:v:0", "-map", "[aout]",
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+      "-shortest",
+      mixedMp4
+    ], { timeoutMs: 90000, label: "voice:continuous-final-mix" });
+  } else {
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", masterMp4, "-i", narrationTrackPath,
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+      "-map", "0:v:0", "-map", "1:a:0",
+      "-shortest",
+      mixedMp4
+    ], { timeoutMs: 60000, label: "voice:continuous-mix-narration-only" });
+  }
+
+  await fs.unlink(mp3Path).catch(() => {});
+  await fs.unlink(narrationTrackPath).catch(() => {});
+
+  return {
+    masterMp4: mixedMp4,
+    narrationApplied: true,
+    voiceId,
+    narrationLineCount: 1,
+    continuous: true
   };
 }
 
