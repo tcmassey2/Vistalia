@@ -259,14 +259,40 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   // a line is actually longer than its cap — turning what used to be an abrupt
   // mid-word chop into a natural fade. Shorter lines end on their own clean
   // sentence boundary, untouched. asetpts after trim, then fades, then position.
+  // v31.3 MEASURE-AND-FIT: the word budget assumes a speaking rate, but the
+  // v27 "natural read" ElevenLabs settings speak slower — lines ran ~15-20%
+  // past their windows and the atrim cap CHOPPED them mid-sentence ("cuts
+  // itself off too soon", round-3 smoke test). Instead of assuming, probe
+  // each synthesized MP3's real duration: overruns up to 15% are absorbed
+  // with atempo time-compression (≤1.15x is imperceptible on speech);
+  // anything still over gets the old trim+fade as a last resort. Lines that
+  // fit are left completely untouched — no fade nibbling their natural tail.
+  for (const n of placedNarrations) {
+    n.mp3DurSec = await probeAudioDuration(n.mp3Path);
+  }
   const adelaySteps = placedNarrations
     .map((n, i) => {
-      const fadeOutStart = Math.max(0, n.maxNarrationSec - FADE_OUT_SEC).toFixed(2);
-      return (
-        `[${i + 1}:a]atrim=duration=${n.maxNarrationSec.toFixed(2)},asetpts=PTS-STARTPTS,` +
-        `afade=t=in:st=0:d=${FADE_IN_SEC},afade=t=out:st=${fadeOutStart}:d=${FADE_OUT_SEC.toFixed(2)},` +
-        `adelay=${n.delayMs}|${n.delayMs},apad=whole_dur=${n.sceneEndMs}ms[n${i}]`
+      const cap = n.maxNarrationSec;
+      const dur = n.mp3DurSec > 0 ? n.mp3DurSec : cap; // probe failed → old behavior
+      let tempo = 1;
+      if (dur > cap) tempo = Math.min(1.15, dur / cap);
+      const effective = dur / tempo;
+      const trimmed = effective > cap + 0.05;
+      console.info(
+        `[voice] line ${i + 1}: mp3 ${dur.toFixed(2)}s vs window ${cap.toFixed(2)}s` +
+        (tempo > 1.005 ? ` → atempo ${tempo.toFixed(3)}` : "") +
+        (trimmed ? " → TRIM+fade (still over)" : " → fits clean")
       );
+      const chain = [
+        tempo > 1.005 ? `atempo=${tempo.toFixed(4)}` : null,
+        `atrim=duration=${cap.toFixed(2)}`,
+        `asetpts=PTS-STARTPTS`,
+        `afade=t=in:st=0:d=${FADE_IN_SEC}`,
+        trimmed ? `afade=t=out:st=${Math.max(0, cap - FADE_OUT_SEC).toFixed(2)}:d=${FADE_OUT_SEC.toFixed(2)}` : null,
+        `adelay=${n.delayMs}|${n.delayMs}`,
+        `apad=whole_dur=${n.sceneEndMs}ms`
+      ].filter(Boolean).join(",");
+      return `[${i + 1}:a]${chain}[n${i}]`;
     })
     .join(";");
   const mixInputs = placedNarrations.map((_, i) => `[n${i}]`).join("");
@@ -398,6 +424,23 @@ async function synthesizeToFile({ text, voiceId, outPath, previousText = "", nex
 
 // Probe whether the input MP4 has an audio stream. Used to decide whether
 // to duck music or to use narration as the sole audio source.
+// v31.3: real duration of a synthesized narration MP3 (0 on failure —
+// callers treat 0 as "unknown, use legacy behavior").
+async function probeAudioDuration(filePath) {
+  return new Promise((resolve) => {
+    const proc = spawn("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "csv=p=0",
+      filePath
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    proc.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    proc.on("close", () => resolve(Number(stdout.trim()) || 0));
+    proc.on("error", () => resolve(0));
+  });
+}
+
 async function detectAudioStream(filePath) {
   return new Promise((resolve) => {
     const proc = spawn("ffprobe", [

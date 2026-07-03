@@ -530,7 +530,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   const narrationGuidance = includeNarration
     ? [
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
-        `Keep EVERY line short enough to be spoken comfortably within its scene's length at a natural pace (~2 words/sec): a 3s scene fits ~4-5 words, a 4s scene ~6-8, a 5-6s hero scene ~10-12 max. A line must finish with a beat of breathing room before its scene ends — never write a line that would run past its scene. Vary cadence: mix 3-6 word observations ("Crown molding throughout", "Quartz counters, soft-close cabinets") with slightly longer lines only on the longest hero scenes.`,
+        `Keep EVERY line SHORT — the narrator reads slowly and deliberately (~1.9 words/sec): a 3s scene fits ~3-4 words, a 4s scene ~5-6, a 5-6s hero scene ~8-9 max. A line must finish with a beat of breathing room before its scene ends — never write a line that would run past its scene. When in doubt, write FEWER words. Vary cadence: mix 3-5 word observations ("Crown molding throughout", "Quartz counters, soft-close") with slightly longer lines only on the longest hero scenes.`,
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
         `The agent's name is "${brandKit.fullName || "the listing agent"}", brokerage "${brandKit.brokerage || "their brokerage"}". Refer to them only on scene 1 and the outro CTA — don't repeat the name throughout.`,
         `Narration MUST stay grounded in the listing facts provided (price, beds, baths, sq ft, address) and what is visible in the photo. Never invent features, views, schools, or neighborhoods.`,
@@ -992,10 +992,14 @@ function normalizeEditPlan(plan, photos, context) {
     const duration = snappedDurations[index];
     // Size narration to the line's full WINDOW (its scene + any following
     // silent short scenes) — never chopped, never bleeding into the next
-    // line or the brand-outro card. ~2.3 spoken words/s minus the mixer's
-    // 0.35s lead-in + 0.6s tail. Too short → silent.
+    // line or the brand-outro card. v31.3: budget at 1.9 words/s — the v27
+    // "natural read" ElevenLabs settings speak slower than the old 2.3
+    // assumption, which wrote lines ~20% longer than their windows and got
+    // them chopped mid-sentence. The mixer also measures each MP3 and
+    // absorbs residual overruns with ≤1.15x atempo, so budget + measurement
+    // together make truncation rare instead of routine.
     const speakSec = narrationWindows[index] - 0.35 - 0.6;
-    const wordBudget = Math.floor(speakSec * 2.3);
+    const wordBudget = Math.floor(speakSec * 1.9);
     const narrationLine = isNarrated[index] && wordBudget >= 3
       ? clampNarrationToWords(s.rawNarration, wordBudget)
       : "";
