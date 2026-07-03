@@ -1139,7 +1139,7 @@ async function buildHeadshotCircle(headshotUrl, sizePx, tempDir) {
   if (!headshotUrl) return null;
   try {
     const sourcePath = path.join(tempDir, "headshot-source.jpg");
-    await downloadFile(headshotUrl, sourcePath);
+    await downloadImageValidated(headshotUrl, sourcePath, "headshot");
     const circlePath = path.join(tempDir, `headshot-circle-${sizePx}.png`);
     const radius = sizePx / 2;
     const radiusInner = radius - 1;
@@ -1168,7 +1168,7 @@ async function buildLogoAsset(logoUrl, maxHeightPx, tempDir) {
   if (!logoUrl) return null;
   try {
     const sourcePath = path.join(tempDir, "logo-source");
-    await downloadFile(logoUrl, sourcePath);
+    await downloadImageValidated(logoUrl, sourcePath, "logo");
     const outPath = path.join(tempDir, `logo-${maxHeightPx}.png`);
     await runFFmpeg([
       "-y", "-threads", "1",
@@ -1406,6 +1406,63 @@ async function downloadFile(url, destPath) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// v32.1 headshot/logo fix. The brand-kit URLs are getPublicUrl() links; on a
+// private bucket Supabase's public endpoint returns a ~600-byte JSON error
+// WITH HTTP 200, which downloadFile happily saved as "headshot-source.jpg"
+// and ffmpeg rejected ("No JPEG data found") on EVERY render. This helper
+// (1) validates magic bytes after download, (2) on failure logs exactly what
+// was received, and (3) if the URL is Supabase storage, self-heals by
+// minting a FRESH SIGNED URL with the worker's service-role client and
+// retrying once. Fixes all legacy brand-kit rows without touching the webapp.
+function sniffImageType(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpeg";
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "png";
+  if (buf.slice(0, 4).toString() === "RIFF" && buf.slice(8, 12).toString() === "WEBP") return "webp";
+  if (buf.slice(4, 8).toString() === "ftyp") return "heic"; // heic/heif/avif family
+  return null;
+}
+
+function parseSupabaseStorageUrl(url) {
+  const m = String(url || "").match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/([^?]+)/);
+  return m ? { bucket: m[1], objectPath: decodeURIComponent(m[2]) } : null;
+}
+
+async function downloadImageValidated(url, destPath, label) {
+  await downloadFile(url, destPath);
+  let buf = await fs.readFile(destPath);
+  let kind = sniffImageType(buf);
+  if (kind === "heic") {
+    throw new Error(`${label}: file is HEIC/HEIF — ffmpeg can't decode it. Re-upload as JPG or PNG.`);
+  }
+  if (kind) return kind;
+
+  // Not an image. Log what we actually got (usually a storage error JSON).
+  const preview = buf.slice(0, 120).toString("utf8").replace(/\s+/g, " ");
+  console.warn(`[brand] ${label}: URL returned non-image (${buf.length} bytes): "${preview}"`);
+
+  const parsed = parseSupabaseStorageUrl(url);
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (parsed && supabaseUrl && serviceKey) {
+    console.info(`[brand] ${label}: re-signing ${parsed.bucket}/${parsed.objectPath} and retrying.`);
+    const sb = createClient(supabaseUrl, serviceKey);
+    const { data, error } = await sb.storage.from(parsed.bucket).createSignedUrl(parsed.objectPath, 3600);
+    if (!error && data?.signedUrl) {
+      await downloadFile(data.signedUrl, destPath);
+      buf = await fs.readFile(destPath);
+      kind = sniffImageType(buf);
+      if (kind === "heic") {
+        throw new Error(`${label}: file is HEIC/HEIF — ffmpeg can't decode it. Re-upload as JPG or PNG.`);
+      }
+      if (kind) return kind;
+    } else if (error) {
+      console.warn(`[brand] ${label}: re-sign failed (${error.message}).`);
+    }
+  }
+  throw new Error(`${label}: URL does not serve a decodable image (jpeg/png/webp).`);
 }
 
 /* =================================================================
