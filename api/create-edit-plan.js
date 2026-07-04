@@ -477,6 +477,17 @@ export default async function handler(request, response) {
     // strict mode threw SyntaxError and 500'd every request.)
     const preNormalizeValidation = validateNormalizedPlan(parsed, photos);
     const normalizedPlan = normalizeEditPlan(parsed, photos, { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec });
+    // v34.2 PER-PHOTO VERIFY-AND-REPAIR (test-11): the Motion Director call
+    // juggles up to 16 images in one context and demonstrably degrades on
+    // the LATER photos — test-11 labeled the twilight exterior "bedroom"
+    // and the great room "kitchen", then narrated "the modern kitchen
+    // includes wood cabinetry" over a living room. (The v33.3 category
+    // reconciliation was a no-op: these photos carried no stored category.)
+    // Repair = one cheap vision call PER SCENE, one photo per call — no
+    // long-context decay possible — verifying the label and the line
+    // against the actual pixels. Fail-open at every level: a dead repair
+    // call keeps the original scene untouched.
+    await verifyAndRepairScenes(normalizedPlan, photos, { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec });
     // v32 observability: make the continuous script's presence LOUD in the
     // function logs — its absence was silent for a full smoke-test round.
     console.info(
@@ -487,6 +498,17 @@ export default async function handler(request, response) {
     // mismatch was only discoverable by watching the finished video.
     for (const sc of normalizedPlan.scenes || []) {
       if (sc.narrationLine) console.info(`[plan] scene ${sc.order} (${sc.roomType}): "${sc.narrationLine}"`);
+    }
+    // v34.2 coverage fingerprint: spoken-scene count + window layout, so a
+    // coverage collapse is visible in THIS log instead of in the finished
+    // video 6 minutes later.
+    {
+      const all = normalizedPlan.scenes || [];
+      const spoken = all.filter((s) => s.narrationLine).length;
+      console.info(
+        `[plan] narration coverage: ${spoken}/${all.length} scenes speak · windows ` +
+        all.map((s) => (s.narrationLine ? `${(s.narrationWindowSec || 0).toFixed(1)}s` : "·")).join("|")
+      );
     }
     const postNormalizeValidation = validateNormalizedPlan(normalizedPlan, photos);
     if (!preNormalizeValidation.ok) {
@@ -646,6 +668,155 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
 
 function motionModel() {
   return process.env.OPENAI_MOTION_MODEL || process.env.OPENAI_MOTION_DIRECTOR_MODEL || DEFAULT_MODEL;
+}
+
+/* ============================================================
+   v34.2 — per-photo verify-and-repair
+   ============================================================
+   Why this exists: the Motion Director sees up to 16 photos in ONE
+   context and its accuracy decays across them — the tail photos get
+   generic labels ("bedroom", "kitchen") and template lines written from
+   the LABEL instead of the pixels. Test-11 spoke "the modern kitchen
+   includes wood cabinetry" over a great room with a picture window.
+
+   The repair primitive is decay-proof by construction: one photo per
+   call, so there is no long context to decay across. Each call verifies
+   the scene's roomType and its narration line against that single image
+   and returns corrections. Corrected labels also flow into rebuilt
+   veo/runway prompts (subject description + hallucination-guard risk both
+   key off roomType — test-11 burned a needless CONSTRAINED generation on
+   "kitchen risk 80" for a photo that was never a kitchen).
+
+   Failure posture: fail-open at every level. Any call that errors, times
+   out, or returns junk leaves its scene exactly as the Motion Director
+   wrote it. The pass as a whole is bounded by PLAN_VERIFY_BUDGET_MS so it
+   can never push the function toward the 90s ceiling.
+   Cost: ≤18 calls at "low" detail ≈ $0.01-0.02 per plan. */
+const PLAN_VERIFY_BUDGET_MS = 20000;
+const PLAN_VERIFY_PER_CALL_MS = 12000;
+const PLAN_VERIFY_WAVE_SIZE = 6;
+
+async function verifyAndRepairScenes(plan, photos, context) {
+  const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
+  if (!scenes.length || !process.env.OPENAI_API_KEY) return;
+  const isAiEngine = plan.engine === "runway" || plan.engine === "veo";
+  const deadline = Date.now() + PLAN_VERIFY_BUDGET_MS;
+  const t0 = Date.now();
+  let labelFixes = 0;
+  let lineFixes = 0;
+  let checked = 0;
+
+  const verifyOne = async (scene, isLastScene) => {
+    const photo = photos.find((p) => p.id === scene.photoId);
+    if (!photo?.url) return;
+    const narrated = Number(scene.narrationWindowSec || 0) > 0;
+    const wordBudget = narrated
+      ? Math.max(Math.floor((Number(scene.narrationWindowSec) - 0.95) * 1.9), isLastScene ? 6 : 0)
+      : 12;
+    const currentLine = String(scene.narrationLine || "").trim();
+    const prompt =
+      `One photo from a real-estate listing video. Current scene label: "${scene.roomType}". ` +
+      `Current narration line: ${currentLine ? `"${currentLine}"` : "(none)"}.\n` +
+      `Return JSON:\n` +
+      `- roomType: what THIS photo actually shows. exterior = any facade shot incl. twilight/dusk; ` +
+      `living = any living/family/great room; outdoor = patio, deck, yard, pool; ` +
+      `detail = close-up vignette; else kitchen, bedroom, bathroom, amenity.\n` +
+      `- lineAccurate: true ONLY if the current line describes things clearly visible in THIS photo. ` +
+      `false if it names a different room or invents features. (No current line → false.)\n` +
+      `- line: if lineAccurate is false, ONE warm natural narration sentence, at most ${Math.max(wordBudget, 6)} words, ` +
+      `describing only what is clearly visible in this photo — no invented features, no address, no price. ` +
+      `If lineAccurate is true, repeat the current line exactly.`;
+    const body = {
+      model: motionModel(),
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: prompt },
+          { type: "input_image", image_url: photo.url, detail: "low" }
+        ]
+      }],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "scene_verify",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["roomType", "lineAccurate", "line"],
+            properties: {
+              roomType: { type: "string", enum: ROOM_TYPES },
+              lineAccurate: { type: "boolean" },
+              line: { type: "string" }
+            }
+          }
+        }
+      },
+      temperature: 0.1,
+      max_output_tokens: 120
+    };
+    const res = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }, Math.min(PLAN_VERIFY_PER_CALL_MS, Math.max(1500, deadline - Date.now())));
+    if (!res.ok) throw new Error(`verify HTTP ${res.status}`);
+    const payload = await res.json().catch(() => ({}));
+    const verdict = parseOpenAIJson(payload);
+    if (!verdict || typeof verdict !== "object") throw new Error("verify: unparseable verdict");
+    checked += 1;
+
+    // Label repair — flows into prompts + hallucination-guard risk.
+    if (ROOM_TYPES.includes(verdict.roomType) && verdict.roomType !== scene.roomType) {
+      console.info(`[plan-verify] scene ${scene.order}: label ${scene.roomType} → ${verdict.roomType}`);
+      scene.roomType = verdict.roomType;
+      if (isAiEngine) {
+        scene.runwayPrompt = buildRunwayPrompt(scene, photos, context);
+        scene.veoPrompt = buildVeoPrompt(scene, photos, context);
+      }
+      labelFixes += 1;
+    }
+
+    // Line repair — ONLY on narrated scenes (silent scenes must stay
+    // silent; their airtime is already donated to the previous window).
+    if (narrated && verdict.lineAccurate !== true) {
+      const repaired = clampNarrationSentenceSafe(cleanText(String(verdict.line || ""), 240), Math.max(wordBudget, 3));
+      if (repaired && repaired !== currentLine) {
+        console.info(
+          `[plan-verify] scene ${scene.order}: line ${currentLine ? "rewritten" : "filled"} → "${repaired}"`
+        );
+        scene.narrationLine = repaired;
+        lineFixes += 1;
+      }
+    }
+  };
+
+  try {
+    for (let w = 0; w < scenes.length; w += PLAN_VERIFY_WAVE_SIZE) {
+      if (Date.now() > deadline - 2000) {
+        console.warn(`[plan-verify] budget reached after ${checked}/${scenes.length} scenes — remaining scenes ship as planned.`);
+        break;
+      }
+      const wave = scenes.slice(w, w + PLAN_VERIFY_WAVE_SIZE);
+      const results = await Promise.allSettled(
+        wave.map((scene) => verifyOne(scene, scene === scenes[scenes.length - 1]))
+      );
+      for (let k = 0; k < results.length; k++) {
+        if (results[k].status === "rejected") {
+          console.warn(`[plan-verify] scene ${wave[k].order} verify failed (${results[k].reason?.message || results[k].reason}) — keeping original.`);
+        }
+      }
+    }
+    console.info(
+      `[plan-verify] ${checked}/${scenes.length} scenes verified in ${Date.now() - t0}ms — ` +
+      `${labelFixes} label${labelFixes === 1 ? "" : "s"} corrected, ${lineFixes} line${lineFixes === 1 ? "" : "s"} repaired.`
+    );
+  } catch (err) {
+    console.warn(`[plan-verify] pass failed open (${err.message}) — plan ships as the Motion Director wrote it.`);
+  }
 }
 
 // v32.3: never ship a skeleton script. Target ≈ 1.7 words/sec; below 60% of
@@ -1069,9 +1240,31 @@ function normalizeEditPlan(plan, photos, context) {
   // DONATED to the preceding narrated line — lines are written longer and the
   // voice flows across quick cuts. The worker's voice-mixer extends each
   // line's window to the next narrated scene with the same rule.
-  const MIN_NARRATABLE_SEC = 2.8;
-  const isNarrated = snappedDurations.map((d) => d >= MIN_NARRATABLE_SEC);
-  if (isNarrated.length > 0) isNarrated[0] = true; // the opener always speaks
+  // v34.2 WINDOW-DRIVEN coverage (test-11): the old gate was per-scene
+  // (duration >= 2.8s), which collapses deterministically on fast beat
+  // grids — a track that snaps every scene to ~2.5s fails EVERY scene,
+  // leaving only the forced opener + forced CTA. Test-11: 9 scenes, 2
+  // lines, 15s of dead air in the middle. Coverage is a property of the
+  // WINDOW (a line's scene plus the silent scenes that donate airtime to
+  // it), not of any single scene's duration: walk forward, start a line,
+  // grow its window until it can hold a sentence, then start the next.
+  // A 2.5s grid now narrates every other scene (~5s windows); a 4s grid
+  // narrates every scene — same behavior as before on slow grids.
+  const MIN_WINDOW_SEC = 3.2;
+  const isNarrated = new Array(snappedDurations.length).fill(false);
+  {
+    let i = 0;
+    while (i < snappedDurations.length) {
+      isNarrated[i] = true; // i=0 first pass → the opener always speaks
+      let w = snappedDurations[i];
+      let j = i + 1;
+      while (j < snappedDurations.length && w < MIN_WINDOW_SEC) {
+        w += snappedDurations[j];
+        j += 1;
+      }
+      i = j;
+    }
+  }
   // v33.2 (test-9): the FINAL scene always speaks too — it carries the CTA.
   // Without this, a run of short trailing scenes donated all their airtime
   // forward and the video's last third played in dead silence.
@@ -1105,7 +1298,11 @@ function normalizeEditPlan(plan, photos, context) {
       ? clampNarrationSentenceSafe(s.rawNarration, wordBudget)
       : "";
     const { rawNarration, ...rest } = s;
-    return { ...rest, duration, narrationLine };
+    // narrationWindowSec rides along on the scene (v34.2): the verify-and-
+    // repair pass needs each line's window to recompute word budgets when
+    // it rewrites a line, and the worker/debugging benefit from seeing the
+    // plan's window math. 0 = scene is silent (airtime donated backward).
+    return { ...rest, duration, narrationLine, narrationWindowSec: Math.round(narrationWindows[index] * 100) / 100 };
   });
   // v26.0: AI engines ("runway" legacy or "veo") get BOTH prompts on every
   // scene. veoPrompt drives production (Veo 3.1 Fast); runwayPrompt is kept

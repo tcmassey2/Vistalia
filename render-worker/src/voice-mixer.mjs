@@ -195,6 +195,10 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   // line's spoken length, so the line finishes naturally inside its own scene
   // instead of being chopped or spilling into the outro.
   const narrationTrackDurSec = totalDurationSec;
+  // v34.2 last-line grace — same rationale as the aligned path: the CTA may
+  // end 0.8s into the outro CROSSFADE (never over the standing card).
+  const PL_GRACE_SEC = 0.8;
+  const narrTrackPadSec = narrationTrackDurSec + PL_GRACE_SEC;
   let lastNarrIndex = -1;
   for (let i = 0; i < synthesized.length; i++) if (synthesized[i]) lastNarrIndex = i;
 
@@ -226,9 +230,9 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
       const isLast = i === lastNarrIndex;
       let windowEndSec = sceneStarts[i] + sceneDur;
       if (isLast) {
-        // Last line: run up to the master end (video continues into the
-        // silent brand-outro card).
-        windowEndSec = Math.max(windowEndSec, narrationTrackDurSec);
+        // Last line: run up to the master end + grace (video continues into
+        // the silent brand-outro card's crossfade).
+        windowEndSec = Math.max(windowEndSec, narrTrackPadSec);
       } else {
         for (let j = i + 1; j < synthesized.length; j++) {
           if (synthesized[j]) { windowEndSec = sceneStarts[j]; break; }
@@ -270,7 +274,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
       // next narrated scene, or master end for the last line.
       let endSec = sceneStarts[i] + sceneDurs[i];
       if (i === lastNarrIndex) {
-        endSec = narrationTrackDurSec;
+        endSec = narrTrackPadSec;
       } else {
         for (let j = i + 1; j < synthesized.length; j++) {
           if (synthesized[j]) { endSec = sceneStarts[j]; break; }
@@ -337,20 +341,20 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     })
     .join(";");
   const mixInputs = placedNarrations.map((_, i) => `[n${i}]`).join("");
-  const filterComplex = `${adelaySteps};[0:a]${mixInputs}amix=inputs=${placedNarrations.length + 1}:duration=first:dropout_transition=0,atrim=duration=${narrationTrackDurSec}[narr]`;
+  const filterComplex = `${adelaySteps};[0:a]${mixInputs}amix=inputs=${placedNarrations.length + 1}:duration=first:dropout_transition=0,atrim=duration=${narrTrackPadSec}[narr]`;
 
   const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
   const narrationArgs = [
     "-y",
     "-threads", "1",
     "-f", "lavfi",
-    "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${narrationTrackDurSec}`,
+    "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${narrTrackPadSec}`,
     ...placedNarrations.flatMap((n) => ["-i", n.mp3Path]),
     "-filter_complex", filterComplex,
     "-map", "[narr]",
     "-c:a", "libmp3lame",
     "-b:a", "128k",
-    "-t", String(narrationTrackDurSec),
+    "-t", String(narrTrackPadSec),
     narrationTrackPath
   ];
   await runFFmpeg(narrationArgs, { timeoutMs: 90000, label: "voice:adelay-mix" });
@@ -439,6 +443,14 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
   }
   const trackDurSec = cursor;
   const leadInSec = 0.35;
+  // v34.2 last-line grace (test-11): the CTA line's window used to end hard
+  // at the last photo scene's cut, so a short final scene (2.5s on fast beat
+  // grids) forced atempo 1.15 + TRIM on the one line that must land clean.
+  // The master continues 0.5s of crossfade INTO the brand-outro card — let
+  // the closer breathe 0.8s into that fade. It ends during the transition,
+  // never over the standing card (the v28.1 complaint was mid-card speech).
+  const LAST_LINE_GRACE_SEC = 0.8;
+  const trackPadSec = trackDurSec + LAST_LINE_GRACE_SEC;
 
   // One text, one performance. Ensure sentence-final punctuation per line so
   // the read pauses naturally at what will become our cut points.
@@ -476,7 +488,7 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
   // get per-segment atempo ≤1.15, then trim+fade as last resort.
   const placements = segs.map((s, i) => {
     const startAt = sceneStarts[s.index] + leadInSec;
-    const nextStart = i + 1 < segs.length ? sceneStarts[segs[i + 1].index] : trackDurSec;
+    const nextStart = i + 1 < segs.length ? sceneStarts[segs[i + 1].index] : trackPadSec;
     const cap = Math.max(0.6, nextStart - startAt - 0.15);
     let tempo = 1;
     if (s.dur > cap) tempo = Math.min(1.15, s.dur / cap);
@@ -500,29 +512,29 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
       "afade=t=in:st=0:d=0.04",
       p.trimmed ? `afade=t=out:st=${Math.max(0, p.cap - 0.3).toFixed(2)}:d=0.30` : null,
       `adelay=${Math.round(p.startAt * 1000)}|${Math.round(p.startAt * 1000)}`,
-      `apad=whole_dur=${Math.round(trackDurSec * 1000)}ms`
+      `apad=whole_dur=${Math.round(trackPadSec * 1000)}ms`
     ].filter(Boolean).join(",");
     return `[1:a]${chain}[s${i}]`;
   });
   const mixIns = placements.map((_, i) => `[s${i}]`).join("");
   const filterComplex =
-    `${steps.join(";")};[0:a]${mixIns}amix=inputs=${placements.length + 1}:duration=first:dropout_transition=0,atrim=duration=${trackDurSec}[narr]`;
+    `${steps.join(";")};[0:a]${mixIns}amix=inputs=${placements.length + 1}:duration=first:dropout_transition=0,atrim=duration=${trackPadSec}[narr]`;
 
   const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
   await runFFmpeg([
     "-y", "-threads", "1",
-    "-f", "lavfi", "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${trackDurSec}`,
+    "-f", "lavfi", "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${trackPadSec}`,
     "-i", audioPath,
     "-filter_complex", filterComplex,
     "-map", "[narr]",
     "-c:a", "libmp3lame", "-b:a", "128k",
-    "-t", String(trackDurSec),
+    "-t", String(trackPadSec),
     narrationTrackPath
   ], { timeoutMs: 120000, label: "voice:aligned-track" });
 
   onProgress?.({ phase: "Mixing narration with music", fraction: 0.85 });
   const duckWindows = placements.map((p) => {
-    const end = Math.min(trackDurSec, p.startAt + Math.min(p.dur / p.tempo, p.cap) + 0.15);
+    const end = Math.min(trackPadSec, p.startAt + Math.min(p.dur / p.tempo, p.cap) + 0.15);
     return [Math.max(0, p.startAt - 0.1), end];
   });
   const duckExpr = duckWindows.map(([s, e]) => `between(t,${s.toFixed(2)},${e.toFixed(2)})`).join("+");
