@@ -166,7 +166,7 @@ export async function renderRunwayJob(body, options = {}) {
   let scenesCompleted = 0;
   let fallbackCount = 0;
   let qcRetryCount = 0;      // v31.2: clips regenerated constrained after QC fail
-  let qcKenBurnsCount = 0;   // v31.2: clips downgraded to the Ken Burns floor
+  let qcThirdTryCount = 0;   // v34: clips that needed the third (pull_out) attempt
   let guardForcedCount = 0;
   // Per-scene failure recovery: when Runway fails on a single scene we
   // generate a Ken-Burns–style fallback clip from the same photo using
@@ -255,16 +255,10 @@ export async function renderRunwayJob(body, options = {}) {
             }
           }
           if (verdict.checked && !verdict.pass) {
-            // v33.4 FLOOR POLICY: only the HIGH-PRECISION detections (text /
-            // object artifacts) floor a scene. The motion check is the
-            // lowest-precision signal — legitimate parallax reads as "object
-            // shifted" to a VLM often enough that motion-only failures were
-            // littering renders with jarring 2D stills ("the Ken Burns
-            // fallback is awful", test-10). A motion-only flag on a
-            // CONSTRAINED clip (minimal camera move + world-space lock) is
-            // far more likely a false positive than a real glide — ship it,
-            // log it loudly, and leave the one-tap Edit Studio regen as the
-            // human remedy for true escapees.
+            // v33.4 policy: motion is the lowest-precision signal (VLM
+            // false-positives on legitimate parallax) — motion-only flags
+            // ship the constrained clip; Edit Studio regen is the human
+            // remedy for true escapees.
             const hardReasons = verdict.reasons.filter((r) => !r.startsWith("motion"));
             if (hardReasons.length === 0) {
               console.warn(
@@ -272,14 +266,33 @@ export async function renderRunwayJob(body, options = {}) {
                 `shipping it (likely VLM false positive; Edit Studio regen is the remedy if real).`
               );
             } else {
-              // Duration-exact floor: the stock KB helper animates a 5/10s
-              // motion arc; trimming it to a ~3.5s scene shipped half-finished
-              // crawls that looked broken. Build the arc for THIS duration.
-              console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — using photo-motion floor.`);
-              qcKenBurnsCount++;
-              const veoDuration = result.duration;
-              result = await generateKenBurnsFallback(scene, manifest, tempDir, index, { durationSec: veoDuration });
-              result.duration = veoDuration;
+              // v34 NO-FLOOR POLICY (Troy, launch eve): the Ken Burns floor is
+              // retired from cinematic renders — a 2D still between real
+              // camera moves was never shippable quality. Third attempt: a
+              // FULL cinematic prompt with pull_out motion — different camera
+              // path, genuinely different generation, not the same roll.
+              // If a scene produces hard artifacts (text/objects) on all
+              // three attempts, the render ABORTS and the credit refunds:
+              // quality or your money back, never a silent downgrade.
+              console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — third attempt: cinematic pull_out.`);
+              qcThirdTryCount++;
+              const thirdScene = { ...scene, cameraMotion: "pull_out" };
+              const third = await generateVeoSceneClip(thirdScene, manifest, tempDir, index, { constrained: false });
+              const verdict3 = await qcVeoClip({
+                clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
+                sceneIndex: index, roomType: scene.roomType, tempDir
+              });
+              const hard3 = verdict3.checked ? verdict3.reasons.filter((r) => !r.startsWith("motion")) : [];
+              if (verdict3.checked && hard3.length > 0) {
+                const err = new Error(
+                  `Scene ${index + 1} kept producing visual artifacts (${hard3.join(", ")}) across three attempts. ` +
+                  `Render aborted — your credit will be refunded. This photo may have baked-in text or unusual geometry; ` +
+                  `try replacing it or re-shooting it.`
+                );
+                err.code = "VEO_SCENE_FAILED";
+                throw err;
+              }
+              result = third;
             }
           }
         }
@@ -335,7 +348,8 @@ export async function renderRunwayJob(body, options = {}) {
   if (isVeo && qcEnabled()) {
     console.info(
       `[qc] Verify-then-deliver summary — ${qcRetryCount} scene${qcRetryCount === 1 ? "" : "s"} regenerated constrained after QC fail, ` +
-      `${qcKenBurnsCount} downgraded to the Ken Burns floor. Detected artifacts shipped: 0 by construction.`
+      `${qcThirdTryCount} needed the third (pull_out) attempt. No Ken Burns floor (v34): ` +
+      `hard artifacts on all three attempts abort + refund. Detected artifacts shipped: 0 by construction.`
     );
   } else if (isVeo) {
     console.warn(`[qc] Verify-then-deliver DISABLED — set OPENAI_API_KEY on the worker to enable per-scene artifact QC.`);
