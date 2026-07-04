@@ -488,6 +488,16 @@ export default async function handler(request, response) {
     // against the actual pixels. Fail-open at every level: a dead repair
     // call keeps the original scene untouched.
     await verifyAndRepairScenes(normalizedPlan, photos, { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec });
+    // v34.3 GLOBAL POLISH (test-12): verify-and-repair fixed the FACTS but
+    // cost the script its voice — 18 isolated single-photo calls share no
+    // context, so they converge on identical captions ("bright living room
+    // with cozy seating" spoken twice, "cozy" 4x, alt-text fragments, CTA
+    // repaired away into a room description). Facts stay per-photo; STYLE
+    // is global: one text-only pass sees the assembled script and rewrites
+    // for variety, complete sentences, and a closing invitation — under a
+    // hard rule that it may not add any feature the verified lines don't
+    // already contain. No images in, so it cannot re-hallucinate the rooms.
+    await polishNarrationFlow(normalizedPlan, { listingDetails, selectedStyle });
     // v32 observability: make the continuous script's presence LOUD in the
     // function logs — its absence was silent for a full smoke-test round.
     console.info(
@@ -695,6 +705,102 @@ function motionModel() {
 const PLAN_VERIFY_BUDGET_MS = 20000;
 const PLAN_VERIFY_PER_CALL_MS = 12000;
 const PLAN_VERIFY_WAVE_SIZE = 6;
+
+/* ============================================================
+   v34.3 — global narration polish
+   ============================================================
+   Runs AFTER verify-and-repair. Text-only (no images): takes the ordered,
+   photo-verified lines and rewrites them as one flowing voiceover — line k
+   stays welded to scene k, but the writer finally sees the whole script,
+   which is the only place duplicates, adjective soup, and a missing close
+   are even visible. Fact containment: the prompt forbids naming any room,
+   feature, or object absent from the input line; with no images attached
+   there is nothing new to describe. Fail-open: any error keeps the
+   verified lines exactly as they are. */
+const PLAN_POLISH_TIMEOUT_MS = 9000;
+
+async function polishNarrationFlow(plan, context) {
+  const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
+  const narrated = scenes.filter((s) => String(s.narrationLine || "").trim());
+  if (narrated.length < 2 || !process.env.OPENAI_API_KEY) return;
+  const t0 = Date.now();
+  const budgets = narrated.map((s, i) => {
+    const isLast = i === narrated.length - 1;
+    return Math.max(
+      Math.floor((Number(s.narrationWindowSec || 0) - 0.95) * 1.9),
+      isLast ? 6 : 3
+    );
+  });
+  const inputList = narrated
+    .map((s, i) =>
+      `${i + 1} (${s.roomType}, max ${budgets[i]} words): "${s.narrationLine}"`)
+    .join("\n");
+  const prompt =
+    `Polish the narration for a ${context.selectedStyle || "cinematic"} real-estate listing video. ` +
+    `Each numbered line below narrates one scene, in order, and has been verified accurate against that scene's photo.\n` +
+    `Rewrite them as ONE flowing voiceover. HARD RULES:\n` +
+    `- Return exactly ${narrated.length} lines in the same order; line k still narrates scene k.\n` +
+    `- Never name a room, feature, or object that line k's input does not already contain. ` +
+    `You may drop details or generalize; never add, and never move a detail to a different line.\n` +
+    `- Respect each line's max word count. Every line is a complete natural spoken sentence.\n` +
+    `- Variety: no two lines open with the same word; use each of ` +
+    `"cozy", "bright", "spacious", "beautiful", "stunning", "modern" at most once across the whole script.\n` +
+    `- The FINAL line abandons description and closes the tour with a warm, general invitation to come see the home — no address, no phone, no agent name.\n` +
+    `- Warm, confident, unhurried tone. No exclamation marks, no questions, no "welcome to".\n\n` +
+    inputList;
+  try {
+    const res = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: motionModel(),
+        input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "narration_polish",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["lines"],
+              properties: {
+                // NOTE: no minItems/maxItems — strict-mode support for them
+                // has been inconsistent and a schema 400 would silently kill
+                // every polish. Length is enforced in code below instead.
+                lines: {
+                  type: "array",
+                  items: { type: "string" }
+                }
+              }
+            }
+          }
+        },
+        temperature: 0.7,
+        max_output_tokens: 700
+      })
+    }, PLAN_POLISH_TIMEOUT_MS);
+    if (!res.ok) throw new Error(`polish HTTP ${res.status}`);
+    const payload = await res.json().catch(() => ({}));
+    const verdict = parseOpenAIJson(payload);
+    const lines = Array.isArray(verdict?.lines) ? verdict.lines : [];
+    if (lines.length !== narrated.length) throw new Error(`polish returned ${lines.length}/${narrated.length} lines`);
+    let applied = 0;
+    for (let i = 0; i < narrated.length; i++) {
+      const polished = clampNarrationSentenceSafe(cleanText(String(lines[i] || ""), 240), Math.max(budgets[i], 3));
+      if (polished && polished !== narrated[i].narrationLine) {
+        narrated[i].narrationLine = polished;
+        applied += 1;
+      }
+    }
+    console.info(`[plan-polish] ${applied}/${narrated.length} lines polished in ${Date.now() - t0}ms.`);
+  } catch (err) {
+    console.warn(`[plan-polish] failed open (${err.message}) — verified lines ship un-polished.`);
+  }
+}
 
 async function verifyAndRepairScenes(plan, photos, context) {
   const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
