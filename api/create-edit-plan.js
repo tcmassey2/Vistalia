@@ -585,7 +585,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
     ? [
         `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
-        `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
+        `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. SELL THE SPACE, NOT THE STAGING (v34.4): never describe movable furniture or decor — sofas, tables, chairs, beds, rugs, lamps, art, plants. The furniture leaves with the seller; buyers are buying light, space, views, ceilings, windows, flooring, and finishes (cabinetry, counters, fireplaces, and built-ins are part of the home — those are fine). "A glass table sits beside the window" → "Expansive windows frame the red-rock views". CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
         `The agent's name is "${brandKit.fullName || "the listing agent"}", brokerage "${brandKit.brokerage || "their brokerage"}". Refer to them only on scene 1 and the outro CTA — don't repeat the name throughout.`,
         `Narration MUST stay grounded in the listing facts provided (price, beds, baths, sq ft, address) and what is visible in the photo. Never invent features, views, schools, or neighborhoods.`,
@@ -742,7 +742,12 @@ async function polishNarrationFlow(plan, context) {
     `- Return exactly ${narrated.length} lines in the same order; line k still narrates scene k.\n` +
     `- Never name a room, feature, or object that line k's input does not already contain. ` +
     `You may drop details or generalize; never add, and never move a detail to a different line.\n` +
-    `- Respect each line's max word count. Every line is a complete natural spoken sentence.\n` +
+    `- Sell the SPACE, not the staging: if an input line mentions movable furniture or decor ` +
+    `(sofas, tables, chairs, beds, rugs, lamps, art), rewrite around the permanent qualities that line ` +
+    `already contains — light, windows, views, space. Furniture never appears in your output.\n` +
+    `- Word caps are ABSOLUTE. Aim 1-2 words UNDER each cap; a short clean line always beats a long ` +
+    `one that gets cut mid-thought. Every line stands alone as one complete spoken sentence with a ` +
+    `subject and verb — never split one idea across two lines, never open with a verb fragment.\n` +
     `- Variety: no two lines open with the same word; use each of ` +
     `"cozy", "bright", "spacious", "beautiful", "stunning", "modern" at most once across the whole script.\n` +
     `- The FINAL line abandons description and closes the tour with a warm, general invitation to come see the home — no address, no phone, no agent name.\n` +
@@ -827,10 +832,13 @@ async function verifyAndRepairScenes(plan, photos, context) {
       `- roomType: what THIS photo actually shows. exterior = any facade shot incl. twilight/dusk; ` +
       `living = any living/family/great room; outdoor = patio, deck, yard, pool; ` +
       `detail = close-up vignette; else kitchen, bedroom, bathroom, amenity.\n` +
-      `- lineAccurate: true ONLY if the current line describes things clearly visible in THIS photo. ` +
-      `false if it names a different room or invents features. (No current line → false.)\n` +
+      `- lineAccurate: true ONLY if the current line describes things clearly visible in THIS photo ` +
+      `AND is about the home itself rather than its staging. ` +
+      `false if it names a different room, invents features, or is mainly about movable furniture/decor ` +
+      `(sofas, tables, chairs, beds, rugs, lamps, art). (No current line → false.)\n` +
       `- line: if lineAccurate is false, ONE warm natural narration sentence, at most ${Math.max(wordBudget, 6)} words, ` +
-      `describing only what is clearly visible in this photo — no invented features, no address, no price. ` +
+      `about what is clearly visible in this photo — sell the SPACE: light, views, windows, ceilings, flooring, ` +
+      `finishes, built-ins, cabinetry. Never mention movable furniture or decor. No invented features, no address, no price. ` +
       `If lineAccurate is true, repeat the current line exactly.`;
     const body = {
       model: motionModel(),
@@ -1807,8 +1815,27 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // 3) Use the whole slack window (≤1.35x budget — the aligned mixer absorbs
   //    that), stripped of any dangling function words so it ends on content:
   //    "…peaceful views and" → "…peaceful views."
-  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including)$/i;
-  const slackWords = slack.replace(/[,;:\s]+$/, "").split(/\s+/);
+  // v34.4 (test-13: "…exterior that captures." / "…features inviting."):
+  // a budget cut lands mid-phrase, and no strip-list of dangling words can
+  // enumerate every adjective it might leave hanging ("…and generous
+  // open."). Instead, cut BEFORE the last connective/preposition — it is
+  // the word that STARTS the phrase the budget is about to sever, so
+  // ending ahead of it always ends on a complete grammatical unit:
+  // "features inviting warmth AND generous open ▍" → "features inviting
+  // warmth." The old dangler strip stays as a backstop (now including
+  // transitive verbs + relative pronouns).
+  const CONNECTIVES = /^(and|or|with|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards)$/i;
+  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have)$/i;
+  let slackWords = slack.replace(/[,;:\s]+$/, "").split(/\s+/);
+  // Keep at least half the slack — cutting at an EARLY connective guts the
+  // sentence ("A curved walkway leads." after cutting at "to").
+  const minKeep = Math.max(3, Math.ceil(slackWords.length * 0.5));
+  for (let k = slackWords.length - 1; k >= minKeep; k--) {
+    if (CONNECTIVES.test(slackWords[k])) {
+      slackWords = slackWords.slice(0, k);
+      break;
+    }
+  }
   while (slackWords.length > 3 && FUNCTION_WORDS.test(slackWords[slackWords.length - 1])) {
     slackWords.pop();
   }
