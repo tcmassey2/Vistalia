@@ -413,6 +413,16 @@ export async function renderRunwayJob(body, options = {}) {
       narration = { narrationApplied: false, reason: err.message || "narration_failed" };
     }
   }
+  // v34.1 fingerprint: which voice path ACTUALLY ran — the aligned path
+  // silently failing into a fallback cost multiple smoke tests to detect.
+  console.info(
+    `[voice] PATH USED: ${
+      narration.aligned ? "ALIGNED (sentence↔scene locked)" :
+      narration.continuous ? "WHOLE-SCRIPT (should be impossible post-v34.1)" :
+      narration.narrationApplied ? "PER-LINE (scene-locked fallback)" :
+      `NONE (${narration.reason || "unknown"})`
+    }`
+  );
   // If narration was applied, the mixed file replaces our master going
   // forward. Otherwise the original (silent or music-only) master is used.
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
@@ -426,9 +436,21 @@ export async function renderRunwayJob(body, options = {}) {
   // deriveAspectVariants + buildSocialShorts modules retained in
   // tree for the future-tier 'Pro Pack' SKU, but no longer called.
   options.onProgress?.({ phase: "Finalizing master", progress: 88 });
-  const variants = {
+  // v34.1: aspect variants RE-ENABLED. The "one-master simplification" was
+  // reversed by Troy's launch call ("we should be providing people with all
+  // formats") — the library + render-complete UI now surface square/wide
+  // download pills, which 404 without these files. deriveAspectVariants
+  // falls back to vertical-only if variant generation fails, so this can't
+  // fail a render.
+  let variants = {
     vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } }
   };
+  try {
+    const derived = await deriveAspectVariants({ masterMp4: masterForVariants, tempDir, jobId });
+    if (derived && derived.vertical) variants = derived;
+  } catch (err) {
+    console.warn(`[variants] derivation failed (${err.message}) — shipping vertical only.`);
+  }
   const shorts = [];
 
   options.onProgress?.({ phase: "Uploading deliverables", progress: 94 });

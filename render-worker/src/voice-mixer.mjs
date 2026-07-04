@@ -92,23 +92,23 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
           lines: alignedLines, voiceId, tempDir, jobId, onProgress
         });
       } catch (err) {
-        console.warn(`[voice] aligned narration failed (${err.message}) — trying whole-script layover.`);
+        // v34.1: LOUD failure with the real cause — this error was being
+        // summarized away, and the silent fallback to the whole-script
+        // layover reintroduced wrong-order narration for multiple smoke
+        // tests while looking like the aligned path from the outside.
+        console.error(`[voice] ALIGNED PATH FAILED — falling back to per-line. Cause: ${err.stack || err.message}`);
       }
     }
   }
 
-  // v32 CONTINUOUS (whole-script layover) — fallback when aligned synthesis
-  // is unavailable. Prosody is perfect but sync is only tour-order soft.
-  if (typeof narrationScript === "string" && narrationScript.trim().split(/\s+/).length >= 8) {
-    try {
-      return await applyContinuousNarration({
-        masterMp4, photoScenes, realDur, crossfadeOverlapSec,
-        script: narrationScript.trim(), voiceId, tempDir, jobId, onProgress
-      });
-    } catch (err) {
-      console.warn(`[voice] continuous narration failed (${err.message}) — falling back to per-line path.`);
-    }
-  }
+  // v34.1: the whole-script layover is REMOVED from the fallback chain. It
+  // narrates the model's imagined tour order, not the actual scene order —
+  // the only path capable of wrong-room narration. With it gone, both
+  // remaining paths (aligned, per-line) are scene-locked by construction:
+  // the worst possible failure is choppier delivery, never irrelevant
+  // narration. (applyContinuousNarration is retained below, unused, for
+  // reference.)
+  void narrationScript;
 
   // ============================================================
   // STEP 1 — synthesize each narration line via ElevenLabs (parallel)
@@ -578,7 +578,7 @@ async function synthesizeWithTimestamps({ text, voiceId, tempDir, jobId, setting
         voice_settings: settingsOverride || { stability: 0.55, similarity_boost: 0.85, style: 0.15, use_speaker_boost: true }
       })
     },
-    SYNTH_TIMEOUT_MS * 2
+    SYNTH_TIMEOUT_MS * 3 // long-form single call — give it real headroom
   );
   if (!response.ok) {
     const err = await response.text().catch(() => "");
