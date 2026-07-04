@@ -227,7 +227,7 @@ function Skeleton() {
 
 const TIER_LABELS: Record<string, string> = {
   trial: "Free Trial",
-  quick_reel: "Quick Reel",
+  quick_reel: "Photo Motion", // legacy tier key — customer-facing name updated v34.4
   cinematic_ai: "Cinematic AI",
   cinematic_4k: "Cinematic AI 4K",
   // q6 subscription tiers — without these, paid users render a raw lowercase

@@ -78,7 +78,7 @@ export default function EditStudioScreen() {
     }
     patchScene(sceneIndex, {
       status: "regenerating",
-      phase: mode === "kenburns" ? "Switching to Ken Burns…" : "Re-rendering scene…",
+      phase: mode === "kenburns" ? "Switching to Photo Motion…" : "Re-rendering scene…",
       progress: 5,
       error: ""
     });
@@ -125,7 +125,7 @@ export default function EditStudioScreen() {
             clipUrl: bust(newClip),
             isKenBurns: mode === "kenburns"
           });
-          setToast(mode === "kenburns" ? "Scene replaced with Ken Burns." : "Scene re-rendered.");
+          setToast(mode === "kenburns" ? "Scene replaced with Photo Motion." : "Scene re-rendered.");
           return;
         }
         if (status.status === "failed") {
@@ -138,7 +138,7 @@ export default function EditStudioScreen() {
       const prevAttempts = stateFor({ sceneIndex } as SceneClipMeta).aiAttempts;
       const aiAttempts = mode === "ai" ? prevAttempts + 1 : prevAttempts;
       if (mode === "ai" && aiAttempts >= 2) {
-        patchScene(sceneIndex, { aiAttempts, phase: "AI struggled twice — using Ken Burns…", error: "" });
+        patchScene(sceneIndex, { aiAttempts, phase: "AI struggled twice — switching to Photo Motion…", error: "" });
         await runRegen(sceneIndex, "kenburns");
         return;
       }
@@ -171,7 +171,7 @@ export default function EditStudioScreen() {
           <h1 className="font-serif text-3xl text-ink tracking-tightish">Fix any scene, keep the rest</h1>
           <p className="text-sm text-ink-muted mt-2 max-w-xl">
             Re-render a single scene if it came out wrong — the final video updates automatically.
-            Re-renders are free. After two AI attempts, a scene switches to a guaranteed-safe Ken Burns clip.
+            Re-renders are free. After two AI attempts, a scene switches to a guaranteed-safe Photo Motion clip.
           </p>
         </div>
         <button
@@ -276,10 +276,10 @@ function SceneCard({
           </span>
         </div>
 
-        {/* Ken Burns badge */}
+        {/* Photo Motion badge */}
         {ui.isKenBurns && (
           <span className="absolute top-2 right-2 font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/60 text-gold border border-gold/40">
-            Ken Burns
+            Photo Motion
           </span>
         )}
 
@@ -322,17 +322,17 @@ function SceneCard({
               <button
                 onClick={onKenBurns}
                 disabled={busy}
-                title="Use a safe Ken Burns clip instead"
+                title="Use a safe Photo Motion clip instead"
                 className="card-press px-3 py-2 rounded-lg text-sm border border-edge-strong text-ink-soft hover:text-ink hover:border-gold transition-colors disabled:opacity-50"
               >
-                Ken Burns
+                Photo Motion
               </button>
             )}
           </div>
         )}
         {ui.aiAttempts > 0 && ui.status !== "regenerating" && (
           <div className="text-[10px] text-ink-dim mt-1.5 font-mono">
-            AI attempts: {ui.aiAttempts}{ui.aiAttempts >= 2 ? " · auto Ken Burns" : ""}
+            AI attempts: {ui.aiAttempts}{ui.aiAttempts >= 2 ? " · auto Photo Motion" : ""}
           </div>
         )}
       </div>

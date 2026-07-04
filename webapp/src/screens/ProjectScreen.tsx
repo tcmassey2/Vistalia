@@ -1883,8 +1883,8 @@ function EngineToggle({ engine, onChange }: { engine: RenderEngine; onChange: (e
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <EngineCard
         active={engine === "remotion"}
-        title="Quick Reel"
-        description="Smooth Ken Burns camera motion on your photos. Fast, reliable, zero AI artifacts. Best for any listing — always works."
+        title="Photo Motion"
+        description="Smooth cinematic pans across your photos. Fast, reliable, zero AI artifacts. Best for any listing — always works."
         meta="~90 seconds • every plan"
         onClick={() => onChange("remotion")}
       />
@@ -1892,8 +1892,8 @@ function EngineToggle({ engine, onChange }: { engine: RenderEngine; onChange: (e
         active={engine === "runway"}
         title="Cinematic AI"
         proTag
-        description="Real AI camera motion via Runway Gen-4 Turbo. Kitchens + bathrooms auto-fall back to camera motion to avoid AI artifacts. Best for hero exteriors and living spaces."
-        meta="2–4 minutes • Cinematic AI plan"
+        description="True AI camera motion generated from each photo, with a per-scene quality inspection — any scene that fails is regenerated automatically. Best for hero exteriors and living spaces."
+        meta="5–7 minutes • Pro & Studio plans"
         onClick={() => onChange("runway")}
       />
     </div>
@@ -2315,7 +2315,7 @@ function RenderControls() {
         progress: Math.max(15, Number(submitted.progress) || 15),
         engine: renderEngine
       });
-      setToast("Render started — your cinematic video is usually ready in about 3 minutes.");
+      setToast("Render started — your cinematic video is usually ready in about 6 minutes.");
 
       // 4. Poll
       if (submitted.jobId) pollUntilDone(submitted.jobId);
@@ -2420,7 +2420,14 @@ function RenderControls() {
           ...status,
           jobId,
           progress: safeProgress,
-          phase: safePhase
+          phase: safePhase,
+          // v34.4: the status endpoint doesn't echo `engine`, so spreading
+          // the response clobbered the client-set value with undefined on
+          // the FIRST poll tick — every Veo render's status header flipped
+          // to "Quick Reel · Ken Burns motion" two seconds in. Keep what
+          // we know: response value if present, else previous, else the
+          // engine this render was submitted with.
+          engine: status.engine || useStore.getState().renderJob?.engine || renderEngine
         });
 
         if (status.status === "completed" || status.status === "failed") {
@@ -2800,7 +2807,7 @@ function RenderStatusPanel() {
                   onClick={() => useStore.getState().setEngine("remotion")}
                   className="btn-secondary-em h-9 px-4 rounded-lg text-xs"
                 >
-                  Switch to Quick Reel
+                  Switch to Photo Motion
                 </button>
               </div>
             </div>
@@ -2926,7 +2933,7 @@ function ActiveRenderPanel() {
   // Duration reflects the user's actual 30s/60s choice, not a hardcoded ~90s.
   const engineLabel = engineDisplayLabel(renderJob.engine);
   const targetSec = useStore.getState().targetDurationSec || 30;
-  const engineSubLabel = `${isRunway ? "Cinematic motion" : "Ken Burns motion"} · 1080p · ~${targetSec}s`;
+  const engineSubLabel = `${isRunway ? "Cinematic motion" : "Photo Motion"} · 1080p · ~${targetSec}s`;
 
   // ETA — keep it stable. Recompute once a second, not on every frame.
   // Read displayed via ref so it doesn't trigger re-renders.
@@ -3092,8 +3099,8 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
   // actually runs today.
   if (raw.includes("variant") || raw.includes("aspect") || raw.includes("finaliz")) {
     return {
-      title: "Finalizing your master",
-      detail: "Locking in the 9:16 vertical at 1080p."
+      title: "Finalizing your formats",
+      detail: "Packaging 9:16 vertical, 1:1 square, and 16:9 wide at 1080p."
     };
   }
   if (raw.includes("upload")) {
@@ -3113,8 +3120,8 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
   return {
     title: fallback.charAt(0).toUpperCase() + fallback.slice(1),
     detail: isRunway
-      ? "Cinematic AI typically completes in 3 to 5 minutes."
-      : "Quick Reel typically completes in under 90 seconds."
+      ? "Cinematic AI typically completes in 5 to 7 minutes."
+      : "Photo Motion typically completes in under 90 seconds."
   };
 }
 
@@ -3124,7 +3131,9 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
 function useStableEta({ startedAt, isRunway }: { startedAt: number; isRunway: boolean }): string {
   const [label, setLabel] = useState("");
   useEffect(() => {
-    const totalEstimateSec = isRunway ? 240 : 75;
+    // v34.4: real Veo renders complete in ~6-7 min (QC regens included) —
+    // the old 240s cap made the ETA read "4 min left" forever.
+    const totalEstimateSec = isRunway ? 400 : 75;
     const interval = window.setInterval(() => {
       const job = useStore.getState().renderJob;
       if (!job) { setLabel(""); return; }

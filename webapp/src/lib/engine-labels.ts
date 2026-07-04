@@ -14,15 +14,18 @@ export function engineLabel(engine: RenderEngine | string | null | undefined): s
   const e = String(engine || "remotion").toLowerCase();
   if (e === "veo" || e === "runway") return "Cinematic AI";
   if (e === "depth") return "Cinematic Depth";
-  return "Quick Reel";
+  // v34.4: "Quick Reel" / "Ken Burns" retired from customer-facing copy.
+  // The photo-motion path is "Photo Motion" everywhere (Edit Studio,
+  // Library, status panel).
+  return "Photo Motion";
 }
 
 export function engineDescription(engine: RenderEngine | string | null | undefined): string {
   const e = String(engine || "remotion").toLowerCase();
-  if (e === "veo") return "Veo 3.1 cinematic image-to-video generation";
-  if (e === "runway") return "Runway Gen-4 image-to-video generation";
+  if (e === "veo") return "Cinematic image-to-video AI with per-scene quality checks";
+  if (e === "runway") return "Cinematic image-to-video AI (legacy)";
   if (e === "depth") return "Depth-based 2.5D parallax with geometric camera moves";
-  return "Ken Burns camera motion on still photos";
+  return "Smooth cinematic pans across your photos";
 }
 
 // True for any engine that uses AI image-to-video generation. Used to
