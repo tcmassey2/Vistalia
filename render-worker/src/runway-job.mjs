@@ -168,12 +168,17 @@ export async function renderRunwayJob(body, options = {}) {
   let qcRetryCount = 0;      // v31.2: clips regenerated constrained after QC fail
   let qcThirdTryCount = 0;   // v34: clips that needed the third (pull_out) attempt
   let guardForcedCount = 0;
+  // v34.6 DROP-SCENE TERMINAL: scenes that fail every attempt are dropped
+  // from the render instead of killing it. Each entry: { sceneIndex,
+  // photoId, reason }. The floor after the pMap aborts + refunds if drops
+  // exceed tolerance (systemic failure looks like MANY drops, not one).
+  const droppedScenes = [];
   // Per-scene failure recovery: when Runway fails on a single scene we
   // generate a Ken-Burns–style fallback clip from the same photo using
   // ffmpeg locally. The render completes with mixed Cinematic AI and
   // Ken-Burns scenes rather than dying with one bad apple. Daily-cap
   // errors still propagate up — those need user action, not a fallback.
-  const clipResults = await pMap(
+  const rawClipResults = await pMap(
     photoScenes,
     async (scene, index) => {
       let result;
@@ -209,14 +214,14 @@ export async function renderRunwayJob(body, options = {}) {
             usedConstrained = true;
             fallbackCount++; // counted as "retried", surfaces in phase text
           } catch (retryError) {
-            // No partial videos, no silent quality downgrades. Fail the
-            // render with a typed error; the API layer refunds the credit
-            // (render_credit_refunds helper — Phase 2 remainder).
-            const err = new Error(
-              `Scene ${index + 1} failed twice on Veo (${retryError.message}). Render aborted — your render credit will be refunded.`
-            );
-            err.code = "VEO_SCENE_FAILED";
-            throw err;
+            // v34.6: two straight generation failures on ONE scene are almost
+            // always photo-specific (fal content rejection, hostile source
+            // image) — drop this scene and keep the render. If it's actually
+            // systemic (fal outage), many scenes drop and the floor below
+            // aborts + refunds exactly like v34 did.
+            console.warn(`[veo] scene ${index + 1} failed twice (${retryError.message}) — DROPPING this scene.`);
+            droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: `generation failed twice (${retryError.message})` });
+            return null;
           }
         }
 
@@ -284,13 +289,16 @@ export async function renderRunwayJob(body, options = {}) {
               });
               const hard3 = verdict3.checked ? verdict3.reasons.filter((r) => !r.startsWith("motion")) : [];
               if (verdict3.checked && hard3.length > 0) {
-                const err = new Error(
-                  `Scene ${index + 1} kept producing visual artifacts (${hard3.join(", ")}) across three attempts. ` +
-                  `Render aborted — your credit will be refunded. This photo may have baked-in text or unusual geometry; ` +
-                  `try replacing it or re-shooting it.`
-                );
-                err.code = "VEO_SCENE_FAILED";
-                throw err;
+                // v34.6 (Troy, post-first-abort-in-the-wild): three genuinely
+                // different generations all produced hard artifacts — this
+                // PHOTO is hostile to AI motion (baked-in text, mirrors,
+                // unusual geometry). Drop the scene, keep the render. The
+                // Motion Director curates ~9 of up to 16 photos; un-picking
+                // one bad apple is curation, not a quality downgrade — and
+                // artifacts still never ship, which is the actual promise.
+                console.warn(`[qc] scene ${index + 1} hard-failed all three attempts (${hard3.join(", ")}) — DROPPING this scene.`);
+                droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: hard3.join(", ") });
+                return null;
               }
               result = third;
             }
@@ -335,6 +343,37 @@ export async function renderRunwayJob(body, options = {}) {
     { concurrency }
   );
 
+  // v34.6 drop floor: a couple of drops = hostile photos, curate them out
+  // and ship. More than that = something systemic (fal outage, bad photo
+  // set) — abort + refund exactly like v34's single-failure behavior.
+  const droppedCount = droppedScenes.length;
+  const clipResults = rawClipResults.filter(Boolean);
+  if (droppedCount > 0) {
+    const MAX_DROPS = 2;
+    const MIN_KEPT = 4;
+    if (droppedCount > MAX_DROPS || clipResults.length < MIN_KEPT) {
+      const err = new Error(
+        `${droppedCount} scene${droppedCount === 1 ? "" : "s"} failed every generation attempt ` +
+        `(${droppedScenes.map((d) => `scene ${d.sceneIndex + 1}: ${d.reason}`).join("; ")}). ` +
+        `Render aborted — your credit will be refunded. Some photos may have baked-in text or unusual geometry; try replacing them.`
+      );
+      err.code = "VEO_SCENE_FAILED";
+      throw err;
+    }
+    // Filter the manifest's scene list so everything downstream — stitch
+    // order, narration lines and windows, per-scene durations, duck
+    // timing — agrees with the clips that actually exist. The aligned
+    // voice path derives all timing from the scene list it receives, so
+    // this one filter keeps picture and voice locked.
+    const droppedIds = new Set(droppedScenes.map((d) => d.photoId));
+    manifest.scenes = (manifest.scenes || []).filter((s) => !droppedIds.has(s.photoId));
+    console.warn(
+      `[qc] DROPPED ${droppedCount} scene${droppedCount === 1 ? "" : "s"} — ` +
+      droppedScenes.map((d) => `#${d.sceneIndex + 1} (${d.reason})`).join(" | ") +
+      ` — shipping ${clipResults.length}/${photoScenes.length} scenes. No artifacts ship; the tour is ${droppedCount} scene${droppedCount === 1 ? "" : "s"} shorter.`
+    );
+  }
+
   if (!complianceMode && guardLevel !== "off") {
     // v31: name the actual mechanism per engine — on Veo, guard-forced scenes
     // get the constrained prompt (same engine), NOT Ken Burns. The old wording
@@ -348,8 +387,9 @@ export async function renderRunwayJob(body, options = {}) {
   if (isVeo && qcEnabled()) {
     console.info(
       `[qc] Verify-then-deliver summary — ${qcRetryCount} scene${qcRetryCount === 1 ? "" : "s"} regenerated constrained after QC fail, ` +
-      `${qcThirdTryCount} needed the third (pull_out) attempt. No Ken Burns floor (v34): ` +
-      `hard artifacts on all three attempts abort + refund. Detected artifacts shipped: 0 by construction.`
+      `${qcThirdTryCount} needed the third (pull_out) attempt, ${droppedCount} dropped after all attempts failed. ` +
+      `No Ken Burns floor (v34) + drop-scene terminal (v34.6): hard-failing scenes are curated out (≤2); ` +
+      `excess drops abort + refund. Detected artifacts shipped: 0 by construction.`
     );
   } else if (isVeo) {
     console.warn(`[qc] Verify-then-deliver DISABLED — set OPENAI_API_KEY on the worker to enable per-scene artifact QC.`);
