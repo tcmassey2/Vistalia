@@ -482,6 +482,12 @@ export default async function handler(request, response) {
     console.info(
       `[plan] narrationScript: ${normalizedPlan.narrationScript ? normalizedPlan.narrationScript.trim().split(/\s+/).length + " words" : "ABSENT (per-line fallback will run)"}`
     );
+    // v33.4 observability: room ↔ line mapping, verifiable BEFORE spending
+    // fal credits — test-10 spoke "kitchen" over the great room and the
+    // mismatch was only discoverable by watching the finished video.
+    for (const sc of normalizedPlan.scenes || []) {
+      if (sc.narrationLine) console.info(`[plan] scene ${sc.order} (${sc.roomType}): "${sc.narrationLine}"`);
+    }
     const postNormalizeValidation = validateNormalizedPlan(normalizedPlan, photos);
     if (!preNormalizeValidation.ok) {
       logMotionDirector("warn", "Pre-normalize validation found issues; normalize step repaired them.", {
@@ -547,7 +553,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
     ? [
         `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
-        `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings (never start several lines the same way), use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment; never write a line that ignores what's visible in its photo.`,
+        `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
         `The agent's name is "${brandKit.fullName || "the listing agent"}", brokerage "${brandKit.brokerage || "their brokerage"}". Refer to them only on scene 1 and the outro CTA — don't repeat the name throughout.`,
         `Narration MUST stay grounded in the listing facts provided (price, beds, baths, sq ft, address) and what is visible in the photo. Never invent features, views, schools, or neighborhoods.`,

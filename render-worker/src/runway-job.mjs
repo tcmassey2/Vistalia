@@ -255,14 +255,32 @@ export async function renderRunwayJob(body, options = {}) {
             }
           }
           if (verdict.checked && !verdict.pass) {
-            // Ken Burns floor: static but artifact-free. Match the Veo clip's
-            // beat-snapped duration exactly so stitch/voice math is untouched
-            // (the stock KB helper defaults to 5/10s clips).
-            console.warn(`[qc] scene ${index + 1} still failing (${verdict.reasons.join(", ")}) — using Ken Burns floor.`);
-            qcKenBurnsCount++;
-            const veoDuration = result.duration;
-            result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
-            result.duration = veoDuration;
+            // v33.4 FLOOR POLICY: only the HIGH-PRECISION detections (text /
+            // object artifacts) floor a scene. The motion check is the
+            // lowest-precision signal — legitimate parallax reads as "object
+            // shifted" to a VLM often enough that motion-only failures were
+            // littering renders with jarring 2D stills ("the Ken Burns
+            // fallback is awful", test-10). A motion-only flag on a
+            // CONSTRAINED clip (minimal camera move + world-space lock) is
+            // far more likely a false positive than a real glide — ship it,
+            // log it loudly, and leave the one-tap Edit Studio regen as the
+            // human remedy for true escapees.
+            const hardReasons = verdict.reasons.filter((r) => !r.startsWith("motion"));
+            if (hardReasons.length === 0) {
+              console.warn(
+                `[qc] scene ${index + 1}: motion-only flag on the constrained clip — ` +
+                `shipping it (likely VLM false positive; Edit Studio regen is the remedy if real).`
+              );
+            } else {
+              // Duration-exact floor: the stock KB helper animates a 5/10s
+              // motion arc; trimming it to a ~3.5s scene shipped half-finished
+              // crawls that looked broken. Build the arc for THIS duration.
+              console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — using photo-motion floor.`);
+              qcKenBurnsCount++;
+              const veoDuration = result.duration;
+              result = await generateKenBurnsFallback(scene, manifest, tempDir, index, { durationSec: veoDuration });
+              result.duration = veoDuration;
+            }
           }
         }
       } else if (complianceMode || guardDecision.useKenBurns) {
@@ -708,7 +726,7 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
 // the visual intent matches what the AI was supposed to do. Visually less
 // dramatic than Runway image-to-video but indistinguishable to a casual
 // viewer, and crucially, the render completes.
-export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIndex) {
+export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIndex, options = {}) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   const imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Fallback impossible — scene ${sceneIndex + 1} has no image URL.`);
@@ -718,8 +736,14 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
   const dimensions = ratio === "16:9" || ratio === "wide" ? { width: 1920, height: 1080 }
                   : ratio === "1:1" || ratio === "square" ? { width: 1080, height: 1080 }
                   : { width: 1080, height: 1920 };
-  const duration = clamp(Number(scene.duration || 5) > 5.5 ? 10 : 5, 5, 10);
-  const totalFrames = duration * 30;
+  // v33.4: durationSec override — the QC floor needs the motion arc designed
+  // for the scene's EXACT beat-snapped length. The legacy 5/10s quantization
+  // (Quick Reel era) meant floors got trimmed mid-arc: slow half-finished
+  // zooms that read as broken next to real camera motion.
+  const duration = Number(options.durationSec) > 0
+    ? clamp(Number(options.durationSec), 1.6, 10)
+    : clamp(Number(scene.duration || 5) > 5.5 ? 10 : 5, 5, 10);
+  const totalFrames = Math.round(duration * 30);
 
   // Map the camera motion to a zoompan expression. The motion vocabulary is
   // a strict subset of what Quick Reel does, kept conservative so the
