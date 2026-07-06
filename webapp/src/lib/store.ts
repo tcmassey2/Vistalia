@@ -66,6 +66,9 @@ interface AppState {
   // Default OFF — narration adds 30-60s to render time and gates on
   // ElevenLabs availability. Agents can opt in once they trust the basics.
   narrationEnabled: boolean;
+  // v35.1: opt-in 1:1 square deliverable (adds ~2 min of render time —
+  // most agents only want the 9:16). Default false.
+  includeSquare: boolean;
   // v24.2: independent music toggle + volume. Previously music was
   // forced-on whenever a track existed. Now agents can ship voice-only,
   // music-only, or silent. musicVolume is 0.0-1.0, multiplied with the
@@ -137,6 +140,7 @@ interface AppState {
   setMusicTrack: (trackId: string | null) => void;
   setEngine: (e: RenderEngine) => void;
   setNarrationEnabled: (enabled: boolean) => void;
+  setIncludeSquare: (enabled: boolean) => void;
   setMusicEnabled: (enabled: boolean) => void;
   setMusicVolume: (volume: number) => void;
   setTargetDuration: (sec: 30 | 60) => void;
@@ -304,6 +308,7 @@ const emptyProject = () => ({
   // worker still gracefully falls back to music-only if ElevenLabs is
   // unavailable, so this is safe.
   narrationEnabled: true,
+  includeSquare: false,
   musicEnabled: true,
   // 1.0 = use the worker's default musicBedLevel as-is. 0.0 = silent.
   // 1.5 = music 50% louder than default. Slider in UI typically 0-1.5.
@@ -496,6 +501,7 @@ export const useStore = create<AppState>((set, get) => ({
   setMusicTrack: (trackId) => set({ selectedMusicTrackId: trackId }),
   setEngine: (e) => set({ renderEngine: e, editPlan: null }),
   setNarrationEnabled: (enabled) => set({ narrationEnabled: enabled, editPlan: null }),
+  setIncludeSquare: (enabled) => set({ includeSquare: enabled }),
   setMusicEnabled: (enabled) => set({ musicEnabled: enabled }),
   setMusicVolume: (volume) => set({ musicVolume: Math.max(0, Math.min(2, Number(volume) || 1)) }),
   setTargetDuration: (sec) => set({ targetDurationSec: sec, editPlan: null }),

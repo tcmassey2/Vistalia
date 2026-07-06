@@ -180,7 +180,10 @@ export default function LibraryDetailModal({
             url={inferredUrls.vertical}
             filename={deliverableFilename(heading, "vertical")}
           />
-          {inferredUrls.square && (
+          {/* v35.1: square is opt-in per render — only show the pill when
+              this render actually produced it (formatsCount counts the
+              uploaded variants; vertical-only renders have 1). */}
+          {entry.formatsCount >= 2 && inferredUrls.square && (
             <DeliverablePill
               label="Square · 1:1"
               sublabel="Instagram & Facebook feed"
@@ -188,14 +191,8 @@ export default function LibraryDetailModal({
               filename={deliverableFilename(heading, "square")}
             />
           )}
-          {inferredUrls.wide && (
-            <DeliverablePill
-              label="Wide · 16:9"
-              sublabel="YouTube · MLS portals · Zillow"
-              url={inferredUrls.wide}
-              filename={deliverableFilename(heading, "wide")}
-            />
-          )}
+          {/* v35: wide (16:9) retired — a pillarboxed 9:16 isn't shippable
+              quality. Returns with per-aspect generation (Formats pack). */}
         </div>
 
         {/* Per-scene regenerate — only relevant for runway renders that have
@@ -888,18 +885,18 @@ function buildRegenManifest(
 function inferDeliverableUrls(masterUrl: string, entry: LibraryEntry): {
   vertical: string;
   square: string;
-  wide: string;
   shorts: string[];
 } {
   if (!masterUrl) {
-    return { vertical: "", square: "", wide: "", shorts: [] };
+    return { vertical: "", square: "", shorts: [] };
   }
-  // Worker uploads as <basePath>/master.mp4 for vertical, square.mp4, wide.mp4
+  // Worker uploads as <basePath>/master.mp4 for vertical + square.mp4
+  // (v35: square is a true 1:1 re-composition, not a master crop; wide
+  // retired until per-aspect generation ships).
   const vertical = masterUrl;
   const square = masterUrl.replace(/\/master\.mp4(\?|$)/, "/square.mp4$1");
-  const wide = masterUrl.replace(/\/master\.mp4(\?|$)/, "/wide.mp4$1");
   const shorts = Array.from({ length: entry.socialShortCount }).map((_, i) =>
     masterUrl.replace(/\/master\.mp4(\?|$)/, `/short-${i + 1}.mp4$1`)
   );
-  return { vertical, square, wide, shorts };
+  return { vertical, square, shorts };
 }

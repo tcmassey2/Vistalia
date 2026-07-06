@@ -142,6 +142,7 @@ export default function ProjectScreen() {
       <Section title="Render" subtitle="Pick a length and hit Generate. Review every scene before you publish.">
         <div className="flex flex-col gap-5">
           <LengthToggle value={targetDurationSec} onChange={setTargetDuration} />
+          <FormatsToggle />
           <RenderControls />
           {renderJob && <RenderStatusPanel />}
         </div>
@@ -2105,6 +2106,50 @@ function AudioControls() {
    Drives manifest.targetDurationSec → edit-plan scene count.
    30s ≈ 6 Cinematic AI scenes (or ~10 Quick Reel). 60s doubles that.
 */
+/* v35.1: formats are OPT-IN. The square is a real 1:1 re-composition
+   (~2 extra minutes of render time), and most agents only want the 9:16 —
+   so the default is vertical-only and the square is a deliberate choice. */
+function FormatsToggle() {
+  const includeSquare = useStore((s) => s.includeSquare);
+  const setIncludeSquare = useStore((s) => s.setIncludeSquare);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-2.5">
+        <h3 className="text-sm font-semibold tracking-tightish">Formats</h3>
+        <span className="text-xs text-ink-muted">Square is composed separately — not a crop</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => setIncludeSquare(false)}
+          className={cn(
+            "card-press text-left p-3 rounded-lg bg-surface border",
+            !includeSquare
+              ? "border-gold bg-surface-raised card-selected"
+              : "border-edge hover:border-edge-strong"
+          )}
+        >
+          <div className="text-sm font-semibold tracking-tightish mb-0.5">Vertical · 9:16</div>
+          <div className="text-xs text-ink-muted">Reels · TikTok · Shorts — fastest render</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setIncludeSquare(true)}
+          className={cn(
+            "card-press text-left p-3 rounded-lg bg-surface border",
+            includeSquare
+              ? "border-gold bg-surface-raised card-selected"
+              : "border-edge hover:border-edge-strong"
+          )}
+        >
+          <div className="text-sm font-semibold tracking-tightish mb-0.5">Vertical + Square · 1:1</div>
+          <div className="text-xs text-ink-muted">Adds IG/FB feed format · ~2 min longer</div>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function LengthToggle({ value, onChange }: { value: 30 | 60; onChange: (v: 30 | 60) => void }) {
   return (
     <div>
@@ -2357,7 +2402,9 @@ function RenderControls() {
         // v26.6: the Hallucination Guard now routes risky rooms (kitchen,
         // bath, pool, laundry) to constrained locked-tripod Veo prompts
         // instead of Ken Burns — always on, no user-facing safety picker.
-        hallucinationGuard: "balanced"
+        hallucinationGuard: "balanced",
+        // v35.1: 1:1 square is opt-in (adds ~2 min; most agents want 9:16 only).
+        includeSquare: useStore.getState().includeSquare === true
       };
 
       // v27: capture the manifest so the Edit Studio can re-render a single
@@ -2390,7 +2437,9 @@ function RenderControls() {
         progress: Math.max(15, Number(submitted.progress) || 15),
         engine: renderEngine
       });
-      setToast("Render started — your cinematic video is usually ready in about 6 minutes.");
+      setToast(
+        `Render started — your cinematic video is usually ready in about ${useStore.getState().includeSquare ? 8 : 6} minutes.`
+      );
 
       // 4. Poll
       if (submitted.jobId) pollUntilDone(submitted.jobId);
@@ -3175,7 +3224,7 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
   if (raw.includes("variant") || raw.includes("aspect") || raw.includes("finaliz")) {
     return {
       title: "Finalizing your formats",
-      detail: "Packaging 9:16 vertical, 1:1 square, and 16:9 wide at 1080p."
+      detail: "Packaging the 9:16 vertical and a true 1:1 square at 1080p."
     };
   }
   if (raw.includes("upload")) {
@@ -3195,7 +3244,7 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
   return {
     title: fallback.charAt(0).toUpperCase() + fallback.slice(1),
     detail: isRunway
-      ? "Cinematic AI typically completes in 5 to 7 minutes."
+      ? "Cinematic AI typically completes in 5 to 7 minutes (a bit longer with the square format)."
       : "Photo Motion typically completes in under 90 seconds."
   };
 }
@@ -3208,7 +3257,9 @@ function useStableEta({ startedAt, isRunway }: { startedAt: number; isRunway: bo
   useEffect(() => {
     // v34.4: real Veo renders complete in ~6-7 min (QC regens included) —
     // the old 240s cap made the ETA read "4 min left" forever.
-    const totalEstimateSec = isRunway ? 400 : 75;
+    const totalEstimateSec = isRunway
+      ? (useStore.getState().includeSquare ? 520 : 400)
+      : 75;
     const interval = window.setInterval(() => {
       const job = useStore.getState().renderJob;
       if (!job) { setLabel(""); return; }

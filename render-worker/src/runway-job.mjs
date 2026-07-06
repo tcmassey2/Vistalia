@@ -16,7 +16,9 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
-import { deriveAspectVariants, buildSocialShorts } from "./aspect-variants.mjs";
+// v35: deriveAspectVariants retired — square is recomposed from source clips
+// (see the variants block below); wide is retired until per-aspect generation
+// ships. aspect-variants.mjs stays in tree for the future Formats pack.
 import { applyVoiceNarration } from "./voice-mixer.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
 import { runFFmpeg, timed } from "./ffmpeg-runner.mjs";
@@ -475,21 +477,67 @@ export async function renderRunwayJob(body, options = {}) {
   // different aspect can re-render with exportFormat changed.
   // deriveAspectVariants + buildSocialShorts modules retained in
   // tree for the future-tier 'Pro Pack' SKU, but no longer called.
-  options.onProgress?.({ phase: "Finalizing master", progress: 88 });
-  // v34.1: aspect variants RE-ENABLED. The "one-master simplification" was
-  // reversed by Troy's launch call ("we should be providing people with all
-  // formats") — the library + render-complete UI now surface square/wide
-  // download pills, which 404 without these files. deriveAspectVariants
-  // falls back to vertical-only if variant generation fails, so this can't
-  // fail a render.
+  options.onProgress?.({ phase: "Building square format", progress: 86 });
+  // v35 TRUE SQUARE (test-16): the derived 1:1 was a center crop of the
+  // BAKED 9:16 master — it beheaded the corner badge, clipped card text,
+  // and threw away 44% of every composition ("looks a little bit
+  // terrible"). Real square = the SAME pipeline run at 1080×1080 from the
+  // source clips: square-positioned watermark + headshot + outro card,
+  // upward-biased room crop, identical xfade timeline — then the narrated
+  // master's finished audio muxed straight on (timelines match to the
+  // millisecond, stream copy, no re-mix). Runs in its own temp subdir so
+  // no intermediate filename can collide with the vertical pass.
+  //
+  // WIDE (16:9) IS RETIRED: from a vertical master it can only ever be a
+  // pillarboxed 9:16 ("just a framed 9 by 16"). A real wide needs
+  // per-aspect Veo generations — the post-launch Formats pack.
   let variants = {
     vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } }
   };
+  // v35.1: square is OPT-IN (manifest.includeSquare from the webapp Formats
+  // toggle). Default renders ship vertical-only and skip the ~2 min pass.
   try {
-    const derived = await deriveAspectVariants({ masterMp4: masterForVariants, tempDir, jobId });
-    if (derived && derived.vertical) variants = derived;
+    if (manifest?.includeSquare !== true) throw { skipSquare: true };
+    const squareDir = path.join(tempDir, "square");
+    await fs.mkdir(squareDir, { recursive: true });
+    const squareSilent = path.join(squareDir, `${jobId}-square-silent.mp4`);
+    const squareThumb = path.join(squareDir, `${jobId}-square-thumb.png`);
+    await stitchClipsAndOverlays(
+      clipResults,
+      // skipMusic: the square's audio comes from the narrated master below —
+      // mixing the music bed here would just be discarded work.
+      { ...manifest, skipMusic: true },
+      squareSilent,
+      squareThumb,
+      {
+        ...options,
+        dimensionsOverride: { width: 1080, height: 1080 },
+        onProgress: (info) =>
+          options.onProgress?.({
+            phase: "Building square format",
+            progress: 86 + Math.max(0, Math.min(6, Math.floor((((info?.progress ?? 76) - 76) / 24) * 6)))
+          })
+      }
+    );
+    const squareFinal = path.join(squareDir, `${jobId}-square.mp4`);
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", squareSilent,
+      "-i", masterForVariants,
+      "-map", "0:v:0", "-map", "1:a:0?",
+      "-c", "copy",
+      "-shortest",
+      squareFinal
+    ], { timeoutMs: 60000, label: "variants:square-mux" });
+    variants.square = { format: "square", path: squareFinal, dimensions: { w: 1080, h: 1080 } };
+    await fs.unlink(squareSilent).catch(() => {});
+    console.info("[variants] TRUE 1:1 square composed from source clips (square-positioned branding, master audio muxed).");
   } catch (err) {
-    console.warn(`[variants] derivation failed (${err.message}) — shipping vertical only.`);
+    if (err && err.skipSquare) {
+      console.info("[variants] square not requested — shipping vertical only.");
+    } else {
+      console.warn(`[variants] square recomposition failed (${err.message}) — shipping vertical only.`);
+    }
   }
   const shorts = [];
 
@@ -973,7 +1021,10 @@ async function pollRunwayTask(taskId, sceneIndex) {
 export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, thumbnailPath, options = {}) {
   clipResults.sort((a, b) => a.sceneIndex - b.sceneIndex);
   const tempDir = path.dirname(outputPath);
-  const dimensions = runwayDimensions(manifest);
+  // v35: dimensionsOverride lets the SAME pipeline compose a second aspect
+  // (square) from the source clips — watermark, corner headshot, outro card,
+  // and scale/crop are all already parameterized by `dimensions`.
+  const dimensions = options.dimensionsOverride || runwayDimensions(manifest);
   const brand = normalizeBrandKitForFFmpeg(manifest.brandKit || {});
 
   // Step 1: normalize each clip to a uniform codec / framerate / resolution,
@@ -1016,7 +1067,13 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       // lanczos upscale to master size — see PRE_SCALE_DENOISE notes up top.
       PRE_SCALE_DENOISE,
       `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=lanczos`,
-      `crop=${dimensions.width}:${dimensions.height}`,
+      // v35: square targets crop the 9:16-shaped source with an 8% UPWARD
+      // bias (42% from top instead of dead center) — rooms keep their
+      // ceiling line and eye-level composition; dead-center kept too much
+      // floor. Non-square targets keep the centered crop.
+      dimensions.width === dimensions.height
+        ? `crop=${dimensions.width}:${dimensions.height}:(in_w-${dimensions.width})/2:(in_h-${dimensions.height})*0.42`
+        : `crop=${dimensions.width}:${dimensions.height}`,
       colorGrade,
       ...(watermarkFilter ? [watermarkFilter] : [])
     ].join(",");

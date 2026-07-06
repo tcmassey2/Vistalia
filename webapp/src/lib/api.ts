@@ -208,6 +208,9 @@ export interface RenderManifest {
   // ships music-only audio. Useful when narration would slow renders down
   // (e.g. live demo) or when ElevenLabs is having availability issues.
   skipNarration?: boolean;
+  // v35.1: opt-in 1:1 square deliverable — recomposed from source clips on
+  // the worker (~2 extra minutes). Default false = vertical-only render.
+  includeSquare?: boolean;
   // When true, the worker upscales the master + every aspect variant to
   // 4K-equivalent resolution (2160×3840 vertical, etc). Defaults to true
   // now that we're on Render Pro 4GB / Supabase Pro 5GB-per-file.
