@@ -88,13 +88,18 @@ export interface AgentBranding {
   // for MLS / state advertising compliance. E.g. "DRE# 01234567" (CA),
   // "TREC# 0123456" (TX), "AZ SA-123456" (AZ).
   licenseNumber?: string;
-  // ElevenLabs voice clone ID. When set, every future render is narrated in
-  // the agent's actual voice. When unset, Vistalia still narrates using
-  // a stock professional voice — so the agent always gets narration, and
-  // voice cloning becomes the perceptible upgrade.
+  // ACTIVE narrator: either a preset slug ("luxury-warm") or a raw
+  // ElevenLabs cloned voice_id. Empty/undefined = style default. This is
+  // what the render worker resolves at synth time.
   voiceId?: string;
-  // Display name of the voice clone — typically the agent's first name.
+  // Display name of the active voice — preset label or agent's first name.
   voiceLabel?: string;
+  // v34.7: the agent's cloned voice, remembered PERMANENTLY and separately
+  // from voiceId. Before this split, picking any preset in Settings
+  // overwrote voiceId and silently destroyed the clone linkage — the
+  // clone card's Preview became a no-op and renders stopped using the clone.
+  clonedVoiceId?: string;
+  clonedVoiceLabel?: string;
 }
 
 export interface SceneOverlay {

@@ -301,15 +301,27 @@ const BRAND_KIT_DEFAULT_NAME = "Default";
 
 export async function fetchBrandKit(userId: string): Promise<AgentBranding | null> {
   if (!userId) return null;
+  const SELECT_V2 =
+    "id, full_name, brokerage, phone, email, headshot_url, logo_url, license_number, voice_id, voice_label, cloned_voice_id, cloned_voice_label";
+  const SELECT_V1 =
+    "id, full_name, brokerage, phone, email, headshot_url, logo_url, license_number, voice_id, voice_label";
   try {
-    const { data, error } = await supabase()
-      .from("brand_kits")
-      .select(
-        "id, full_name, brokerage, phone, email, headshot_url, logo_url, license_number, voice_id, voice_label"
-      )
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(1);
+    const runSelect = async (cols: string) => {
+      const res = await supabase()
+        .from("brand_kits")
+        .select(cols)
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      return { data: res.data as unknown as Array<Record<string, string | null>> | null, error: res.error };
+    };
+    let { data, error } = await runSelect(SELECT_V2);
+    // v34.7 deploy-order resilience: if migration 26 hasn't run yet the new
+    // columns don't exist and the select 42703s — retry with the legacy
+    // column list instead of nuking the whole brand kit hydrate.
+    if (error && /cloned_voice/i.test(error.message || "")) {
+      ({ data, error } = await runSelect(SELECT_V1));
+    }
     if (error) {
       console.warn("[brand-kit] fetch failed:", error.message);
       return null;
@@ -325,7 +337,9 @@ export async function fetchBrandKit(userId: string): Promise<AgentBranding | nul
       brokerageLogoUrl: row.logo_url || "",
       licenseNumber: row.license_number || "",
       voiceId: row.voice_id || undefined,
-      voiceLabel: row.voice_label || undefined
+      voiceLabel: row.voice_label || undefined,
+      clonedVoiceId: row.cloned_voice_id || undefined,
+      clonedVoiceLabel: row.cloned_voice_label || undefined
     };
   } catch (err) {
     console.warn("[brand-kit] fetch threw:", err);
@@ -358,21 +372,26 @@ export async function saveBrandKit(userId: string, branding: AgentBranding): Pro
       logo_url: branding.brokerageLogoUrl || "",
       license_number: branding.licenseNumber || "",
       voice_id: branding.voiceId || null,
-      voice_label: branding.voiceLabel || null
+      voice_label: branding.voiceLabel || null,
+      cloned_voice_id: branding.clonedVoiceId || null,
+      cloned_voice_label: branding.clonedVoiceLabel || null
     };
 
-    if (Array.isArray(existing) && existing.length) {
-      const { error } = await supabase()
-        .from("brand_kits")
-        .update(row)
-        .eq("id", existing[0].id);
-      if (error) console.warn("[brand-kit] update failed:", error.message);
-    } else {
-      const { error } = await supabase()
-        .from("brand_kits")
-        .insert(row);
-      if (error) console.warn("[brand-kit] insert failed:", error.message);
+    // v34.7 deploy-order resilience: retry without the new clone columns if
+    // migration 26 hasn't run yet (unknown-column errors would otherwise
+    // silently drop every brand-kit save).
+    const writeRow = async (r: Record<string, unknown>) => {
+      if (Array.isArray(existing) && existing.length) {
+        return supabase().from("brand_kits").update(r).eq("id", existing[0].id);
+      }
+      return supabase().from("brand_kits").insert(r);
+    };
+    let { error } = await writeRow(row);
+    if (error && /cloned_voice/i.test(error.message || "")) {
+      const { cloned_voice_id: _a, cloned_voice_label: _b, ...legacyRow } = row;
+      ({ error } = await writeRow(legacyRow));
     }
+    if (error) console.warn("[brand-kit] save failed:", error.message);
   } catch (err) {
     console.warn("[brand-kit] save threw:", err);
   }

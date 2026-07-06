@@ -9,6 +9,7 @@ import { cn } from "../lib/cn";
 import { downloadVideo, deliverableFilename } from "../lib/download";
 import { resolveTrack } from "../lib/music-catalog";
 import { isAiVideoEngine, engineLabel as engineDisplayLabel } from "../lib/engine-labels";
+import { cloneVoiceIdOf, cloneVoiceLabelOf } from "../lib/voice-presets";
 import MusicSelector from "../components/MusicSelector";
 import { fireConfetti } from "../lib/confetti";
 import PaywallModal from "../components/PaywallModal";
@@ -1175,21 +1176,16 @@ type VoiceMode = "idle" | "permission" | "countdown" | "recording" | "review" | 
 // Preset narrator slugs (mirror of api/voices.js). These live in the SAME
 // branding.voiceId field as a cloned voice ID, so the clone card must not
 // mistake a preset selection for "you cloned a voice."
-const PRESET_VOICE_SLUGS = new Set([
-  "luxury-warm", "luxury-male", "luxury-british",
-  "viral-energetic", "viral-confident", "investor-deep", "mls-neutral"
-]);
-
 function VoiceCloneCard() {
   const branding = useStore((s) => s.branding);
   const setBranding = useStore((s) => s.setBranding);
   const setError = useStore((s) => s.setError);
   const setToast = useStore((s) => s.setToast);
 
-  // Mode state — drives which UI we show. branding.voiceId holds EITHER a
-  // preset slug or a cloned voice ID, so only treat it as a clone when it's
-  // not one of the known preset slugs.
-  const hasClonedVoice = !!branding.voiceId && !PRESET_VOICE_SLUGS.has(branding.voiceId);
+  // v34.7: the clone lives in branding.clonedVoiceId (with legacy inference
+  // for kits saved before the split) — the card no longer disappears when
+  // Settings makes a preset the ACTIVE voice.
+  const hasClonedVoice = !!cloneVoiceIdOf(branding);
   const initialMode: VoiceMode = hasClonedVoice ? "cloned" : "idle";
   const [mode, setMode] = useState<VoiceMode>(initialMode);
   const [countdown, setCountdown] = useState(3);
@@ -1432,9 +1428,14 @@ function VoiceCloneCard() {
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload.error || `Voice clone failed (${res.status}).`);
+      // v34.7: the clone id lives in BOTH fields — voiceId makes it the
+      // active narrator now; clonedVoiceId remembers it permanently so a
+      // preset pick in Settings can never destroy the linkage again.
       setBranding({
         voiceId: payload.voiceId,
-        voiceLabel: payload.voiceLabel || branding.fullName.split(/\s+/)[0] || ""
+        voiceLabel: payload.voiceLabel || branding.fullName.split(/\s+/)[0] || "",
+        clonedVoiceId: payload.voiceId,
+        clonedVoiceLabel: payload.voiceLabel || branding.fullName.split(/\s+/)[0] || ""
       });
       if (recordedUrl) URL.revokeObjectURL(recordedUrl);
       setRecordedBlob(null);
@@ -1483,7 +1484,9 @@ function VoiceCloneCard() {
       if (!res.ok) throw new Error(payload.error || `Voice clone failed (${res.status}).`);
       setBranding({
         voiceId: payload.voiceId,
-        voiceLabel: payload.voiceLabel || branding.fullName.split(/\s+/)[0] || ""
+        voiceLabel: payload.voiceLabel || branding.fullName.split(/\s+/)[0] || "",
+        clonedVoiceId: payload.voiceId,
+        clonedVoiceLabel: payload.voiceLabel || branding.fullName.split(/\s+/)[0] || ""
       });
       setToast("Your voice is cloned and ready.");
       setMode("cloned");
@@ -1500,14 +1503,23 @@ function VoiceCloneCard() {
      Cloned-state actions: preview + remove
      ----------------------------------------------------------------- */
   const previewVoice = async () => {
-    if (!branding.voiceId) return;
+    // v34.7: preview the CLONE specifically — this card is the clone card.
+    // The old `if (!branding.voiceId) return;` was a silent no-op whenever
+    // Settings had reset voiceId ("clicked Preview, nothing happened"), and
+    // when voiceId held a preset slug it previewed the preset while
+    // claiming to be your clone.
+    const cloneId = cloneVoiceIdOf(branding);
+    if (!cloneId) {
+      setError("No cloned voice found — record or upload a sample first.");
+      return;
+    }
     setPreviewLoading(true);
     try {
-      const text = `Hi, I'm ${branding.voiceLabel || branding.fullName.split(/\s+/)[0] || "your agent"}. This is how I'll sound on every Vistalia video.`;
+      const text = `Hi, I'm ${cloneVoiceLabelOf(branding) || branding.fullName.split(/\s+/)[0] || "your agent"}. This is how I'll sound on every Vistalia video.`;
       const res = await fetch("/api/synthesize-narration", {
         method: "POST",
         headers: await authHeaders(),
-        body: JSON.stringify({ voiceId: branding.voiceId, text })
+        body: JSON.stringify({ voiceId: cloneId, text })
       });
       if (!res.ok) {
         const errPayload = await res.json().catch(() => ({}));
@@ -1525,7 +1537,7 @@ function VoiceCloneCard() {
   };
 
   const removeVoice = () => {
-    setBranding({ voiceId: "", voiceLabel: "" });
+    setBranding({ voiceId: "", voiceLabel: "", clonedVoiceId: "", clonedVoiceLabel: "" });
     setMode("idle");
     setToast("Voice clone removed");
   };
@@ -1536,9 +1548,9 @@ function VoiceCloneCard() {
   const elapsedLabel = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
   const maxLabel = `${Math.floor(MAX_DURATION_SEC / 60)}:${String(MAX_DURATION_SEC % 60).padStart(2, "0")}`;
 
-  // Cloned state — clean, confident "ready" card. Guard against a preset slug
-  // sitting in voiceId (picked in Settings) being shown as a clone.
-  if (mode === "cloned" && branding.voiceId && !PRESET_VOICE_SLUGS.has(branding.voiceId)) {
+  // Cloned state — clean, confident "ready" card. v34.7: keyed off the
+  // dedicated clone field, so a preset pick in Settings no longer hides it.
+  if (mode === "cloned" && cloneVoiceIdOf(branding)) {
     return (
       <div>
         <VoiceHeader />

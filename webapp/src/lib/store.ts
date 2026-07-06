@@ -16,6 +16,7 @@ import type {
   UserProfile
 } from "./types";
 import { onAuthChange, getSession, fetchBrandKit, saveBrandKit } from "./supabase";
+import { PRESET_VOICE_SLUGS } from "./voice-presets";
 import { fetchOrganization } from "./api";
 import type { RenderManifest } from "./api";
 
@@ -191,13 +192,15 @@ const EMPTY_BRANDING: AgentBranding = {
   brokerageLogoUrl: "",
   licenseNumber: "",
   voiceId: undefined,
-  voiceLabel: undefined
+  voiceLabel: undefined,
+  clonedVoiceId: undefined,
+  clonedVoiceLabel: undefined
 };
 
 function parseBrandingJson(raw: string): AgentBranding | null {
   try {
     const parsed = JSON.parse(raw);
-    return {
+    const branding: AgentBranding = {
       fullName: String(parsed.fullName || ""),
       brokerage: String(parsed.brokerage || ""),
       phone: String(parsed.phone || ""),
@@ -206,11 +209,29 @@ function parseBrandingJson(raw: string): AgentBranding | null {
       brokerageLogoUrl: String(parsed.brokerageLogoUrl || ""),
       licenseNumber: String(parsed.licenseNumber || ""),
       voiceId: parsed.voiceId || undefined,
-      voiceLabel: parsed.voiceLabel || undefined
+      voiceLabel: parsed.voiceLabel || undefined,
+      clonedVoiceId: parsed.clonedVoiceId || undefined,
+      clonedVoiceLabel: parsed.clonedVoiceLabel || undefined
     };
+    return backfillCloneFields(branding);
   } catch {
     return null;
   }
+}
+
+// v34.7 one-time inference: brand kits saved before the clonedVoiceId split
+// hold the clone in voiceId (any non-preset, non-empty value is a raw
+// ElevenLabs id). Copy it into the dedicated field so a later preset pick
+// can't destroy it.
+function backfillCloneFields(branding: AgentBranding): AgentBranding {
+  if (!branding.clonedVoiceId && branding.voiceId && !PRESET_VOICE_SLUGS.has(branding.voiceId)) {
+    return {
+      ...branding,
+      clonedVoiceId: branding.voiceId,
+      clonedVoiceLabel: branding.voiceLabel || "Your voice"
+    };
+  }
+  return branding;
 }
 
 function loadStoredBranding(): AgentBranding {
@@ -383,10 +404,14 @@ export const useStore = create<AppState>((set, get) => ({
       brokerageLogoUrl: remote.brokerageLogoUrl ?? get().branding.brokerageLogoUrl,
       licenseNumber: remote.licenseNumber ?? get().branding.licenseNumber,
       voiceId: remote.voiceId ?? get().branding.voiceId,
-      voiceLabel: remote.voiceLabel ?? get().branding.voiceLabel
+      voiceLabel: remote.voiceLabel ?? get().branding.voiceLabel,
+      // v34.7: clone linkage — prefer remote, keep local, backfill below.
+      clonedVoiceId: remote.clonedVoiceId ?? get().branding.clonedVoiceId,
+      clonedVoiceLabel: remote.clonedVoiceLabel ?? get().branding.clonedVoiceLabel
     };
-    persistBranding(next);
-    set({ branding: next });
+    const backfilled = backfillCloneFields(next);
+    persistBranding(backfilled);
+    set({ branding: backfilled });
   },
 
   setOrganization: (org) => set({ organization: org, organizationLoaded: true }),
