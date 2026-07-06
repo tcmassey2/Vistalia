@@ -1261,6 +1261,20 @@ function VoiceCloneCard() {
           autoGainControl: true
         }
       });
+      // v34.8: permission granted is NOT the same as audio flowing. On
+      // macOS a revoked system-level mic permission, a dead input device,
+      // or an input volume of zero all yield a granted-but-silent track —
+      // which used to sail through to a review screen with a 0-byte blob,
+      // a dead player, and a "Use this voice" button that looked broken.
+      const micTrack = stream.getAudioTracks()[0];
+      if (!micTrack || micTrack.readyState !== "live" || micTrack.muted) {
+        stream.getTracks().forEach((t) => t.stop());
+        setMode("idle");
+        setError(
+          "Your microphone connected but isn't delivering audio. On a Mac: System Settings → Privacy & Security → Microphone → allow your browser, and check Sound → Input shows a level when you speak. Or use 'Upload audio file' below instead."
+        );
+        return;
+      }
       audioStreamRef.current = stream;
     } catch (err) {
       const name = (err as Error)?.name || "";
@@ -1311,16 +1325,28 @@ function VoiceCloneCard() {
     analyserRef.current = analyser;
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
+    // v34.8 silence watchdog: the analyser is already sampling the mic for
+    // the waveform — reuse it to catch a granted-but-silent input. If the
+    // loudest FFT bin stays near zero for the first 4 seconds, tell the
+    // user NOW instead of letting them narrate 60s into a dead mic.
+    const silenceWatch = { t0: Date.now(), peak: 0, warned: false };
     const tick = () => {
       analyser.getByteFrequencyData(dataArray);
       // Sample 32 evenly-spaced bins from the FFT for our 32 bars.
       for (let i = 0; i < 32; i++) {
         const binIndex = Math.floor((i / 32) * dataArray.length);
         const value = dataArray[binIndex] / 255;
+        silenceWatch.peak = Math.max(silenceWatch.peak, value);
         // Apply a slight curve so quiet sounds still register.
         const scaled = Math.max(0.06, Math.pow(value, 0.7));
         const bar = barRefs.current[i];
         if (bar) bar.style.transform = `scaleY(${scaled})`;
+      }
+      if (!silenceWatch.warned && Date.now() - silenceWatch.t0 > 4000 && silenceWatch.peak < 0.02) {
+        silenceWatch.warned = true;
+        setError(
+          "We're not hearing anything from your microphone. Check your Mac's input device and level (System Settings → Sound → Input), or cancel and use 'Upload audio file' instead."
+        );
       }
       rafRef.current = requestAnimationFrame(tick);
     };
@@ -1342,6 +1368,38 @@ function VoiceCloneCard() {
     };
     recorder.onstop = () => {
       const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+      // v34.8 fingerprint — if capture ever silently fails again, DevTools
+      // names the culprit in one line instead of a debugging session.
+      console.info(
+        `[voice-rec] captured ${audioChunksRef.current.length} chunk(s), ${blob.size} bytes, type=${blob.type || "?"}`
+      );
+      // v34.8: a silent/dead capture produces a tiny or empty blob. Never
+      // present that as a reviewable recording — the player would be dead
+      // and "Use this voice" would bounce off the server's 16KB floor.
+      if (blob.size < 12 * 1024) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach((t) => t.stop());
+          audioStreamRef.current = null;
+        }
+        if (audioCtxRef.current) {
+          audioCtxRef.current.close().catch(() => {});
+          audioCtxRef.current = null;
+        }
+        if (elapsedIntervalRef.current) {
+          window.clearInterval(elapsedIntervalRef.current);
+          elapsedIntervalRef.current = 0;
+        }
+        setElapsed(0);
+        setMode("idle");
+        setError(
+          `The recording captured almost no audio (${blob.size} bytes) — your microphone isn't delivering sound. ` +
+          `On a Mac: System Settings → Privacy & Security → Microphone → allow your browser, then Sound → Input to pick a working device. ` +
+          `Or record a 60-second Voice Memo and use 'Upload audio file' — the clone comes out identical.`
+        );
+        return;
+      }
       if (recordedUrl) URL.revokeObjectURL(recordedUrl);
       const url = URL.createObjectURL(blob);
       setRecordedBlob(blob);
@@ -1746,6 +1804,11 @@ function VoiceCloneCard() {
             controls
             className="w-full mb-4 rounded-md"
             style={{ filter: "invert(0.85)", colorScheme: "light" }}
+            onError={() =>
+              setError(
+                "Playback of the recording failed in this browser — but the captured audio itself is fine, so 'Use this voice' will still clone correctly. Or re-record / upload a file instead."
+              )
+            }
           />
           <div className="flex items-center gap-2 flex-wrap">
             <button
