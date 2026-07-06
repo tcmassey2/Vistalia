@@ -729,8 +729,13 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   // universal fidelity suffix. Applies to ALL four modes.
   const roomStr = String(scene.roomType || "").toLowerCase();
   const isExteriorScene = /exterior|backyard|outdoor|front|yard|patio|pool|garden|landscap|deck/.test(roomStr);
+  // v34.9 (test-15): the v28 lock stopped IN-FRAME foliage morphing, but Veo
+  // treats the frame EDGE as a creative writing prompt — camera moves on
+  // exteriors invented whole bushes/trees sliding into the corners ("revealed"
+  // content). The lock now explicitly owns the reveal: new edge area must be
+  // plain hardscape/sky, never new vegetation.
   const foliageLock = isExteriorScene
-    ? " Trees, plants, hedges, leaves, and branches must hold their exact shape, count, and position — foliage must NOT morph, ripple, shimmer, multiply, grow, or regenerate. Keep camera movement minimal so foliage stays perfectly stable."
+    ? " Trees, plants, hedges, leaves, and branches must hold their exact shape, count, and position — foliage must NOT morph, ripple, shimmer, multiply, grow, or regenerate. NOTHING NEW ENTERS THE FRAME: as the camera moves, any newly revealed area at the frame edges contains only plain pavement, ground, wall, or sky consistent with the photo — never new plants, bushes, trees, rocks, or furniture sliding into view. The plant count in the final frame equals the plant count in the photo. Keep camera movement minimal and shallow so foliage stays perfectly stable."
     : "";
   const prompt = basePrompt + foliageLock + VEO_FIDELITY_SUFFIX;
 

@@ -65,7 +65,11 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             "text_artifacts=true if ANY text, numbers, symbols, captions, or watermark-like " +
             "shapes appear in frames that are not present in the original photo. " +
             "object_artifacts=true if any object is severely warped, floating, duplicated, " +
-            "melted, or if a prominent new object appears that is not in the photo. " +
+            "melted, or if a prominent new object appears that is not in the photo — " +
+            "INCLUDING new vegetation: compare the EDGES and CORNERS of the later frames " +
+            "against the original photo; bushes, shrubs, trees, or planters that slide into " +
+            "frame during the camera move but do not exist in the photo are invented, not " +
+            "'revealed' — this is the most common defect on exterior scenes. " +
             "motion_artifacts=true if, comparing the 3 frames AS A SEQUENCE from one " +
             "continuous camera move, any furniture or object moves RELATIVE TO THE ROOM: " +
             "it stays glued to the same frame position while walls/floor shift behind it, " +
