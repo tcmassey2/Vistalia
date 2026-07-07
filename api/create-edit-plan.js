@@ -804,11 +804,14 @@ async function polishNarrationFlow(plan, context) {
   const narrated = scenes.filter((s) => String(s.narrationLine || "").trim());
   if (narrated.length < 2 || !process.env.OPENAI_API_KEY) return;
   const t0 = Date.now();
+  // v35.3: window-honest budgets (the old `isLast ? 6 : 3` floors inflated
+  // lines past what tiny windows could hold → mid-word trims, test-19).
+  // Scenes with sub-4-word windows are already silent by this point.
   const budgets = narrated.map((s, i) => {
     const isLast = i === narrated.length - 1;
     return Math.max(
       Math.floor((Number(s.narrationWindowSec || 0) - 0.95) * 1.9),
-      isLast ? 6 : 3
+      isLast ? 4 : 4
     );
   });
   const inputList = narrated
@@ -901,9 +904,22 @@ async function verifyAndRepairScenes(plan, photos, context) {
     const photo = photos.find((p) => p.id === scene.photoId);
     if (!photo?.url) return;
     const narrated = Number(scene.narrationWindowSec || 0) > 0;
-    const wordBudget = narrated
-      ? Math.max(Math.floor((Number(scene.narrationWindowSec) - 0.95) * 1.9), isLastScene ? 6 : 0)
+    // v35.3 (test-19): the old Math.max(wordBudget, 6) floor UNDID the
+    // normalize stage's window sizing — scenes whose 2.0s windows fit ~1
+    // word got 6-word lines written back into them, and the mixer trimmed
+    // them mid-sentence ("Vaulted ceilings with stone—"). Budgets are now
+    // window-honest: a narrated scene whose window can't hold 4 words goes
+    // SILENT instead (its airtime flows to the previous line via the
+    // mixer's flowing-window model); only the CTA keeps a 4-word floor.
+    const rawBudget = narrated
+      ? Math.max(Math.floor((Number(scene.narrationWindowSec) - 0.95) * 1.9), isLastScene ? 4 : 0)
       : 12;
+    const lineWritable = !narrated || rawBudget >= 4;
+    const wordBudget = rawBudget;
+    if (narrated && !lineWritable && scene.narrationLine) {
+      console.info(`[plan-verify] scene ${scene.order}: window too small for a sentence (budget ${rawBudget}) — going silent, airtime donates back.`);
+      scene.narrationLine = "";
+    }
     const currentLine = String(scene.narrationLine || "").trim();
     const prompt =
       `One photo from a real-estate listing video. Current scene label: "${scene.roomType}". ` +
@@ -916,7 +932,7 @@ async function verifyAndRepairScenes(plan, photos, context) {
       `AND is about the home itself rather than its staging. ` +
       `false if it names a different room, invents features, or is mainly about movable furniture/decor ` +
       `(sofas, tables, chairs, beds, rugs, lamps, art). (No current line → false.)\n` +
-      `- line: if lineAccurate is false, ONE warm natural narration sentence, at most ${Math.max(wordBudget, 6)} words, ` +
+      `- line: if lineAccurate is false, ONE warm natural narration sentence, at most ${Math.max(wordBudget, 4)} words, ` +
       `about what is clearly visible in this photo — sell the SPACE: light, views, windows, ceilings, flooring, ` +
       `finishes, built-ins, cabinetry. Never mention movable furniture or decor. No invented features, no address, no price. ` +
       `If lineAccurate is true, repeat the current line exactly.`;
@@ -974,10 +990,11 @@ async function verifyAndRepairScenes(plan, photos, context) {
       labelFixes += 1;
     }
 
-    // Line repair — ONLY on narrated scenes (silent scenes must stay
-    // silent; their airtime is already donated to the previous window).
-    if (narrated && verdict.lineAccurate !== true) {
-      const repaired = clampNarrationSentenceSafe(cleanText(String(verdict.line || ""), 240), Math.max(wordBudget, 3));
+    // Line repair — ONLY on narrated scenes with a window big enough to
+    // hold a sentence (silent scenes must stay silent; their airtime is
+    // already donated to the previous window).
+    if (narrated && lineWritable && verdict.lineAccurate !== true) {
+      const repaired = clampNarrationSentenceSafe(cleanText(String(verdict.line || ""), 240), Math.max(wordBudget, 4));
       if (repaired && repaired !== currentLine) {
         console.info(
           `[plan-verify] scene ${scene.order}: line ${currentLine ? "rewritten" : "filled"} → "${repaired}"`
@@ -1483,11 +1500,15 @@ function normalizeEditPlan(plan, photos, context) {
     // absorbs residual overruns with ≤1.15x atempo, so budget + measurement
     // together make truncation rare instead of routine.
     const speakSec = narrationWindows[index] - 0.35 - 0.6;
-    // v33.2: the final scene's CTA gets a floor of 6 words even when the
-    // scene is short — a brief CTA reads fine with the aligned mixer's
-    // flow/atempo absorption, and a silent ending reads broken.
+    // v33.2: the final scene's CTA gets a small floor even when the scene
+    // is short — a brief CTA reads fine and a silent ending reads broken.
+    // v35.3 (test-19): floor lowered 6 → 4. On Investor Tour's alternating
+    // grid the last window is ~2.0s; six words + lead-in physically don't
+    // fit even with the mixer's 0.8s grace, so the CTA got atempo'd and
+    // TRIMMED mid-word ("Experience this bright home with large—"). Four
+    // words ("Schedule your tour today") fit the worst-case window.
     const isLastScene = index === baseScenes.length - 1;
-    const wordBudget = Math.max(Math.floor(speakSec * 1.9), isLastScene ? 6 : 0);
+    const wordBudget = Math.max(Math.floor(speakSec * 1.9), isLastScene ? 4 : 0);
     const narrationLine = isNarrated[index] && wordBudget >= 3
       ? clampNarrationSentenceSafe(s.rawNarration, wordBudget)
       : "";
