@@ -838,6 +838,7 @@ async function polishNarrationFlow(plan, context) {
     `- NON-NEGOTIABLE: the FINAL line is an INVITATION, never a description. It contains "tour" or ` +
     `"see" (e.g. "Schedule your private tour today." / "Come see it for yourself."). A room ` +
     `description in the final slot is an error. No address, no phone, no agent name.\n` +
+    `- NEVER mention websites, URLs, phone numbers, or "more information" — contact details live on the end card, not in the voiceover.\n` +
     `- Warm, confident, unhurried tone. No exclamation marks, no questions, no "welcome to".\n\n` +
     inputList;
   try {
@@ -1906,6 +1907,14 @@ function clampNarrationToWords(text, maxWords = 22) {
 function clampNarrationSentenceSafe(text, maxWords) {
   const trimmed = String(text || "").trim();
   if (!trimmed) return "";
+  // v35.5 (test-21): the model invented "For more information visit
+  // www.realestate.com" — a fake URL, spoken over the brand outro card.
+  // URLs, domains, and phone patterns are banned from narration outright:
+  // a line carrying one is REJECTED (every caller treats "" as no-line,
+  // so the scene goes silent / keeps its previous line instead).
+  if (/\b(?:www\.\S+|https?:\/\/\S+|\S+\.(?:com|net|org|io|ai|co)\b|\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4})/i.test(trimmed)) {
+    return "";
+  }
   const words = trimmed.split(/\s+/);
   if (words.length <= Math.ceil(maxWords * 1.35)) return trimmed;
   const slack = words.slice(0, Math.ceil(maxWords * 1.35)).join(" ");
@@ -1929,7 +1938,10 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // "features inviting warmth AND generous open ▍" → "features inviting
   // warmth." The old dangler strip stays as a backstop (now including
   // transitive verbs + relative pronouns).
-  const CONNECTIVES = /^(and|or|with|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards)$/i;
+  // v35.5: += "by" — test-21's "front entry surrounded by natural—" cut
+  // after an adjective, and the dangler cascade can't pop non-list words.
+  // Cutting BEFORE "by" lands the whole prepositional phrase cleanly.
+  const CONNECTIVES = /^(and|or|with|by|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards)$/i;
   const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|define|defines|continue|continues|extend|extends)$/i;
   let slackWords = slack.replace(/[,;:\s]+$/, "").split(/\s+/);
   // Keep at least half the slack — cutting at an EARLY connective guts the
