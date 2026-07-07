@@ -828,12 +828,16 @@ async function polishNarrationFlow(plan, context) {
     `- Sell the SPACE, not the staging: if an input line mentions movable furniture or decor ` +
     `(sofas, tables, chairs, beds, rugs, lamps, art), rewrite around the permanent qualities that line ` +
     `already contains — light, windows, views, space. Furniture never appears in your output.\n` +
-    `- Word caps are ABSOLUTE. Aim 1-2 words UNDER each cap; a short clean line always beats a long ` +
-    `one that gets cut mid-thought. Every line stands alone as one complete spoken sentence with a ` +
-    `subject and verb — never split one idea across two lines, never open with a verb fragment.\n` +
+    `- Word caps are ABSOLUTE and cuts are ugly: a line over its cap gets machine-truncated ` +
+    `mid-phrase in the final audio ("an entryway filled—"). Count your words; land at least one ` +
+    `word UNDER every cap. A 4-word complete sentence always beats a 9-word cut one. Every line ` +
+    `stands alone as one complete spoken sentence with a subject and verb — never split one idea ` +
+    `across two lines, never open with a verb fragment.\n` +
     `- Variety: no two lines open with the same word; use each of ` +
     `"cozy", "bright", "spacious", "beautiful", "stunning", "modern" at most once across the whole script.\n` +
-    `- The FINAL line abandons description and closes the tour with a warm, general invitation to come see the home — no address, no phone, no agent name.\n` +
+    `- NON-NEGOTIABLE: the FINAL line is an INVITATION, never a description. It contains "tour" or ` +
+    `"see" (e.g. "Schedule your private tour today." / "Come see it for yourself."). A room ` +
+    `description in the final slot is an error. No address, no phone, no agent name.\n` +
     `- Warm, confident, unhurried tone. No exclamation marks, no questions, no "welcome to".\n\n` +
     inputList;
   try {
@@ -1926,7 +1930,7 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // warmth." The old dangler strip stays as a backstop (now including
   // transitive verbs + relative pronouns).
   const CONNECTIVES = /^(and|or|with|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards)$/i;
-  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have)$/i;
+  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|define|defines|continue|continues|extend|extends)$/i;
   let slackWords = slack.replace(/[,;:\s]+$/, "").split(/\s+/);
   // Keep at least half the slack — cutting at an EARLY connective guts the
   // sentence ("A curved walkway leads." after cutting at "to").
