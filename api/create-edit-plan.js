@@ -12,7 +12,13 @@ import { rateLimit } from "./_lib/rate-limit.js";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
-const DEFAULT_TIMEOUT_MS = 60000; // bumped from 35s to 60s (matches the longer function ceiling)
+// v35.2: 60s → 48s. The v34.2 verify pass (≤20s) and v34.3 polish (≤9s)
+// stack ON TOP of this call inside the same 90s function — at 60s a slow
+// OpenAI day left no headroom and the whole function died, shipping the
+// deterministic fallback plan with stock narration ("Welcome to this
+// listing" — test-17). 48 + 20 + 9 + overhead ≈ 80s, always inside the
+// ceiling, and 48s still covers the p95 of the 16-image plan call.
+const DEFAULT_TIMEOUT_MS = 48000;
 // Number of photos sent to OpenAI Vision for actual visual analysis.
 // Cost-controlled: at gpt-4.1-mini "low" detail, ~$0.002/image so 12 images =
 // ~$0.024 per render. Photos beyond this cap are still INCLUDED in the edit
@@ -442,7 +448,11 @@ export default async function handler(request, response) {
         reason,
         errorCategory: openaiError.category,
         requestId: openaiError.requestId,
-        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec })
+        editPlan: await enrichFallbackPlan(
+          deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }),
+          photos,
+          { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }
+        )
       });
       return;
     }
@@ -460,7 +470,11 @@ export default async function handler(request, response) {
         status: "fallback",
         reason: `Motion Director unavailable: schema validation failed. ${validation.error}`,
         errorCategory: "schema_validation",
-        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec })
+        editPlan: await enrichFallbackPlan(
+          deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }),
+          photos,
+          { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }
+        )
       });
       return;
     }
@@ -550,7 +564,11 @@ export default async function handler(request, response) {
       status: "fallback",
       reason,
       errorCategory: category,
-      editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec })
+      editPlan: await enrichFallbackPlan(
+        deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }),
+        photos,
+        { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }
+      )
     });
   }
 }
@@ -705,6 +723,68 @@ function motionModel() {
 const PLAN_VERIFY_BUDGET_MS = 20000;
 const PLAN_VERIFY_PER_CALL_MS = 12000;
 const PLAN_VERIFY_WAVE_SIZE = 6;
+
+/* ============================================================
+   v35.2 — fallback plan enrichment
+   ============================================================
+   When the Motion Director mega-call fails (timeout, OpenAI error,
+   schema), the deterministic fallback plan used to ship STOCK narration
+   ("Welcome to this listing" / "Schedule your private tour today" —
+   test-17) — fine in the pre-narration era, unshippable now.
+
+   The per-photo verify pass doesn't need the mega-call: one photo per
+   request, a different latency class entirely. So the fallback now gets
+   the same treatment as a real plan: greedy narration windows over the
+   deterministic durations, verify writes real lines from the actual
+   pixels (it fills narrated-but-empty scenes by design), polish makes
+   them read as one voiceover. Stock lines become the fallback OF the
+   fallback. Fail-open at every level. */
+async function enrichFallbackPlan(plan, photos, context) {
+  try {
+    const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
+    if (!scenes.length || !process.env.OPENAI_API_KEY) return plan;
+    // Greedy window coverage — same algorithm as normalizeEditPlan v34.2.
+    const durations = scenes.map((s) => Number(s.duration) || 3);
+    const MIN_WINDOW_SEC = 3.2;
+    const isNarrated = new Array(durations.length).fill(false);
+    {
+      let i = 0;
+      while (i < durations.length) {
+        isNarrated[i] = true;
+        let w = durations[i];
+        let j = i + 1;
+        while (j < durations.length && w < MIN_WINDOW_SEC) {
+          w += durations[j];
+          j += 1;
+        }
+        i = j;
+      }
+    }
+    if (isNarrated.length > 1) isNarrated[isNarrated.length - 1] = true;
+    scenes.forEach((s, i) => {
+      if (!isNarrated[i]) {
+        s.narrationWindowSec = 0;
+        s.narrationLine = "";
+        return;
+      }
+      let w = durations[i];
+      for (let j = i + 1; j < durations.length && !isNarrated[j]; j++) w += durations[j];
+      s.narrationWindowSec = Math.round(w * 100) / 100;
+      // Keep the stock opener/CTA as seeds; verify rewrites or fills.
+      s.narrationLine = String(s.narrationLine || "").trim();
+    });
+    await verifyAndRepairScenes(plan, photos, context);
+    await polishNarrationFlow(plan, context);
+    const spoken = scenes.filter((s) => s.narrationLine).length;
+    console.info(`[plan-fallback] deterministic plan enriched — ${spoken}/${scenes.length} scenes narrated from photos.`);
+    for (const sc of scenes) {
+      if (sc.narrationLine) console.info(`[plan-fallback] scene ${sc.order} (${sc.roomType}): "${sc.narrationLine}"`);
+    }
+  } catch (err) {
+    console.warn(`[plan-fallback] enrichment failed open (${err.message}) — stock narration ships.`);
+  }
+  return plan;
+}
 
 /* ============================================================
    v34.3 — global narration polish

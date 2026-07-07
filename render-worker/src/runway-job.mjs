@@ -1067,12 +1067,24 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       // lanczos upscale to master size — see PRE_SCALE_DENOISE notes up top.
       PRE_SCALE_DENOISE,
       `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=lanczos`,
-      // v35: square targets crop the 9:16-shaped source with an 8% UPWARD
-      // bias (42% from top instead of dead center) — rooms keep their
-      // ceiling line and eye-level composition; dead-center kept too much
-      // floor. Non-square targets keep the centered crop.
+      // v35.2 (test-17): square crop bias is PER-ROOM — a uniform upward
+      // bias beheaded exteriors, because vertical listing photos put sky
+      // in the top third; the house lives LOW in frame. Exterior/outdoor
+      // scenes favor the lower frame (58% from top), interiors keep the
+      // ceiling line (40%), details stay centered. Non-square targets
+      // keep the centered crop.
       dimensions.width === dimensions.height
-        ? `crop=${dimensions.width}:${dimensions.height}:(in_w-${dimensions.width})/2:(in_h-${dimensions.height})*0.42`
+        ? (() => {
+            const room = String(
+              (manifest.scenes || []).find((s) => s.photoId === clip.photoId)?.roomType || ""
+            ).toLowerCase();
+            const bias = /exterior|outdoor|backyard|front|yard|patio|pool|garden|deck/.test(room)
+              ? 0.58
+              : room === "detail" || room === "amenity"
+              ? 0.5
+              : 0.4;
+            return `crop=${dimensions.width}:${dimensions.height}:(in_w-${dimensions.width})/2:(in_h-${dimensions.height})*${bias}`;
+          })()
         : `crop=${dimensions.width}:${dimensions.height}`,
       colorGrade,
       ...(watermarkFilter ? [watermarkFilter] : [])
@@ -1420,6 +1432,13 @@ async function buildBrandOutroClip(
   // optional pieces are present.
   const W = dimensions.width;
   const H = dimensions.height;
+  // v35.2: size text from the EFFECTIVE width — min(W, H×9/16). On the
+  // 9:16 master this equals W exactly (no change); on the 1:1 square the
+  // card has half the height for the same-width fonts, so the text block
+  // overcrowded and the footer clipped (test-17). Scaling type to the
+  // height-constrained equivalent keeps the layout proportions identical
+  // across aspects.
+  const S = Math.min(W, Math.round((H * 9) / 16));
   const padTop = Math.round(H * 0.12);
   const headshotY = headshotCirclePath ? padTop : 0;
   const logoY = padTop + Math.round(headshotSize * 0.5) - Math.round(logoMaxHeight / 2);
@@ -1427,12 +1446,12 @@ async function buildBrandOutroClip(
     ? padTop + headshotSize
     : padTop;
   const ctaY = headerBlockBottom + Math.round(H * 0.04);
-  const ctaSize = Math.max(20, Math.round(W / 48));
-  const nameSize = Math.max(56, Math.round(W / 13));
-  const brokerSize = Math.max(28, Math.round(W / 32));
-  const licenseSize = Math.max(20, Math.round(W / 50));
-  const contactSize = Math.max(22, Math.round(W / 44));
-  const footerSize = Math.max(16, Math.round(W / 60));
+  const ctaSize = Math.max(16, Math.round(S / 48));
+  const nameSize = Math.max(40, Math.round(S / 13));
+  const brokerSize = Math.max(22, Math.round(S / 32));
+  const licenseSize = Math.max(16, Math.round(S / 50));
+  const contactSize = Math.max(18, Math.round(S / 44));
+  const footerSize = Math.max(13, Math.round(S / 60));
 
   const nameY = ctaY + ctaSize + Math.round(H * 0.025);
   const brokerY = nameY + nameSize + Math.round(H * 0.02);
