@@ -11,6 +11,7 @@ import {
   signOut
 } from "../lib/supabase";
 import { events, track } from "../lib/analytics";
+import { trackLead } from "../lib/pixel";
 import Turnstile from "../components/Turnstile";
 import { env } from "../lib/env";
 
@@ -84,6 +85,7 @@ export default function AuthScreen() {
         track(events.signupStarted);
         await signUp(email, password, captchaToken || undefined);
         track(events.signupCompleted);
+        trackLead(); // Meta pixel Lead — the ad account optimizes on this
         resetCaptcha(); // single-use token; force re-challenge on retry
         setPendingConfirmEmail(email);
         setInfo("Check your email to confirm. We've sent the link to " + email + ".");

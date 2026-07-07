@@ -66,3 +66,6 @@ SS-4*
 
 # Local-only business docs & media — never commit
 _local/
+
+# Meta pixel ID is public by design — the webapp build needs it.
+!webapp/.env.production

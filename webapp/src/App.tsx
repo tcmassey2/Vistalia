@@ -8,6 +8,7 @@ import SettingsScreen from "./screens/SettingsScreen";
 import EditStudioScreen from "./screens/EditStudioScreen";
 import TopBar from "./components/TopBar";
 import Toast from "./components/Toast";
+import { initPixel, consumeCheckoutReturn } from "./lib/pixel";
 
 class ErrorBoundary extends Component<
   { children: ReactNode },
@@ -54,6 +55,15 @@ export default function App() {
 
   useEffect(() => {
     init();
+    // Meta pixel: PageView on boot; if this load is a Stripe checkout
+    // return (?checkout=success&tier=…), fire Purchase with the q7 value
+    // and scrub the params so refresh can't double-fire. No-ops entirely
+    // when VITE_META_PIXEL_ID is unset (dev/preview).
+    initPixel();
+    const purchasedTier = consumeCheckoutReturn();
+    if (purchasedTier) {
+      useStore.getState().setToast("You're in — welcome to Vistalia. Your plan is active.");
+    }
   }, [init]);
 
   if (!authReady) {
