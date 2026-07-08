@@ -2127,7 +2127,12 @@ function RenderControls() {
 
     try {
       // 1. Get edit plan
-      const styleLabel = STYLES.find((s) => s.id === selectedStyleId)?.engineLabel || "Cinematic Luxury";
+      // v38.3: no silent style defaults (master-19 shipped the wrong style
+      // invisibly). Log what actually goes to the plan + worker.
+      const matchedStyle = STYLES.find((s) => s.id === selectedStyleId);
+      if (!matchedStyle) console.error(`[render] UNKNOWN styleId "${selectedStyleId}" — defaulting to Cinematic Luxury`);
+      const styleLabel = matchedStyle?.engineLabel || "Cinematic Luxury";
+      console.info(`[render] style: ${styleLabel} (${selectedStyleId})`);
       const planResult = await createEditPlan({
         photos,
         listing,

@@ -295,6 +295,38 @@ function scheduleSupabaseBrandSave(userId: string, branding: AgentBranding) {
 // the apply because the user typed something we shouldn't clobber.
 let brandEditEpoch = 0;
 
+// v38.3: render preferences persist across reloads. Master-19 postmortem:
+// Troy selected Modern Social, a page reload silently reset the (memory-
+// only) store to cinematic-luxury, and the render shipped the wrong style,
+// pacing, and caption skin — with the UI highlight agreeing with the reset
+// store, so nothing looked wrong. Style/audio choices are user intent, not
+// session state; they survive reloads like branding does.
+const PREFS_KEY = "vistalia.render-prefs.v1";
+const KNOWN_STYLE_IDS = ["cinematic-luxury", "modern-social", "mls-clean", "investor-tour"];
+function loadStoredPrefs(): Record<string, unknown> {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return {};
+    const p = JSON.parse(raw) as Record<string, unknown>;
+    // Guard the silent-default hazard: a stale style id must not survive.
+    if (p.selectedStyleId && !KNOWN_STYLE_IDS.includes(String(p.selectedStyleId))) {
+      delete p.selectedStyleId;
+    }
+    return p;
+  } catch {
+    return {};
+  }
+}
+function persistPrefs(patch: Record<string, unknown>) {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    const cur = raw ? JSON.parse(raw) : {};
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...cur, ...patch }));
+  } catch {
+    // ignore storage failures (private mode, quota, etc.)
+  }
+}
+
 const emptyProject = () => ({
   projectId: newProjectId(),
   projectTitle: "Untitled listing",
@@ -332,7 +364,9 @@ const emptyProject = () => ({
   renderSafety: "smart" as RenderSafety,
   editPlan: null as EditPlan | null,
   renderJob: null as RenderJobStatus | null,
-  lastRenderManifest: null as RenderManifest | null
+  lastRenderManifest: null as RenderManifest | null,
+  // v38.3: stored user preferences override the defaults above.
+  ...loadStoredPrefs()
 });
 
 export const useStore = create<AppState>((set, get) => ({
@@ -501,16 +535,20 @@ export const useStore = create<AppState>((set, get) => ({
   setStyle: (id) =>
     // Changing styles also resets music selection — the new style's default
     // takes over until the user picks something else.
-    set({ selectedStyleId: id, selectedMusicTrackId: null, editPlan: null }),
-  setMusicTrack: (trackId) => set({ selectedMusicTrackId: trackId }),
+    (set({ selectedStyleId: id, selectedMusicTrackId: null, editPlan: null }), persistPrefs({ selectedStyleId: id, selectedMusicTrackId: null })),
+  setMusicTrack: (trackId) => (set({ selectedMusicTrackId: trackId }), persistPrefs({ selectedMusicTrackId: trackId })),
   setEngine: (e) => set({ renderEngine: e, editPlan: null }),
-  setNarrationEnabled: (enabled) => set({ narrationEnabled: enabled, editPlan: null }),
-  setCaptionsEnabled: (enabled) => set({ captionsEnabled: enabled }),
-  setIncludeSquare: (enabled) => set({ includeSquare: enabled }),
-  setMusicEnabled: (enabled) => set({ musicEnabled: enabled }),
-  setMusicVolume: (volume) => set({ musicVolume: Math.max(0, Math.min(2, Number(volume) || 1)) }),
-  setTargetDuration: (sec) => set({ targetDurationSec: sec, editPlan: null }),
-  setCrossfadesEnabled: (enabled) => set({ crossfadesEnabled: enabled }),
+  setNarrationEnabled: (enabled) => (set({ narrationEnabled: enabled, editPlan: null }), persistPrefs({ narrationEnabled: enabled })),
+  setCaptionsEnabled: (enabled) => (set({ captionsEnabled: enabled }), persistPrefs({ captionsEnabled: enabled })),
+  setIncludeSquare: (enabled) => (set({ includeSquare: enabled }), persistPrefs({ includeSquare: enabled })),
+  setMusicEnabled: (enabled) => (set({ musicEnabled: enabled }), persistPrefs({ musicEnabled: enabled })),
+  setMusicVolume: (volume) => {
+    const v = Math.max(0, Math.min(2, Number(volume) || 1));
+    set({ musicVolume: v });
+    persistPrefs({ musicVolume: v });
+  },
+  setTargetDuration: (sec) => (set({ targetDurationSec: sec, editPlan: null }), persistPrefs({ targetDurationSec: sec })),
+  setCrossfadesEnabled: (enabled) => (set({ crossfadesEnabled: enabled }), persistPrefs({ crossfadesEnabled: enabled })),
   setTwilightHero: (enabled) => set({ twilightHero: enabled }),
   setExport4K: (enabled) => set({ export4K: enabled }),
   setRenderSafety: (level) => set({ renderSafety: level, editPlan: null }),
