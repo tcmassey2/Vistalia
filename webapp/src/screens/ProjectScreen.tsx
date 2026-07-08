@@ -2990,8 +2990,6 @@ function ActiveRenderPanel() {
           </div>
         </div>
 
-        {/* Pipeline stages — confidence signal that this is a multi-step process */}
-        <PhaseChips renderJob={renderJob} barFillRef={barFillRef} />
       </div>
     </div>
   );
@@ -3117,78 +3115,6 @@ function useStableEta({ startedAt, isRunway }: { startedAt: number; isRunway: bo
   return label;
 }
 
-function PhaseChips({ renderJob, barFillRef }: { renderJob: { engine?: string; progress?: number; status?: string }; barFillRef: RefObject<HTMLDivElement> }) {
-  const isRunway = isAiVideoEngine(renderJob.engine);
-  const stages = isRunway
-    ? [
-        { label: "Direct", endsAt: 14 },
-        { label: "Compose AI motion", endsAt: 76 },
-        { label: "Voice", endsAt: 84 },
-        { label: "Bundle", endsAt: 94 },
-        { label: "Upload", endsAt: 100 }
-      ]
-    : [
-        { label: "Direct", endsAt: 14 },
-        { label: "Render", endsAt: 78 },
-        { label: "Voice", endsAt: 86 },
-        { label: "Bundle", endsAt: 94 },
-        { label: "Upload", endsAt: 100 }
-      ];
-
-  // The active chip should match what the BAR shows (which lerps), not the
-  // raw progress (which can be jumpy). We poll barFillRef every 200ms.
-  const [activeIdx, setActiveIdx] = useState(0);
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      let displayedPct = 0;
-      const el = barFillRef.current;
-      if (el) {
-        // Read scaleX off the element to derive the current display percent.
-        const transform = el.style.transform;
-        const match = transform.match(/scaleX\(([\d.]+)\)/);
-        displayedPct = match ? parseFloat(match[1]) * 100 : 0;
-      }
-      const idx = stages.findIndex((s) => displayedPct < s.endsAt);
-      setActiveIdx(idx === -1 ? stages.length - 1 : idx);
-    }, 200);
-    return () => window.clearInterval(interval);
-  }, [stages, barFillRef]);
-
-  const isDone = renderJob.status === "completed";
-
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      {stages.map((stage, idx) => {
-        const stageDone = idx < activeIdx || isDone;
-        const stageActive = idx === activeIdx && !isDone;
-        return (
-          <div
-            key={stage.label}
-            className={cn(
-              "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium tracking-tight whitespace-nowrap border transition-all duration-300",
-              stageDone
-                ? "bg-gold/10 text-gold-light border-gold/25"
-                : stageActive
-                ? "bg-gold/15 text-gold border-gold/45 shadow-[0_0_12px_rgba(199,167,108,0.18)]"
-                : "bg-surface-input text-ink-muted border-edge"
-            )}
-          >
-            {stageDone ? (
-              <svg viewBox="0 0 12 12" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M2 6l3 3 5-6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            ) : stageActive ? (
-              <span className="relative flex w-1.5 h-1.5">
-                <span className="absolute inset-0 rounded-full bg-gold animate-ping opacity-60" />
-                <span className="relative w-1.5 h-1.5 rounded-full bg-gold" />
-              </span>
-            ) : (
-              <span className="w-1.5 h-1.5 rounded-full bg-current opacity-40" />
-            )}
-            {stage.label}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+// (PhaseChips pipeline-stage pill strip removed 7/7 per Troy — the stage
+// names were internal jargon and the progress bar + phase text already
+// carry the status story.)

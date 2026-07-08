@@ -165,6 +165,9 @@ export async function renderRunwayJob(body, options = {}) {
   const guardLevel = resolveGuardLevel(manifest);
   if (guardLevel !== "off" && !complianceMode) {
     console.info(`[runway] hallucinationGuard=${guardLevel} — content-aware protection active.`);
+    // v40: style provenance in the worker log — settles "which style did
+    // this render actually carry" without touching the browser console.
+    console.info(`[runway] manifest style="${manifest?.selectedStyle || ""}" musicMood="${manifest?.musicMood || ""}"`);
   }
 
   let scenesCompleted = 0;
@@ -257,7 +260,9 @@ export async function renderRunwayJob(body, options = {}) {
             console.warn(`[qc] scene ${index + 1} failed QC (${verdict.reasons.join(", ")}) — regenerating constrained.`);
             qcRetryCount++;
             try {
-              const retry = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
+              // v40: retries escalate to the STRICT static prompt (kitchens'
+              // first constrained attempt uses the gentle-motion variant).
+              const retry = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, strictConstrained: true });
               const verdict2 = await qcVeoClip({
                 clipPath: retry.clipPath, sourceImageUrl: qcSrcUrl,
                 sceneIndex: index, roomType: scene.roomType, tempDir
@@ -765,6 +770,18 @@ const CONSTRAINED_PROMPTS = {
     "with no other movement and no drift. " +
     "Preserve every surface, fixture, appliance, label, and object exactly as photographed. " +
     "Nothing in the scene moves.",
+  // v40 (Troy, master-20): kitchens get one REAL-motion attempt before the
+  // static treatment — "I would like to at least try rendering them since we
+  // have the countermeasures in place." Super conservative camera, kitchen-
+  // specific rigidity locks; QC still gates, and retries drop to the static
+  // generic prompt (see buildConstrainedVeoPrompt strict flag).
+  kitchen:
+    "The camera glides slowly and smoothly straight forward, ending about 8% closer, " +
+    "with gentle easing — no panning, no tilting, no drift, no shake. " +
+    "The kitchen stays exactly as photographed: every appliance keeps its exact shape, " +
+    "size, door count, handles, controls, and finish; countertop and backsplash patterns " +
+    "stay identical; cabinet fronts stay rigid with the same hardware; nothing reflective " +
+    "changes; no new objects appear. Nothing in the scene moves — only the camera.",
   pool:
     "Completely static, locked-off camera. Extremely slow forward push of about 4% only, " +
     "with no other movement and no drift. " +
@@ -778,10 +795,13 @@ const CONSTRAINED_PROMPTS = {
     "all hardscape stay exactly as photographed."
 };
 
-function buildConstrainedVeoPrompt(scene) {
+function buildConstrainedVeoPrompt(scene, { strict = false } = {}) {
   const room = String(scene.roomType || "").toLowerCase();
   if (/pool|spa/.test(room)) return CONSTRAINED_PROMPTS.pool;
   if (/exterior|backyard|outdoor|front|yard|patio/.test(room)) return CONSTRAINED_PROMPTS.exterior;
+  // Kitchens: gentle real motion on the first (guard-routed) attempt;
+  // QC-fail retries pass strict=true and fall to the static generic.
+  if (!strict && /kitchen/.test(room)) return CONSTRAINED_PROMPTS.kitchen;
   return CONSTRAINED_PROMPTS.generic;
 }
 
@@ -801,7 +821,7 @@ const VEO_FIDELITY_SUFFIX =
 // Per-scene Veo generation, mapped to the same clipResults shape that
 // generateClip / generateKenBurnsFallback return so the stitch pipeline
 // downstream is untouched.
-export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false } = {}) {
+export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false } = {}) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   const imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Scene ${sceneIndex + 1} (${scene.photoId}) missing durable image URL.`);
@@ -809,7 +829,7 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   // Prompt priority: explicit veoPrompt from a v26 edit plan → legacy
   // runwayPrompt (older plans; plain text, works on Veo) → constrained.
   const basePrompt = constrained
-    ? buildConstrainedVeoPrompt(scene)
+    ? buildConstrainedVeoPrompt(scene, { strict: strictConstrained })
     : (scene.veoPrompt || scene.veo_prompt || scene.runwayPrompt || scene.runway_prompt || buildConstrainedVeoPrompt(scene));
   // v28: exteriors are where Veo morphs worst — it "animates" foliage under any
   // camera move (leaves rippling, branches growing/regenerating). For outdoor
