@@ -94,7 +94,7 @@
         <tr><td>Supabase</td><td>Auth, database, file storage</td><td>All account, brand kit, listing, and render data</td></tr>
         <tr><td>Vercel</td><td>Web hosting + serverless functions</td><td>Request metadata; data passes through but is not stored</td></tr>
         <tr><td>Render.com</td><td>Render-worker hosting</td><td>Listing photos, brand kit, render output during processing</td></tr>
-        <tr><td>fal.ai (Google Veo)</td><td>AI image-to-video generation</td><td>Listing photos + per-scene prompts (no agent identity)</td></tr>
+        <tr><td>fal.ai</td><td>AI video rendering (cloud GPU provider)</td><td>Listing photos + per-scene prompts (no agent identity)</td></tr>
         <tr><td>OpenAI</td><td>Photo classification + AI Motion Director</td><td>Listing photos + listing details (no agent identity)</td></tr>
         <tr><td>ElevenLabs</td><td>Voice synthesis (when narration enabled)</td><td>Narration script + voice clone ID (when configured)</td></tr>
         <tr><td>Stripe</td><td>Payment processing</td><td>Email, name, payment method</td></tr>
@@ -110,7 +110,7 @@
     <h2>4. AI processing</h2>
     <p>
       Vistalia sends your listing photos and our generated prompts to
-      fal.ai (running Google's Veo model) and OpenAI to produce video output. Per their published
+      fal.ai and OpenAI to produce video output. Per their published
       policies, none of these providers use API content to train their
       foundation models (this is the contractual default for both). We do not
       attach your name, brokerage, or contact information to the API requests
