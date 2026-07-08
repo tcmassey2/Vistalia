@@ -211,6 +211,8 @@ export interface RenderManifest {
   // v35.1: opt-in 1:1 square deliverable — recomposed from source clips on
   // the worker (~2 extra minutes). Default false = vertical-only render.
   includeSquare?: boolean;
+  // v38: burn word-synced captions over the narration (default true).
+  captionsEnabled?: boolean;
   // When true, the worker upscales the master + every aspect variant to
   // 4K-equivalent resolution (2160×3840 vertical, etc). Defaults to true
   // now that we're on Render Pro 4GB / Supabase Pro 5GB-per-file.

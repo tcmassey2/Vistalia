@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Examples — Vistalia cinematic listing videos</title>
+  <meta name="description" content="Watch real Vistalia renders: cinematic listing tours with cloned-voice narration and word-synced captions, straight from MLS photos.">
+  <link rel="canonical" href="https://vistalia.ai/examples">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Examples — Vistalia cinematic listing videos">
+  <meta property="og:description" content="Watch real Vistalia renders: cinematic listing tours with cloned-voice narration and word-synced captions, straight from MLS photos.">
+  <meta property="og:site_name" content="Vistalia">
+  <meta property="og:url" content="https://vistalia.ai/examples">
+  <meta property="og:image" content="https://vistalia.ai/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#0B0B0D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:#0B0B0D; --bg-1:#101014; --surface:#16161B; --surface-2:#1C1C23;
+  --edge:#26262C; --edge-strong:#3A3A42;
+  --ink:#F4F2EC; --ink-soft:#C2C2BC; --ink-muted:#88888E; --ink-dim:#56565C;
+  --gold:#C7A76C; --gold-light:#DBBE7E; --gold-deep:#9C773B;
+  --success:#5BBE9B;
+  --font-display:"Fraunces","Georgia",serif;
+  --font-body:"Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-mono:"JetBrains Mono","SF Mono",monospace;
+  --ease:cubic-bezier(0.16,1,0.3,1);
+  --maxw:1120px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+img,video{display:block;max-width:100%}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+.gold{color:var(--gold)}
+.eyebrow{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold)}
+.serif{font-family:var(--font-display)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(1200px 600px at 70% -5%, rgba(199,167,108,.10), transparent 60%),
+             radial-gradient(900px 500px at 0% 100%, rgba(199,167,108,.05), transparent 55%);}
+main,header,footer{position:relative;z-index:1}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;font-family:var(--font-body);font-weight:600;
+  border-radius:13px;padding:15px 26px;font-size:15.5px;cursor:pointer;border:1px solid transparent;
+  transition:transform .2s var(--ease),box-shadow .2s var(--ease),background .2s var(--ease),border-color .2s var(--ease);white-space:nowrap;position:relative;overflow:hidden}
+.btn-primary{background:linear-gradient(135deg,var(--gold-light),var(--gold-deep));color:#0B0B0D;box-shadow:0 10px 34px rgba(199,167,108,.26)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 46px rgba(199,167,108,.40)}
+.btn-ghost{background:transparent;color:var(--ink);border-color:var(--edge-strong)}
+.btn-ghost:hover{border-color:var(--gold);color:var(--gold-light)}
+.btn-lg{padding:18px 38px;font-size:17px;border-radius:15px}
+
+header{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(11,11,13,.66);border-bottom:1px solid rgba(38,38,44,.7)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:70px}
+.logo{font-family:var(--font-display);font-size:23px;font-weight:600;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
+.logo .mark{width:30px;height:30px;border-radius:8px;background:#0B0B0D;border:1.5px solid #C7A76C;color:#E6CE8E;display:grid;place-items:center;font-weight:600;font-style:normal;font-size:18px;line-height:1;font-family:var(--font-display)}
+.nav-links{display:flex;gap:30px;font-size:14.5px;color:var(--ink-soft)}
+.nav-links a:hover{color:var(--ink)}
+.nav-actions{display:flex;align-items:center;gap:14px}
+.nav-actions a.signin{font-size:14.5px;color:var(--ink-soft)}
+.nav-actions a.signin:hover{color:var(--ink)}
+a.logo{text-decoration:none;color:var(--ink)}
+.signed-in-user{font-size:13px;color:var(--ink-soft);display:inline-flex;align-items:center;gap:7px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.signed-in-user::before{content:"";width:7px;height:7px;border-radius:50%;background:#5BD08A;flex-shrink:0;box-shadow:0 0 0 3px rgba(91,208,138,.18)}
+@media(max-width:880px){.nav-links{display:none}}
+
+.reveal{opacity:0;transform:translateY(16px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+
+/* Hero */
+.hero{padding:84px 0 64px;display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+.hero h1{font-family:var(--font-display);font-weight:600;font-size:clamp(40px,5.2vw,68px);line-height:1.02;letter-spacing:-.025em}
+.hero h1 em{font-style:italic;color:var(--gold-light)}
+.hero .sub{color:var(--ink-soft);font-size:clamp(17px,1.7vw,20px);margin-top:22px;max-width:34ch}
+.hero .cta-row{margin-top:34px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.hero .meta{margin-top:20px;display:flex;gap:18px;flex-wrap:wrap;font-family:var(--font-mono);font-size:12px;color:var(--ink-muted)}
+.hero .meta span{display:inline-flex;align-items:center;gap:7px}
+.hero .meta i{width:5px;height:5px;border-radius:50%;background:var(--gold)}
+.phone{justify-self:center;width:min(330px,82vw);aspect-ratio:9/16;border-radius:30px;padding:9px;
+  background:linear-gradient(160deg,#26262c,#0e0e12);border:1px solid var(--edge-strong);
+  box-shadow:0 40px 120px rgba(0,0,0,.65),0 0 90px rgba(199,167,108,.10);position:relative}
+.phone .screen{width:100%;height:100%;border-radius:23px;overflow:hidden;background:#000;position:relative}
+.phone video,.phone .ph{width:100%;height:100%;object-fit:cover}
+.phone .ph{background:linear-gradient(180deg,#1a1a20,#0d0d10);display:grid;place-items:center;color:var(--ink-dim);font-family:var(--font-mono);font-size:12px;text-align:center;padding:24px}
+.phone .tag{position:absolute;left:14px;bottom:14px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);background:rgba(11,11,13,.6);backdrop-filter:blur(6px);padding:5px 9px;border-radius:7px;border:1px solid var(--edge)}
+
+/* Trust logos */
+.logos{border-top:1px solid var(--edge);border-bottom:1px solid var(--edge);background:rgba(16,16,20,.5);padding:26px 0}
+.logos .lbl{text-align:center;font-family:var(--font-mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-dim);margin-bottom:16px}
+.logos .row{display:flex;flex-wrap:wrap;justify-content:center;gap:14px 38px}
+.logos .row span{font-family:var(--font-display);font-size:18px;color:var(--ink-muted);opacity:.7}
+
+section.block{padding:88px 0}
+.head{text-align:center;max-width:46ch;margin:0 auto 52px}
+.head h2{font-family:var(--font-display);font-weight:600;font-size:clamp(28px,3.6vw,44px);letter-spacing:-.02em;line-height:1.08}
+.head h2 em{font-style:italic;color:var(--gold-light)}
+.head p{color:var(--ink-soft);margin-top:14px;font-size:17px}
+
+/* Proof stats */
+.proof{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.pstat{background:var(--surface);border:1px solid var(--edge);border-radius:18px;padding:26px}
+.pstat .n{font-family:var(--font-display);font-size:30px;font-weight:600;letter-spacing:-.02em}
+.pstat .n .ar{color:var(--gold)}
+.pstat .l{font-size:14px;color:var(--ink);margin-top:8px;font-weight:500}
+.pstat .note{font-size:12.5px;color:var(--ink-muted);margin-top:5px;line-height:1.45}
+
+/* Steps */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+.step{background:var(--surface);border:1px solid var(--edge);border-radius:18px;padding:30px;transition:transform .35s var(--ease),border-color .35s var(--ease)}
+.step:hover{transform:translateY(-4px);border-color:var(--edge-strong)}
+.step .num{font-family:var(--font-mono);font-size:12px;color:var(--gold)}
+.step h3{font-family:var(--font-display);font-size:21px;margin:12px 0 9px;font-weight:600}
+.step p{color:var(--ink-muted);font-size:14.5px;line-height:1.6}
+
+/* Style cards — hover-to-play */
+.styles{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.scard{position:relative;aspect-ratio:9/14;border-radius:20px;overflow:hidden;border:1px solid var(--edge);
+  background:linear-gradient(155deg,var(--c1,#1a1a20),#0e0e12);display:flex;flex-direction:column;justify-content:flex-end;
+  transition:transform .35s var(--ease),border-color .35s var(--ease);cursor:pointer}
+.scard:hover{transform:translateY(-6px);border-color:var(--gold)}
+.scard video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s var(--ease);z-index:1}
+.scard.playing video{opacity:1}
+.scard .tag{position:absolute;top:16px;left:16px;z-index:2;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.scard .pace{position:absolute;top:16px;right:16px;z-index:2;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-muted);background:rgba(11,11,13,.5);padding:4px 8px;border-radius:6px;border:1px solid var(--edge)}
+.scard .info{position:relative;z-index:2;padding:22px;background:linear-gradient(0deg,rgba(11,11,13,.85),transparent)}
+.scard .info h3{font-family:var(--font-display);font-size:21px;font-weight:600;letter-spacing:-.01em}
+.scard .info .best{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-light);margin:6px 0 8px}
+.scard .info p{font-size:13px;color:var(--ink-soft);line-height:1.45}
+
+/* Pricing */
+.pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;max-width:960px;margin:0 auto;align-items:stretch}
+.pcard{position:relative;background:var(--surface);border:1px solid var(--edge);border-radius:20px;padding:34px 28px;display:flex;flex-direction:column;transition:transform .35s var(--ease),border-color .35s var(--ease),box-shadow .35s var(--ease)}
+.pcard:hover{transform:translateY(-6px)}
+.pcard.featured{border-color:var(--gold);background:linear-gradient(180deg,rgba(199,167,108,.06),var(--surface) 60%);box-shadow:0 0 70px rgba(199,167,108,.12)}
+.pcard .badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--gold);color:#0B0B0D;font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;padding:6px 14px;border-radius:20px}
+.pcard .name{font-family:var(--font-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft)}
+.pcard .amt{font-family:var(--font-display);font-size:48px;font-weight:600;margin:12px 0 0;letter-spacing:-.02em}
+.pcard .amt small{font-size:15px;color:var(--ink-muted);font-weight:400;font-family:var(--font-body)}
+.pcard .save{color:var(--success);font-size:13.5px;font-weight:600;margin-top:6px;min-height:20px}
+.pcard ul{list-style:none;margin:20px 0 26px;display:flex;flex-direction:column;gap:11px}
+.pcard li{font-size:14.5px;color:var(--ink-soft);padding-left:24px;position:relative;line-height:1.45}
+.pcard li::before{content:"✓";position:absolute;left:0;color:var(--gold);font-weight:700}
+.pcard .btn{margin-top:auto;width:100%}
+.note{text-align:center;margin-top:26px;font-family:var(--font-mono);font-size:12.5px;color:var(--ink-muted)}
+
+/* Comparison table */
+.cmp{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--edge);border-radius:18px;overflow:hidden;font-size:14.5px;min-width:640px}
+.cmp th,.cmp td{padding:15px 18px;text-align:left;border-bottom:1px solid var(--edge);color:var(--ink-soft)}
+.cmp thead th{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted);background:rgba(11,11,13,.5)}
+.cmp tbody td:first-child{color:var(--ink);font-weight:600}
+.cmp .hl{color:var(--gold-light);background:rgba(199,167,108,.06)}
+.cmp thead .hl{color:var(--gold)}
+.cmp tbody tr:last-child td{border-bottom:none}
+
+/* Testimonials */
+.tgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+.tcard{background:var(--surface);border:1px solid var(--edge);border-radius:18px;padding:28px}
+.tcard .stars{color:var(--gold);letter-spacing:2px;font-size:13px}
+.tcard .q{font-size:15px;color:var(--ink-soft);line-height:1.6;margin:14px 0 18px}
+.tcard .who{display:flex;align-items:center;gap:11px}
+.tcard .av{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--gold-light),var(--gold-deep));color:#0B0B0D;display:grid;place-items:center;font-weight:600;font-size:13px}
+.tcard .nm{font-size:14px;font-weight:600}
+.tcard .role{font-size:12px;color:var(--ink-muted)}
+
+/* FAQ */
+.faq{max-width:720px;margin:0 auto}
+.faq details{border-bottom:1px solid var(--edge);padding:22px 0}
+.faq summary{font-weight:600;font-size:17px;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:16px}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";color:var(--gold);font-size:24px;font-weight:300}
+.faq details[open] summary::after{content:"–"}
+.faq p{color:var(--ink-muted);margin-top:13px;font-size:15px;line-height:1.65}
+
+.final{text-align:center;padding:96px 0;background:radial-gradient(700px 320px at 50% 0%, rgba(199,167,108,.10), transparent 60%)}
+.final h2{font-family:var(--font-display);font-weight:600;font-size:clamp(30px,4.4vw,52px);letter-spacing:-.02em;max-width:18ch;margin:0 auto;line-height:1.05}
+.final h2 em{font-style:italic;color:var(--gold-light)}
+.final p{color:var(--ink-soft);margin:18px auto 30px;max-width:42ch;font-size:17px}
+
+footer{border-top:1px solid var(--edge);padding:40px 0 48px}
+.foot{display:flex;justify-content:space-between;gap:32px;flex-wrap:wrap}
+.foot .logo{font-size:19px;margin-bottom:10px}
+.foot .col h5{font-size:12px;font-family:var(--font-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:12px}
+.foot .col a{display:block;font-size:14px;color:var(--ink-soft);padding:4px 0}
+.foot .col a:hover{color:var(--gold-light)}
+.foot-bottom{margin-top:32px;padding-top:20px;border-top:1px solid var(--edge);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-dim)}
+
+/* Motion layer */
+.scrollbar{position:fixed;top:0;left:0;height:2px;width:100%;transform:scaleX(0);transform-origin:0 50%;background:linear-gradient(90deg,var(--gold-deep),var(--gold-light));z-index:60;will-change:transform}
+.has-cursor{cursor:none}
+.has-cursor a,.has-cursor button,.has-cursor summary,.has-cursor .pcard,.has-cursor .scard{cursor:none}
+.cursor-dot,.cursor-ring{position:fixed;top:0;left:0;pointer-events:none;z-index:9999;border-radius:50%;will-change:transform;opacity:0}
+.cursor-dot{width:6px;height:6px;margin:-3px 0 0 -3px;background:var(--gold-light)}
+.cursor-ring{width:32px;height:32px;margin:-16px 0 0 -16px;border:1px solid rgba(199,167,108,.55);transition:width .22s var(--ease),height .22s var(--ease),margin .22s var(--ease),background .22s var(--ease),border-color .22s var(--ease)}
+.cursor-ring.snap{width:56px;height:56px;margin:-28px 0 0 -28px;background:rgba(199,167,108,.12);border-color:var(--gold-light)}
+.ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,.35);transform:translate(-50%,-50%) scale(0);pointer-events:none;animation:ripple .55s var(--ease) forwards}
+@keyframes ripple{to{transform:translate(-50%,-50%) scale(1);opacity:0}}
+.tilt{transition:transform .08s linear}
+
+@media (prefers-reduced-motion:reduce){
+  .scrollbar,.cursor-dot,.cursor-ring{display:none}
+  .has-cursor,.has-cursor *{cursor:auto}
+  .ripple{display:none}
+  .pcard:hover,.step:hover,.scard:hover{transform:none}
+}
+@media (max-width:880px){
+  .hero{grid-template-columns:1fr;gap:40px;padding:56px 0 48px;text-align:center}
+  .hero .sub{margin-left:auto;margin-right:auto}.hero .cta-row,.hero .meta{justify-content:center}
+  .proof{grid-template-columns:repeat(2,1fr)}
+  .steps{grid-template-columns:1fr}
+  .styles{grid-template-columns:repeat(2,1fr)}
+  .pricing{grid-template-columns:1fr;max-width:420px}
+  .tgrid{grid-template-columns:1fr}
+  section.block{padding:64px 0}
+}
+</style>
+<!-- Meta Pixel (dataset 984226387946970) -->
+<script>
+!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
+document,'script','https://connect.facebook.net/en_US/fbevents.js');
+fbq('init', '984226387946970');
+fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none" alt=""
+src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></noscript>
+<!-- End Meta Pixel -->
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <a href="/" class="logo" aria-label="Vistalia — home"><span class="mark">V</span>Vistalia</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="/#how">How it works</a>
+      <a href="/#styles">Styles</a>
+      <a href="/#examples">Examples</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/#faq">FAQ</a>
+    </nav>
+    <div class="nav-actions">
+      <a href="/app" class="signin">Sign in</a>
+      <a href="/app" class="btn btn-primary" style="padding:11px 20px;font-size:14px">Start free trial</a>
+    </div>
+  </div>
+</header>
+<main>
+<section class="hero wrap" style="grid-template-columns:1fr;text-align:center;padding-bottom:24px">
+  <div class="reveal" style="max-width:760px;margin:0 auto">
+    <div class="eyebrow">Examples</div>
+    <h1 style="font-size:clamp(34px,4.6vw,58px)">Watch a listing <em>become a film.</em></h1>
+    <p class="sub" style="max-width:52ch;margin-left:auto;margin-right:auto">Every clip below came straight out of Vistalia — photos in, cinematic narrated tour out. No manual editing, no timeline, no videographer.</p>
+    <div class="cta-row" style="justify-content:center">
+      <a href="/app" class="btn btn-primary btn-lg">Create my free video →</a>
+      <a href="/#examples" class="btn btn-ghost btn-lg">Watch examples</a>
+    </div>
+    
+  </div>
+</section><section class="block wrap">
+  <div class="head reveal"><div class="eyebrow">The reel</div><h2>Real renders, <em>real photos</em></h2><p>Hover any card to play.</p></div>
+  <div class="styles" id="examples-grid">
+<div class="scard" style="--c1:#1d1a14" data-src="/showcase/example-luxury.mp4" data-poster="">
+  <span class="tag">Narrated</span><span class="pace">Cinematic · 54s</span>
+  <div class="info"><h3 class="serif">Desert Modern</h3><div class="best">Cinematic Luxury</div><p>Cloned-voice narration, luxury serif captions.</p></div>
+</div>
+<div class="scard" style="--c1:#13181c" data-src="/showcase/example-social.mp4" data-poster="">
+  <span class="tag">Captions</span><span class="pace">Social · 22s</span>
+  <div class="info"><h3 class="serif">Scroll-Stopper</h3><div class="best">Modern Social</div><p>Beat-synced cuts, bold word-pop captions.</p></div>
+</div>
+<div class="scard" style="--c1:#15140f" data-src="/showcase/example-mls.mp4" data-poster="">
+  <span class="tag">Broker-safe</span><span class="pace">MLS · 45s</span>
+  <div class="info"><h3 class="serif">Family Colonial</h3><div class="best">MLS Clean</div><p>Neutral tone, compliant, factual.</p></div>
+</div>
+<div class="scard" style="--c1:#161616" data-src="/showcase/example-investor.mp4" data-poster="">
+  <span class="tag">Deal-flow</span><span class="pace">Investor · 38s</span>
+  <div class="info"><h3 class="serif">Duplex Walkthrough</h3><div class="best">Investor Tour</div><p>Direct, numbers-first walkthrough.</p></div>
+</div>
+</div>
+<script>
+document.querySelectorAll('#examples-grid .scard').forEach(function (card) {
+  var src = card.getAttribute('data-src'); if (!src) return;
+  var vid = null;
+  card.addEventListener('pointerenter', function () {
+    if (!vid) { vid = document.createElement('video'); vid.muted = true; vid.loop = true; vid.playsInline = true; vid.preload = 'none'; vid.src = src;
+      vid.addEventListener('error', function(){ card.classList.remove('playing'); }); card.insertBefore(vid, card.firstChild); }
+    card.classList.add('playing'); var pr = vid.play(); if (pr && pr.catch) pr.catch(function(){});
+  });
+  card.addEventListener('pointerleave', function () { card.classList.remove('playing'); if (vid) { vid.pause(); vid.currentTime = 0; } });
+});
+</script>
+</section><section class="block wrap" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
+  <div class="head reveal"><div class="eyebrow">What you're seeing</div><h2>Details that <em>separate the work</em></h2></div>
+  <div class="steps" style="grid-template-columns:repeat(3,1fr)"><div class="step reveal"><div class="num">01</div><h3>Camera that moves</h3><p>Generative cinematography on every scene — push-ins, glides, reveals. Not a pan across a still photo.</p></div><div class="step reveal"><div class="num">02</div><h3>A voice that sells</h3><p>The narration you hear is a cloned agent voice reading a script written from the actual photos — never invented features.</p></div><div class="step reveal"><div class="num">03</div><h3>Captions on mute</h3><p>Word-synced captions styled to the listing, because most of your audience never turns the sound on.</p></div></div>
+</section>
+</main>
+<section class="final">
+  <div class="wrap">
+    <h2 class="reveal">Your next listing deserves film, <em>not a slideshow.</em></h2>
+    <p class="reveal">Your first video is free. No credit card. Cancel anytime.</p>
+    <a href="/app" class="btn btn-primary btn-lg reveal">Create my free video →</a>
+  </div>
+</section>
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div style="max-width:300px">
+        <div class="logo"><span class="mark">V</span>Vistalia</div>
+        <p style="font-size:13.5px;color:var(--ink-muted);line-height:1.6">Cinematic listing videos for agents who'd rather close deals than wait on a videographer.</p>
+      </div>
+      <div class="col"><h5>Product</h5><a href="/#how">How it works</a><a href="/#styles">Styles</a><a href="/#examples">Examples</a><a href="/pricing">Pricing</a><a href="/real-estate-video-in-your-own-voice">Videos in your voice</a><a href="/ai-listing-video">AI listing video</a><a href="/real-estate-video-maker">Real estate video maker</a><a href="/photo-to-video-real-estate">Photo to video</a><a href="/app">Sign in</a></div>
+      <div class="col"><h5>Solutions</h5><a href="/for-realtors">For realtors</a><a href="/for-investors">For investors</a><a href="/for-teams">For teams &amp; brokerages</a><a href="/for-property-managers">For property managers</a></div>
+      <div class="col"><h5>Compare</h5><a href="/compare/vistalia-vs-reel-e">Vistalia vs Reel-E</a><a href="/reel-e-alternative">Reel-E alternative</a><a href="/real-estate-video-with-voiceover">Video with voiceover</a></div>
+      <div class="col"><h5>Company</h5><a href="/help.html">Help center</a><a href="mailto:hello@estatemotion.ai">Contact</a></div>
+      <div class="col"><h5>Legal</h5><a href="/legal/terms.html">Terms</a><a href="/legal/privacy.html">Privacy</a><a href="mailto:support@estatemotion.ai?subject=Refund%20request">Refund policy</a></div>
+    </div>
+    <div class="foot-bottom"><span>© 2026 Vistalia. Built for listing agents.</span><span>Made with intent in Scottsdale, AZ.</span></div>
+  </div>
+</footer>
+<script>
+(function(){
+  var io = new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:0.12});
+  document.querySelectorAll('.reveal').forEach(function(el,i){el.style.transitionDelay=(Math.min(i%4,3)*60)+'ms';io.observe(el);});
+})();
+</script>
+</body>
+</html>

@@ -24,6 +24,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { runFFmpeg } from "./ffmpeg-runner.mjs";
 import { resolveVoiceId } from "./voices.mjs";
+import { buildCaptionsAss, subtitlesFilterPath, CAPTIONS_FONTS_DIR } from "./captions.mjs";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 const DEFAULT_MODEL = process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2_5";
@@ -41,7 +42,7 @@ const DUCK_LEVEL = Number(process.env.DUCK_LEVEL ?? 0.30);
 // manifest.voiceLevel.
 const VOICE_WEIGHT = Number(process.env.VOICE_LEVEL ?? 1.4);
 
-export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, crossfadeOverlapSec = 0, narrationScript = "", brandKit, tempDir, jobId, onProgress }) {
+export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, crossfadeOverlapSec = 0, narrationScript = "", brandKit, tempDir, jobId, onProgress, captionsEnabled = true, captionsVariant = "luxury" }) {
   // v26.9: actual rendered clip duration per scene (keyed by photoId). When
   // present it overrides the manifest's stated duration so narration timing
   // matches the real video exactly — the single biggest narration-sync fix.
@@ -89,7 +90,8 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
       try {
         return await applyAlignedNarration({
           masterMp4, photoScenes, realDur, crossfadeOverlapSec,
-          lines: alignedLines, voiceId, tempDir, jobId, onProgress
+          lines: alignedLines, voiceId, tempDir, jobId, onProgress,
+          captionsEnabled, captionsVariant
         });
       } catch (err) {
         // v34.1: LOUD failure with the real cause — this error was being
@@ -428,7 +430,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
    v33 — aligned-continuous narration
    ============================================================ */
 
-async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfadeOverlapSec, lines, voiceId, tempDir, jobId, onProgress }) {
+async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfadeOverlapSec, lines, voiceId, tempDir, jobId, onProgress, captionsEnabled = true, captionsVariant = "luxury" }) {
   // Visible timeline (same model as everywhere): scene k starts at the sum
   // of visible durations before it.
   const sceneStarts = [];
@@ -480,7 +482,7 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     const b = Math.min(to - 1, chars.length - 1);
     const segStart = Math.max(0, (starts[a] ?? 0) - 0.03);
     const segEnd = Math.min((ends[b] ?? segStart + 1) + 0.05, ends[ends.length - 1] ?? segStart + 1);
-    segs.push({ index: lines[i].index, segStart, segEnd, dur: Math.max(0.2, segEnd - segStart) });
+    segs.push({ index: lines[i].index, segStart, segEnd, dur: Math.max(0.2, segEnd - segStart), charFrom: from, charTo: to });
   }
 
   // Placement: sentence i starts at its scene start (+lead-in); its window
@@ -501,6 +503,59 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     );
     return { ...s, startAt, cap, tempo, trimmed };
   });
+
+  // v38 WORD-SYNCED CAPTIONS: the alignment already gives us character
+  // times; map each word through its line's placement (offset + atempo)
+  // into VIDEO time. Two ASS tracks are written — vertical master and
+  // square variant geometry — and burned during the final mixes.
+  let captionsAssPath = null;
+  let captionsSquareAssPath = null;
+  if (captionsEnabled) {
+    try {
+      const words = [];
+      for (let i = 0; i < placements.length; i++) {
+        const p = placements[i];
+        const text = texts[i];
+        let wStart = -1;
+        let firstOfLine = true; // v38.1: caption pages never straddle lines
+        for (let c = 0; c <= text.length; c++) {
+          const isSpace = c === text.length || /\s/.test(text[c]);
+          if (!isSpace && wStart < 0) wStart = c;
+          if (isSpace && wStart >= 0) {
+            const gi0 = Math.min(p.charFrom + wStart, chars.length - 1);
+            const gi1 = Math.min(p.charFrom + c - 1, chars.length - 1);
+            const aStart = starts[gi0] ?? p.segStart;
+            const aEnd = ends[gi1] ?? aStart + 0.2;
+            let vStart = p.startAt + (aStart - p.segStart) / p.tempo;
+            let vEnd = p.startAt + (aEnd - p.segStart) / p.tempo;
+            const capEnd = p.startAt + p.cap;
+            if (vStart < capEnd - 0.05) {
+              vEnd = Math.min(vEnd, capEnd);
+              words.push({
+                text: text.slice(wStart, c).replace(/[.,!?]+$/, ""),
+                start: vStart,
+                end: vEnd,
+                lineStart: firstOfLine
+              });
+              firstOfLine = false;
+            }
+            wStart = -1;
+          }
+        }
+      }
+      if (words.length) {
+        captionsAssPath = path.join(tempDir, `${jobId}-captions-v.ass`);
+        captionsSquareAssPath = path.join(tempDir, `${jobId}-captions-sq.ass`);
+        await fs.writeFile(captionsAssPath, buildCaptionsAss({ words, playW: 1080, playH: 1920, variant: captionsVariant }));
+        await fs.writeFile(captionsSquareAssPath, buildCaptionsAss({ words, playW: 1080, playH: 1080, variant: captionsVariant }));
+        console.info(`[captions] ${words.length} words → ${path.basename(captionsAssPath)} (word-synced, skin=${captionsVariant})`);
+      }
+    } catch (err) {
+      console.warn(`[captions] build failed open (${err.message}) — shipping without captions.`);
+      captionsAssPath = null;
+      captionsSquareAssPath = null;
+    }
+  }
 
   onProgress?.({ phase: "Building narration track", fraction: 0.6 });
   const steps = placements.map((p, i) => {
@@ -543,15 +598,18 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
   const masterHasAudio = await detectAudioStream(masterMp4);
 
   if (masterHasAudio) {
+    const vf = captionsAssPath
+      ? [`[0:v:0]subtitles='${subtitlesFilterPath(captionsAssPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'[vout];`, "[vout]", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19"]]
+      : ["", "0:v:0", ["-c:v", "copy"]];
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex",
-      `[0:a:0]volume=eval=frame:volume='${volumeExpr}'[ducked];[ducked][1:a]amix=inputs=2:duration=first:dropout_transition=0:weights=1 ${VOICE_WEIGHT.toFixed(2)},loudnorm=I=-16:TP=-1.5:LRA=11[aout]`,
-      "-map", "0:v:0", "-map", "[aout]",
-      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+      `${vf[0]}[0:a:0]volume=eval=frame:volume='${volumeExpr}'[ducked];[ducked][1:a]amix=inputs=2:duration=first:dropout_transition=0:weights=1 ${VOICE_WEIGHT.toFixed(2)},loudnorm=I=-16:TP=-1.5:LRA=11[aout]`,
+      "-map", vf[1], "-map", "[aout]",
+      ...vf[2], "-c:a", "aac", "-b:a", "192k",
       "-shortest", mixedMp4
-    ], { timeoutMs: 90000, label: "voice:aligned-final-mix" });
+    ], { timeoutMs: captionsAssPath ? 240000 : 90000, label: "voice:aligned-final-mix" });
   } else {
     await runFFmpeg([
       "-y", "-threads", "1",
@@ -570,7 +628,9 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     narrationApplied: true,
     voiceId,
     narrationLineCount: placements.length,
-    aligned: true
+    aligned: true,
+    captionsApplied: Boolean(captionsAssPath),
+    captionsSquareAssPath
   };
 }
 

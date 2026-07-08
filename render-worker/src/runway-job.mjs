@@ -21,6 +21,8 @@ import { createClient } from "@supabase/supabase-js";
 // ships. aspect-variants.mjs stays in tree for the future Formats pack.
 import { applyVoiceNarration } from "./voice-mixer.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
+import { renderHomographyDrift } from "./homography-drift.mjs";
+import { CAPTIONS_FONTS_DIR } from "./captions.mjs";
 import { runFFmpeg, timed } from "./ffmpeg-runner.mjs";
 import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
 import { qcVeoClip, qcEnabled } from "./veo-qc.mjs";
@@ -169,6 +171,7 @@ export async function renderRunwayJob(body, options = {}) {
   let fallbackCount = 0;
   let qcRetryCount = 0;      // v31.2: clips regenerated constrained after QC fail
   let qcThirdTryCount = 0;   // v34: clips that needed the third (pull_out) attempt
+  let qcFloorCount = 0;      // v36: clips shipped on the premium photo-motion floor
   let guardForcedCount = 0;
   // v34.6 DROP-SCENE TERMINAL: scenes that fail every attempt are dropped
   // from the render instead of killing it. Each entry: { sceneIndex,
@@ -216,14 +219,23 @@ export async function renderRunwayJob(body, options = {}) {
             usedConstrained = true;
             fallbackCount++; // counted as "retried", surfaces in phase text
           } catch (retryError) {
-            // v34.6: two straight generation failures on ONE scene are almost
-            // always photo-specific (fal content rejection, hostile source
-            // image) — drop this scene and keep the render. If it's actually
-            // systemic (fal outage), many scenes drop and the floor below
-            // aborts + refunds exactly like v34 did.
-            console.warn(`[veo] scene ${index + 1} failed twice (${retryError.message}) — DROPPING this scene.`);
-            droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: `generation failed twice (${retryError.message})` });
-            return null;
+            // v36: two straight generation failures (fal rejection, hostile
+            // photo, outage) → premium photo-motion floor. Deterministic, so
+            // it works even when fal is DOWN — an entire render can complete
+            // on the floor during an outage instead of aborting.
+            try {
+              console.warn(`[veo] scene ${index + 1} failed twice (${retryError.message}) — PREMIUM PHOTO MOTION floor.`);
+              const floor = await generateKenBurnsFallback(scene, manifest, tempDir, index, {
+                durationSec: Number(scene.duration) > 0 ? Number(scene.duration) + 0.5 : undefined
+              });
+              qcFloorCount++;
+              scenesCompleted++;
+              return { ...floor, usedPhotoMotionFloor: true };
+            } catch (floorErr) {
+              console.warn(`[veo] scene ${index + 1} photo-motion floor ALSO failed (${floorErr.message}) — DROPPING this scene.`);
+              droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: `generation failed twice (${retryError.message}); floor failed: ${floorErr.message}` });
+              return null;
+            }
           }
         }
 
@@ -291,16 +303,30 @@ export async function renderRunwayJob(body, options = {}) {
               });
               const hard3 = verdict3.checked ? verdict3.reasons.filter((r) => !r.startsWith("motion")) : [];
               if (verdict3.checked && hard3.length > 0) {
-                // v34.6 (Troy, post-first-abort-in-the-wild): three genuinely
+                // v36 PREMIUM PHOTO MOTION FLOOR (Troy: "what if our fallback
+                // was as good as Reel-E's actual product"). Three genuinely
                 // different generations all produced hard artifacts — this
                 // PHOTO is hostile to AI motion (baked-in text, mirrors,
-                // unusual geometry). Drop the scene, keep the render. The
-                // Motion Director curates ~9 of up to 16 photos; un-picking
-                // one bad apple is curation, not a quality downgrade — and
-                // artifacts still never ship, which is the actual promise.
-                console.warn(`[qc] scene ${index + 1} hard-failed all three attempts (${hard3.join(", ")}) — DROPPING this scene.`);
-                droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: hard3.join(", ") });
-                return null;
+                // unusual geometry). Those are EXACTLY the photos where
+                // deterministic motion shines: it cannot hallucinate, needs
+                // no QC, costs nothing, and at v36 quality (supersampled,
+                // eased, room-aware) it matches the slideshow competitors'
+                // best output — inside an otherwise-cinematic video. The
+                // seller keeps their kitchen; nobody gets a refund email.
+                // Drop-scene survives only as the floor-of-the-floor.
+                try {
+                  console.warn(`[qc] scene ${index + 1} hard-failed all three attempts (${hard3.join(", ")}) — PREMIUM PHOTO MOTION floor (deterministic, cannot hallucinate).`);
+                  const floor = await generateKenBurnsFallback(scene, manifest, tempDir, index, {
+                    durationSec: Number(scene.duration) > 0 ? Number(scene.duration) + 0.5 : undefined
+                  });
+                  qcFloorCount++;
+                  scenesCompleted++;
+                  return { ...floor, usedPhotoMotionFloor: true };
+                } catch (floorErr) {
+                  console.warn(`[qc] scene ${index + 1} photo-motion floor ALSO failed (${floorErr.message}) — DROPPING this scene.`);
+                  droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: `${hard3.join(", ")}; floor failed: ${floorErr.message}` });
+                  return null;
+                }
               }
               result = third;
             }
@@ -389,9 +415,8 @@ export async function renderRunwayJob(body, options = {}) {
   if (isVeo && qcEnabled()) {
     console.info(
       `[qc] Verify-then-deliver summary — ${qcRetryCount} scene${qcRetryCount === 1 ? "" : "s"} regenerated constrained after QC fail, ` +
-      `${qcThirdTryCount} needed the third (pull_out) attempt, ${droppedCount} dropped after all attempts failed. ` +
-      `No Ken Burns floor (v34) + drop-scene terminal (v34.6): hard-failing scenes are curated out (≤2); ` +
-      `excess drops abort + refund. Detected artifacts shipped: 0 by construction.`
+      `${qcThirdTryCount} needed the third (pull_out) attempt, ${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
+      `${droppedCount} dropped (floor-of-the-floor). Detected artifacts shipped: 0 by construction.`
     );
   } else if (isVeo) {
     console.warn(`[qc] Verify-then-deliver DISABLED — set OPENAI_API_KEY on the worker to enable per-scene artifact QC.`);
@@ -428,6 +453,14 @@ export async function renderRunwayJob(body, options = {}) {
         applyVoiceNarration({
           masterMp4: finalMp4,
           scenes: manifest.scenes,
+          // v38: word-synced captions toggle (webapp Audio panel; default on)
+          captionsEnabled: manifest?.captionsEnabled !== false,
+          // v38.2: caption skin by video style — same regex the music
+          // slotter uses. Modern Social gets the Captions-app gold-box
+          // karaoke; everything else gets the luxury serif skin.
+          captionsVariant: /social|upbeat|modern|viral/i.test(
+            String(manifest?.musicMood || manifest?.selectedStyle || "")
+          ) ? "bold" : "luxury",
           sceneDurationsByPhoto: actualDurationsByPhoto,
           // v31 pipeline-audit fix: with crossfades on, every join consumes
           // 0.5s of clip, so a scene's VISIBLE window is (clipDuration - 0.5)
@@ -520,15 +553,22 @@ export async function renderRunwayJob(body, options = {}) {
       }
     );
     const squareFinal = path.join(squareDir, `${jobId}-square.mp4`);
+    // v38: burn the square-geometry caption track (timelines are identical
+    // by construction, only the canvas differs).
+    const sqAss = narration?.captionsSquareAssPath;
+    const sqArgs = sqAss
+      ? ["-vf", `subtitles='${sqAss.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'")}':fontsdir='${CAPTIONS_FONTS_DIR.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'")}'`,
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19", "-c:a", "copy"]
+      : ["-c", "copy"];
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", squareSilent,
       "-i", masterForVariants,
       "-map", "0:v:0", "-map", "1:a:0?",
-      "-c", "copy",
+      ...sqArgs,
       "-shortest",
       squareFinal
-    ], { timeoutMs: 60000, label: "variants:square-mux" });
+    ], { timeoutMs: sqAss ? 240000 : 60000, label: "variants:square-mux" });
     variants.square = { format: "square", path: squareFinal, dimensions: { w: 1080, h: 1080 } };
     await fs.unlink(squareSilent).catch(() => {});
     console.info("[variants] TRUE 1:1 square composed from source clips (square-positioned branding, master audio muxed).");
@@ -874,18 +914,61 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
     : clamp(Number(scene.duration || 5) > 5.5 ? 10 : 5, 5, 10);
   const totalFrames = Math.round(duration * 30);
 
-  // Map the camera motion to a zoompan expression. The motion vocabulary is
-  // a strict subset of what Quick Reel does, kept conservative so the
-  // fallback never looks worse than a still photo.
-  const motion = String(scene.cameraMotion || "push_in").toLowerCase();
-  const zoompanExpr = buildZoompanExpr(motion, totalFrames, dimensions);
+  // v36: never hand ffmpeg a raw URL (the SVG-headshot lesson) — download,
+  // magic-byte-validate, and re-sign through the same hardened path every
+  // other image consumer uses.
+  const localPhoto = path.join(tempDir, `floor-src-${String(sceneIndex).padStart(3, "0")}.img`);
+  await downloadImageValidated(imageUrl, localPhoto, `photo-motion floor scene ${sceneIndex + 1}`);
 
   const clipPath = path.join(tempDir, `fallback-${String(sceneIndex).padStart(3, "0")}.mp4`);
+  const motion = String(scene.cameraMotion || "push_in").toLowerCase();
+
+  // v39 PRIMARY FLOOR: homography drift (see homography-drift.mjs). The
+  // deterministic terminal rung — camera rotation + gentle dolly composed
+  // as a single 3×3 homography, so straight architecture stays straight BY
+  // CONSTRUCTION (grid-proven ≤0.5px vs v37's ~10px snaking) and every
+  // pixel provably comes from the customer's photo. No depth model, no
+  // downloads, ~4s of CPU, $0. This rung's contract is "cannot be wrong":
+  // after Veo has hallucinated on a photo three times, we ship honest
+  // geometry, not a fourth lottery ticket. Falls through to the v36
+  // supersampled zoompan only if onnxruntime itself is unavailable.
+  try {
+    await renderHomographyDrift({
+      photoPath: localPhoto,
+      outPath: clipPath,
+      durationSec: duration,
+      width: 720,
+      height: 1280,
+      roomType: scene.roomType,
+      sceneIndex,
+      cameraMotion: motion
+    });
+    console.info(`[floor] scene ${sceneIndex + 1}: HOMOGRAPHY-DRIFT floor rendered (${duration}s).`);
+    return {
+      sceneIndex,
+      photoId: scene.photoId,
+      clipPath,
+      duration,
+      transition: scene.transition || "crossfade",
+      overlay: scene.overlay || null,
+      runwayTaskId: null,
+      fallback: true,
+      floorEngine: "homography-drift"
+    };
+  } catch (hgErr) {
+    console.warn(`[floor] scene ${sceneIndex + 1}: homography-drift unavailable (${hgErr.message}) — v36 zoompan floor.`);
+  }
+
+  // v36 fallback: room-aware supersampled eased zoompan.
+  const zoompanExpr = buildZoompanExpr(motion, totalFrames, dimensions, {
+    roomType: scene.roomType,
+    sceneIndex
+  });
   await runFFmpeg([
     "-y",
     "-threads", "1",
     "-loop", "1",
-    "-i", imageUrl,
+    "-i", localPhoto,
     "-t", String(duration),
     "-vf", zoompanExpr,
     "-c:v", "libx264",
@@ -910,7 +993,7 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
   };
 }
 
-function buildZoompanExpr(motion, totalFrames, dim) {
+function buildZoompanExpr(motion, totalFrames, dim, opts = {}) {
   // v24.2 cinematic upgrade for Ken Burns scenes.
   //
   // What changed vs the linear version:
@@ -928,61 +1011,73 @@ function buildZoompanExpr(motion, totalFrames, dim) {
   //   4. PRE-SCALE 1.3× → 1.5×. Better Lanczos resampling, sharper
   //      output. Per-frame buffer goes from ~14 MB to ~19 MB —
   //      comfortable on Pro 4 GB.
-  const s = `${dim.width}x${dim.height}`;
+  // v36 PREMIUM PHOTO MOTION (the QC ladder's terminal — Troy: "what if
+  // our fallback was as good as Reel-E's actual product"). Three upgrades
+  // over v24.2:
+  //   1. SUPERSAMPLED RENDER. zoompan quantizes x/y to INPUT pixels — at
+  //      1.5× pre-scale that's visible micro-stutter, the #1 thing that
+  //      reads "slideshow". Now: pre-scale 2.5×, run zoompan AT the
+  //      supersampled size, lanczos-downscale to target. Each output
+  //      pixel-step becomes 0.4 output pixels → glassy-smooth motion.
+  //   2. ROOM-AWARE FRAMING (from the v35.2 square-crop findings):
+  //      exteriors bias the frame center DOWN (the house lives low, sky
+  //      high); interiors bias UP (hold the ceiling line). The motion
+  //      travels through the part of the photo that matters.
+  //   3. DIRECTION PARITY. Lateral motions alternate direction by scene
+  //      index so consecutive floor scenes never pan the same way.
+  const { roomType = "", sceneIndex = 0 } = opts;
   const fps = 30;
-  const PRE_W = Math.round(dim.width * 1.5);
-  const PRE_H = Math.round(dim.height * 1.5);
-  const PRE = `scale=${PRE_W}:${PRE_H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${PRE_W}:${PRE_H}`;
+  const SS = 2.5;
+  const SS_W = 2 * Math.round((dim.width * SS) / 2);
+  const SS_H = 2 * Math.round((dim.height * SS) / 2);
+  const PRE = `scale=${SS_W}:${SS_H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${SS_W}:${SS_H}`;
+  const POST = `scale=${dim.width}:${dim.height}:flags=lanczos`;
+  const sOut = `${SS_W}x${SS_H}`;
 
-  // Smoothstep helper as ffmpeg expression: t = on/N, smoothstep = t*t*(3-2*t)
-  // Inline because ffmpeg expressions don't have named variables.
+  // Smoothstep easing: t = on/N, ease = t*t*(3-2*t)
   const N = totalFrames;
   const t = `(on/${N})`;
-  const smoothT = `(${t}*${t}*(3-2*${t}))`; // 0→1 with ease-in-out
+  const smoothT = `(${t}*${t}*(3-2*${t}))`;
 
-  // Common framing centers
+  // Room-aware vertical center (fraction of ih): exteriors hold the lower
+  // frame, interiors hold the ceiling line, details stay centered.
+  const room = String(roomType || "").toLowerCase();
+  const yBias = /exterior|outdoor|backyard|front|yard|patio|pool|garden|deck/.test(room)
+    ? 0.56
+    : room === "detail" || room === "amenity"
+    ? 0.5
+    : 0.45;
+  const dir = sceneIndex % 2 === 0 ? 1 : -1; // alternate lateral direction
+
   const cx = `iw/2-(iw/zoom/2)`;
-  const cy = `ih/2-(ih/zoom/2)`;
+  const cyB = `ih*${yBias}-(ih/zoom/2)`;
+  const wrap = (zoom, x, y) =>
+    `${PRE},zoompan=z='${zoom}':d=${N}:s=${sOut}:fps=${fps}:x='${x}':y='${y}',${POST}`;
 
   if (motion === "pull_out") {
-    // 1.20 → 1.0 over the shot. Slight downward drift to reveal sky/ceiling.
-    const zoom = `1.20-0.20*${smoothT}`;
-    const yDrift = `${cy}+5*${smoothT}`;
-    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${cx}':y='${yDrift}'`;
+    // 1.18 → 1.0, slight drift toward the biased center.
+    return wrap(`1.18-0.18*${smoothT}`, cx, `${cyB}+ih*0.01*${smoothT}`);
   }
   if (motion === "lateral_pan") {
-    // Hold zoom at 1.10, sweep x from -10% to +10% of crop width with easing.
-    // Smooth lateral motion that mimics a gimbal track.
-    const zoom = `1.10`;
-    const xPan = `iw/2-(iw/zoom/2)+(iw*0.10)*(${smoothT}*2-1)`;
-    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${xPan}':y='${cy}'`;
+    // Gimbal-track sweep, ±9% of width, direction alternates per scene.
+    const xPan = `iw/2-(iw/zoom/2)+(${dir})*(iw*0.09)*(${smoothT}*2-1)`;
+    return wrap(`1.10`, xPan, cyB);
   }
   if (motion === "vertical_reveal") {
-    // Hold zoom at 1.10, sweep y from bottom-third upward. Tilt-up reveal.
-    const zoom = `1.10`;
-    const yTilt = `ih*0.65-(ih*0.30)*${smoothT}`;
-    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${cx}':y='${yTilt}'`;
+    // Tilt-up reveal toward the biased center.
+    return wrap(`1.10`, cx, `ih*0.62-(ih*(0.62-${yBias}))*${smoothT}-(ih/zoom/2)`);
   }
   if (motion === "parallax_zoom") {
-    // Zoom 1.0 → 1.20 with slight diagonal drift for depth-feel.
-    // Diagonal motion + zoom = strongest faux-parallax with a 2D image.
-    const zoom = `1.0+0.20*${smoothT}`;
-    const xDrift = `iw/2-(iw/zoom/2)+8*${smoothT}`;
-    const yDrift = `ih/2-(ih/zoom/2)-6*${smoothT}`;
-    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${xDrift}':y='${yDrift}'`;
+    // Zoom 1.0 → 1.18 with eased diagonal drift (strongest faux-parallax).
+    const xDrift = `iw/2-(iw/zoom/2)+(${dir})*iw*0.012*${smoothT}`;
+    return wrap(`1.0+0.18*${smoothT}`, xDrift, `${cyB}-ih*0.008*${smoothT}`);
   }
   if (motion === "detail_sweep") {
-    // Tighter zoom (1.15) holding steady, slow lateral sweep across detail.
-    const zoom = `1.15`;
-    const xSweep = `iw/2-(iw/zoom/2)+(iw*0.08)*(${smoothT}*2-1)`;
-    return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${xSweep}':y='${cy}'`;
+    const xSweep = `iw/2-(iw/zoom/2)+(${dir})*(iw*0.07)*(${smoothT}*2-1)`;
+    return wrap(`1.15`, xSweep, cyB);
   }
-  // Default push_in: 1.0 → 1.20 zoom with subtle downward drift.
-  // Downward drift mimics a real dolly-in (camera approaches at eye level,
-  // floor/foreground rises in frame).
-  const zoom = `1.0+0.20*${smoothT}`;
-  const yDrift = `ih/2-(ih/zoom/2)+8*${smoothT}`;
-  return `${PRE},zoompan=z='${zoom}':d=${N}:s=${s}:fps=${fps}:x='${cx}':y='${yDrift}'`;
+  // Default push_in: 1.0 → 1.18 dolly-in toward the room-biased center.
+  return wrap(`1.0+0.18*${smoothT}`, cx, `${cyB}+ih*0.012*${smoothT}`);
 }
 
 async function pollRunwayTask(taskId, sceneIndex) {
@@ -1277,7 +1372,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
 }
 
 // stitchWithCrossfades / stitchWithSimpleConcat were extracted into
-// ./stitch.mjs so the depth engine and the runway engine can share
+// ./stitch.mjs so the floor engine and the runway engine can share
 // the exact same crossfade/concat logic. See that file for the v22
 // batched-xfade rationale and tuning constants.
 //

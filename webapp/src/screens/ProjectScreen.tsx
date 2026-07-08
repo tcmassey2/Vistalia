@@ -1785,6 +1785,8 @@ function EngineToggle({ engine, onChange }: { engine: RenderEngine; onChange: (e
 function AudioControls() {
   const narrationEnabled = useStore((s) => s.narrationEnabled);
   const setNarrationEnabled = useStore((s) => s.setNarrationEnabled);
+  const captionsEnabled = useStore((s) => s.captionsEnabled);
+  const setCaptionsEnabled = useStore((s) => s.setCaptionsEnabled);
   const musicEnabled = useStore((s) => s.musicEnabled);
   const setMusicEnabled = useStore((s) => s.setMusicEnabled);
   const musicVolume = useStore((s) => s.musicVolume);
@@ -1794,6 +1796,32 @@ function AudioControls() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* v38: word-synced captions — only meaningful when narration is on */}
+      {narrationEnabled && (
+        <button
+          type="button"
+          onClick={() => setCaptionsEnabled(!captionsEnabled)}
+          className={cn(
+            "card-press text-left p-3 rounded-lg bg-surface border transition-colors",
+            captionsEnabled
+              ? "border-gold bg-surface-raised card-selected"
+              : "border-edge hover:border-edge-strong"
+          )}
+        >
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-sm font-semibold tracking-tightish">Captions</span>
+            <span className={cn(
+              "text-[10px] font-mono uppercase tracking-wider",
+              captionsEnabled ? "text-gold" : "text-ink-muted"
+            )}>
+              {captionsEnabled ? "ON" : "OFF"}
+            </span>
+          </div>
+          <div className="text-xs text-ink-muted">
+            Word-synced captions styled to your video — most viewers watch Reels muted
+          </div>
+        </button>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <button
           type="button"
@@ -2203,7 +2231,9 @@ function RenderControls() {
         // instead of Ken Burns — always on, no user-facing safety picker.
         hallucinationGuard: "balanced",
         // v35.1: 1:1 square is opt-in (adds ~2 min; most agents want 9:16 only).
-        includeSquare: useStore.getState().includeSquare === true
+        includeSquare: useStore.getState().includeSquare === true,
+        // v38: word-synced narration captions (Audio panel toggle).
+        captionsEnabled: useStore.getState().captionsEnabled !== false
       };
 
       // v27: capture the manifest so the Edit Studio can re-render a single
