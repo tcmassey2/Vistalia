@@ -126,13 +126,25 @@ export function groupWords(words) {
       w.end - cur.start > 1.4;
     if (startNew) {
       if (cur) groups.push(cur);
-      cur = { start: w.start, end: w.end, words: [{ text: w.text, start: w.start, end: w.end }] };
+      cur = { start: w.start, end: w.end, lineStart: w.lineStart === true, words: [{ text: w.text, start: w.start, end: w.end }] };
     } else {
       cur.words.push({ text: w.text, start: w.start, end: w.end });
       cur.end = w.end;
     }
   }
   if (cur) groups.push(cur);
+  // Rebalance orphans (master-19 finding: "DEFINE THIS LIVING" / "ROOM"):
+  // a 1-word page following a 3-word page in the same narration line
+  // becomes 2+2 — "DEFINE THIS" / "LIVING ROOM" reads like language.
+  for (let i = 1; i < groups.length; i++) {
+    const g = groups[i], p = groups[i - 1];
+    if (g.lineStart !== true && g.words.length === 1 && p.words.length === 3) {
+      const moved = p.words.pop();
+      g.words.unshift(moved);
+      g.start = moved.start;
+      p.end = p.words[p.words.length - 1].end;
+    }
+  }
   // enforce a minimum on-screen time and no overlap with the next group
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];

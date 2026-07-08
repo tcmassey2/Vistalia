@@ -554,7 +554,7 @@ export default async function handler(request, response) {
     });
   } catch (error) {
     const category = error.name === "AbortError" ? "timeout" : "openai_exception";
-    const reason = error.name === "AbortError" ? "Motion Director unavailable: OpenAI timed out." : `Motion Director unavailable: ${error.message || "OpenAI request failed."}`;
+    const reason = error.name === "AbortError" ? "Motion Director unavailable: planning service timed out." : `Motion Director unavailable: ${error.message || "planning request failed."}`;
     logMotionDirector("error", "OpenAI request exception; fallback used", {
       category,
       message: error.message || "",

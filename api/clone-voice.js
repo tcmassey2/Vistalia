@@ -175,7 +175,7 @@ export default async function handler(request, response) {
     if (!voiceId) {
       response.status(502).json({
         status: "failed",
-        error: "ElevenLabs accepted the upload but didn't return a voice_id. Try again.",
+        error: "The voice service accepted the upload but didn't return a voice ID. Try again.",
         errorCategory: "missing_voice_id"
       });
       return;
@@ -349,7 +349,7 @@ function parseAndCategorizeError(httpStatus, rawBody) {
     category: "unknown",
     requestId,
     userMessage: detailMessage
-      ? `ElevenLabs error: ${detailMessage}`
+      ? `Voice service error: ${detailMessage}`
       : `ElevenLabs returned ${httpStatus}. ${rawBody.slice(0, 160)}`
   };
 }

@@ -69,7 +69,7 @@ export default async function handler(request, response) {
     if (!openaiResponse.ok) {
       response.status(200).json({
         status: "fallback",
-        reason: payload.error?.message || `OpenAI Vision returned ${openaiResponse.status}.`
+        reason: payload.error?.message || `Vision classification returned ${openaiResponse.status}.`
       });
       return;
     }
@@ -89,7 +89,7 @@ export default async function handler(request, response) {
   } catch (error) {
     response.status(200).json({
       status: "fallback",
-      reason: error.name === "AbortError" ? "OpenAI Vision classification timed out." : error.message || "OpenAI Vision classification failed."
+      reason: error.name === "AbortError" ? "Vision classification timed out." : error.message || "Vision classification failed."
     });
   }
 }

@@ -1695,7 +1695,7 @@ function VoiceDiagnosticButton() {
       } else if (payload.ok && !payload.canCloneVoice) {
         setError(`Connected to ElevenLabs (${payload.tierDisplay}) — but voice cloning is NOT included on your plan. Upgrade to Creator ($22/mo) or higher at elevenlabs.io.`);
       } else {
-        setError(payload.message || "Could not reach ElevenLabs. Check ELEVENLABS_API_KEY in Vercel env vars.");
+        setError(payload.message || "Could not reach the voice service. Please try again in a moment.");
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Diagnostic failed";
