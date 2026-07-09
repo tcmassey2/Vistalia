@@ -470,14 +470,23 @@ async function fetchRenderJobFromSupabase(jobId) {
     const rows = await res.json().catch(() => []);
     const row = Array.isArray(rows) && rows.length ? rows[0] : null;
     if (!row) return null;
+    // v41.4 (master-25): the completed job's full payload lives in the
+    // jsonb `result` column (the worker persists it precisely for the
+    // restart case). This fallback used to drop formats/socialShorts, so
+    // whenever the worker recycled right after completion — which Render
+    // does routinely — the completion panel showed no square/format pills
+    // even though the files were uploaded and visible in the Library.
+    const persisted = row.result && typeof row.result === "object" ? row.result : {};
     return {
       jobId: row.job_id,
       status: row.status || "rendering",
       phase: row.phase || "Render in progress",
       progress: Number.isFinite(row.progress) ? row.progress : 0,
-      mp4Url: row.mp4_url || "",
-      thumbnailUrl: row.thumbnail_url || "",
-      engine: row.engine || "remotion",
+      mp4Url: row.mp4_url || persisted.mp4Url || "",
+      thumbnailUrl: row.thumbnail_url || persisted.thumbnailUrl || "",
+      engine: row.engine || persisted.engine || "remotion",
+      formats: persisted.formats || undefined,
+      socialShorts: persisted.socialShorts || undefined,
       error: row.error || ""
     };
   } catch {

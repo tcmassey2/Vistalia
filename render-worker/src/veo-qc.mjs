@@ -68,10 +68,11 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             '{"text_artifacts": boolean, "object_artifacts": boolean, "motion_artifacts": boolean, "occlusion_artifacts": boolean, "notes": "≤20 words"}. ' +
             "text_artifacts=true if ANY text, numbers, symbols, captions, or watermark-like " +
             "shapes appear in frames that are not present in the original photo. " +
-            "CRITICAL: if the text/watermark IS visible in the original photo (photographer " +
-            "watermarks, MLS stamps, signage), it is the SOURCE, not an artifact — " +
-            "text_artifacts=false. Flag only text the video ADDED. (Master-20 regression: " +
-            "a source watermark was flagged twice and burned two regens.) " +
+            "CRITICAL — WATERMARKS ARE NEVER ARTIFACTS, IN EITHER DIRECTION: photographer " +
+            "watermarks, MLS stamps, and logo overlays are IGNORED COMPLETELY. Present in " +
+            "the photo but missing from frames? IGNORE (m25 burned a regen on exactly " +
+            "this). Present in both? IGNORE. text_artifacts=true ONLY for text the video " +
+            "INVENTED that is not in the photo and is not a watermark-like overlay. " +
             "object_artifacts=true if any object is severely warped, floating, duplicated, " +
             "melted, or if a prominent new object appears that is not in the photo — " +
             "INCLUDING new vegetation: compare the EDGES and CORNERS of the later frames " +

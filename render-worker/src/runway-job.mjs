@@ -2119,7 +2119,7 @@ function pickMusicUrl(manifest) {
   const SLOT_DEFAULT_FILE = {
     luxury:   "luxury-poradovskyi.mp3",
     social:   "the_mountain-pop-490010.mp3",
-    mls:      "nastelbom-corporate-soft-488321.mp3",
+    mls:      "jonasblakewood-corporate-background-524146.mp3", // v41.4: clatter-free bed (m25)
     investor: "the_mountain-corporate-455905.mp3"
   };
 

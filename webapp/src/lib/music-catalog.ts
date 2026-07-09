@@ -142,7 +142,11 @@ export const MUSIC_CATALOG: MusicTrack[] = [
     label: "Clean Slate",
     vibe: "Gentle, neutral bed — steps out of the way",
     style: "mls-clean",
-    isStyleDefault: true,
+    // v41.4 (master-25 "tree clatter"): demoted from default — the track's
+    // quiet bed carries baked-in percussive clicks (worst-window
+    // impulsiveness 17.4, highest of all 19 tracks) that read as diegetic
+    // rattle over outdoor scenes whenever the voice pauses.
+    isStyleDefault: false,
     durationSec: 151
   },
   {
@@ -169,7 +173,7 @@ export const MUSIC_CATALOG: MusicTrack[] = [
     label: "Backdrop",
     vibe: "Understated bed — vanishes under VO",
     style: "mls-clean",
-    isStyleDefault: false,
+    isStyleDefault: true, // v41.4: cleanest MLS bed (impulsiveness 7.2)
     durationSec: 183
   },
 
