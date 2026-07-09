@@ -604,6 +604,13 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
         `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. SELL THE SPACE, NOT THE STAGING (v34.4): never describe movable furniture or decor — sofas, tables, chairs, beds, rugs, lamps, art, plants. The furniture leaves with the seller; buyers are buying light, space, views, ceilings, windows, flooring, and finishes (cabinetry, counters, fireplaces, and built-ins are part of the home — those are fine). "A glass table sits beside the window" → "Expansive windows frame the red-rock views". CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
+        // v40.1: style-aware narration tone (master-21: MLS Clean shipped
+        // "stunning… breathtaking" — puffery on the broker-compliant style).
+        /mls/i.test(selectedStyle || "")
+          ? `NARRATION TONE — MLS CLEAN: strictly factual and neutral, broker-compliant. FORBIDDEN anywhere: "stunning", "breathtaking", "gorgeous", "luxurious", "beautiful", "dream", "wow", "warm", "inviting", "ambiance", "impressive", "captures attention", "must-see". The rule behind the list: NO subjective or emotional adjectives at all — state what is visible plainly (rooms, light, materials, views, dimensions). Plain CTA: "Schedule a tour today."`
+          : /investor/i.test(selectedStyle || "")
+          ? `NARRATION TONE — INVESTOR: direct and factual, like a walkthrough for a buyer who runs numbers. Features, spaces, materials, condition. FORBIDDEN: lifestyle and emotional language ("warm", "inviting", "ambiance", "impressive", "beautiful", "stunning", "charm"). Say "High ceilings and large windows" not "an impressive atmosphere". Plain CTA: "Schedule a walkthrough today."`
+          : `NARRATION TONE: warm and confident, matched to the ${selectedStyle || "Cinematic Luxury"} style.`,
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
         `The agent's name is "${brandKit.fullName || "the listing agent"}", brokerage "${brandKit.brokerage || "their brokerage"}". Refer to them only on scene 1 and the outro CTA — don't repeat the name throughout.`,
         `Narration MUST stay grounded in the listing facts provided (price, beds, baths, sq ft, address) and what is visible in the photo. Never invent features, views, schools, or neighborhoods.`,
@@ -839,7 +846,24 @@ async function polishNarrationFlow(plan, context) {
     `"see" (e.g. "Schedule your private tour today." / "Come see it for yourself."). A room ` +
     `description in the final slot is an error. No address, no phone, no agent name.\n` +
     `- NEVER mention websites, URLs, phone numbers, or "more information" — contact details live on the end card, not in the voiceover.\n` +
-    `- Warm, confident, unhurried tone. No exclamation marks, no questions, no "welcome to".\n\n` +
+    `- Warm, confident, unhurried tone. No exclamation marks, no questions, no "welcome to".\n` +
+    // v40.1 (master-21, Troy): MLS Clean shipped "stunning… captures
+    // attention… breathtaking" — puffery on the one style whose promise is
+    // neutral and broker-compliant. Style-aware tone floor:
+    (/mls/i.test(context.selectedStyle || "")
+      ? `- MLS COMPLIANCE TONE (this is an MLS Clean video): strictly factual and neutral. ` +
+        `FORBIDDEN words anywhere: "stunning", "breathtaking", "gorgeous", "luxurious", ` +
+        `"beautiful", "dream", "wow", "warm", "inviting", "ambiance", "impressive", ` +
+        `"captures attention", "must-see", "one of a kind". The rule behind the list: NO ` +
+        `subjective or emotional adjectives at all — state what IS ` +
+        `("The living room has vaulted ceilings and mountain views."). The final invitation ` +
+        `stays plain: "Schedule a tour today."\n\n`
+      : /investor/i.test(context.selectedStyle || "")
+      ? `- INVESTOR TONE: direct and factual, for a buyer who runs numbers — features, ` +
+        `materials, spaces, condition. FORBIDDEN: lifestyle/emotional language ("warm", ` +
+        `"inviting", "ambiance", "impressive", "beautiful", "stunning", "charm"). ` +
+        `Plain CTA: "Schedule a walkthrough today."\n\n`
+      : `\n`) +
     inputList;
   try {
     const res = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
@@ -1916,8 +1940,15 @@ function clampNarrationSentenceSafe(text, maxWords) {
     return "";
   }
   const words = trimmed.split(/\s+/);
-  if (words.length <= Math.ceil(maxWords * 1.35)) return trimmed;
-  const slack = words.slice(0, Math.ceil(maxWords * 1.35)).join(" ");
+  // v41 (pipeline audit, masters 20+22): slack was 1.35x on the theory that
+  // "the mixer absorbs it" — but the mixer's ceiling is atempo 1.15x, so
+  // every line in the 1.15-1.35x band shipped clamp-legal and GUARANTEED to
+  // be speed-warped and TRIMMED in the final audio (m22 line 1: budget 6,
+  // 9 words = exactly ceil(6*1.35); m20 line 6: budget 4, 6 words = exactly
+  // ceil(4*1.35) — one clipped line per render, every render). Slack now
+  // matches what the mixer can genuinely absorb.
+  if (words.length <= Math.ceil(maxWords * 1.15)) return trimmed;
+  const slack = words.slice(0, Math.ceil(maxWords * 1.15)).join(" ");
   // 1) A full sentence inside the slack window — best cut.
   const lastSentence = slack.match(/^(.+[.!?])(?:\s|$)/);
   if (lastSentence) return lastSentence[1].trim();
@@ -1941,7 +1972,11 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // v35.5: += "by" — test-21's "front entry surrounded by natural—" cut
   // after an adjective, and the dangler cascade can't pop non-list words.
   // Cutting BEFORE "by" lands the whole prepositional phrase cleanly.
-  const CONNECTIVES = /^(and|or|with|by|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards)$/i;
+  // v41: += of/in/on/at + articles (a/an/the) — masters 20/22 produced
+  // "…reveals a warm." and "…charm of vaulted." because the scan couldn't
+  // see those phrase-boundary words; cutting BEFORE an article or
+  // preposition always ends on a complete grammatical unit.
+  const CONNECTIVES = /^(and|or|with|by|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards|of|in|on|at|a|an|the)$/i;
   const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|define|defines|continue|continues|extend|extends)$/i;
   let slackWords = slack.replace(/[,;:\s]+$/, "").split(/\s+/);
   // Keep at least half the slack — cutting at an EARLY connective guts the

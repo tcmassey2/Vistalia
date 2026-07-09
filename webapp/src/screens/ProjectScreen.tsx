@@ -2114,7 +2114,11 @@ function RenderControls() {
       status: "queued",
       phase: "Directing your tour",
       progress: 2,
-      engine: renderEngine
+      // v40: hardcode "veo" for the optimistic panel. The store's
+      // renderEngine still defaults to the retired "remotion", which made
+      // the eyebrow read "PHOTO MOTION" (the fallback tier's name) for the
+      // first seconds of every render until the worker's status arrived.
+      engine: "veo"
     });
     // The legacy `loading` toast is replaced by the progress panel — clear it.
     setLoading("");
@@ -2802,7 +2806,6 @@ function ActiveRenderPanel() {
 
   // DOM refs — animation loop writes to these directly to avoid React
   // re-renders on every frame.
-  const barFillRef = useRef<HTMLDivElement>(null);
   const percentRef = useRef<HTMLSpanElement>(null);
 
   // Animation state lives in refs (not state) so updates don't trigger re-renders.
@@ -2870,9 +2873,6 @@ function ActiveRenderPanel() {
 
       // 3. Write to DOM directly.
       const display = Math.max(2, Math.min(100, displayedRef.current));
-      if (barFillRef.current) {
-        barFillRef.current.style.transform = `scaleX(${display / 100})`;
-      }
       if (percentRef.current) {
         percentRef.current.textContent = String(Math.round(display));
       }
@@ -2960,36 +2960,8 @@ function ActiveRenderPanel() {
           </div>
         </div>
 
-        {/* The bar — DOM mutation drives it, never re-renders. */}
-        <div className="relative">
-          <div className="h-1.5 bg-edge rounded-full overflow-hidden">
-            <div
-              ref={barFillRef}
-              className="h-full origin-left"
-              style={{
-                transform: "scaleX(0.02)",
-                background: "linear-gradient(90deg, #8B6F3D 0%, #C7A76C 50%, #E0C896 100%)",
-                boxShadow: "0 0 12px rgba(199,167,108,0.35)",
-                willChange: "transform"
-              }}
-            />
-          </div>
-          {/* Continuous shimmer overlay — sits on top of the bar */}
-          <div
-            aria-hidden="true"
-            className="absolute inset-y-0 left-0 right-0 overflow-hidden pointer-events-none rounded-full"
-          >
-            <div
-              className="absolute inset-y-0 w-32 -left-32"
-              style={{
-                background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent)",
-                animation: "render-shimmer 2.4s linear infinite",
-                mixBlendMode: "overlay"
-              }}
-            />
-          </div>
-        </div>
-
+        {/* (Progress bar removed 7/8 per Troy — the animated percentage and
+            phase title carry the status; the card stays clean.) */}
       </div>
     </div>
   );

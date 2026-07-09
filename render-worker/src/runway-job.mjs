@@ -301,7 +301,10 @@ export async function renderRunwayJob(body, options = {}) {
               console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — third attempt: cinematic pull_out.`);
               qcThirdTryCount++;
               const thirdScene = { ...scene, cameraMotion: "pull_out" };
-              const third = await generateVeoSceneClip(thirdScene, manifest, tempDir, index, { constrained: false });
+              // v41: pullOutOverride makes the third path REAL (see
+              // CONSTRAINED_PROMPTS.pullOut) — previously this re-rolled the
+              // original planned prompt.
+              const third = await generateVeoSceneClip(thirdScene, manifest, tempDir, index, { constrained: false, pullOutOverride: true });
               const verdict3 = await qcVeoClip({
                 clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
                 sceneIndex: index, roomType: scene.roomType, tempDir
@@ -782,6 +785,18 @@ const CONSTRAINED_PROMPTS = {
     "size, door count, handles, controls, and finish; countertop and backsplash patterns " +
     "stay identical; cabinet fronts stay rigid with the same hardware; nothing reflective " +
     "changes; no new objects appear. Nothing in the scene moves — only the camera.",
+  // v41 (pipeline audit): the QC ladder's third attempt claimed "cinematic
+  // pull_out" since v34, but generateVeoSceneClip reads scene.veoPrompt
+  // verbatim — the cameraMotion swap changed a field nothing consumed, so
+  // attempt 3 was a same-prompt re-roll. This prompt makes the different
+  // camera path real: a conservative reveal, with the revealed edge area
+  // explicitly owned (the edge-invention lesson from v34.9).
+  pullOut:
+    "Completely smooth, stable camera easing slowly straight backward, ending about 10% " +
+    "wider, with gentle easing — no panning, no tilting, no drift. The newly revealed " +
+    "area at the frame edges continues the same walls, floor, ceiling, and surfaces " +
+    "exactly as photographed — no new objects, furniture, or vegetation may appear " +
+    "there. Nothing in the scene moves — only the camera.",
   pool:
     "Completely static, locked-off camera. Extremely slow forward push of about 4% only, " +
     "with no other movement and no drift. " +
@@ -821,14 +836,16 @@ const VEO_FIDELITY_SUFFIX =
 // Per-scene Veo generation, mapped to the same clipResults shape that
 // generateClip / generateKenBurnsFallback return so the stitch pipeline
 // downstream is untouched.
-export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false } = {}) {
+export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false, pullOutOverride = false } = {}) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   const imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Scene ${sceneIndex + 1} (${scene.photoId}) missing durable image URL.`);
 
   // Prompt priority: explicit veoPrompt from a v26 edit plan → legacy
   // runwayPrompt (older plans; plain text, works on Veo) → constrained.
-  const basePrompt = constrained
+  const basePrompt = pullOutOverride
+    ? CONSTRAINED_PROMPTS.pullOut
+    : constrained
     ? buildConstrainedVeoPrompt(scene, { strict: strictConstrained })
     : (scene.veoPrompt || scene.veo_prompt || scene.runwayPrompt || scene.runway_prompt || buildConstrainedVeoPrompt(scene));
   // v28: exteriors are where Veo morphs worst — it "animates" foliage under any

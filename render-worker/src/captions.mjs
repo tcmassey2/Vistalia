@@ -133,16 +133,23 @@ export function groupWords(words) {
     }
   }
   if (cur) groups.push(cur);
-  // Rebalance orphans (master-19 finding: "DEFINE THIS LIVING" / "ROOM"):
-  // a 1-word page following a 3-word page in the same narration line
-  // becomes 2+2 — "DEFINE THIS" / "LIVING ROOM" reads like language.
+  // Rebalance orphans (masters 19+22): a 1-word page following a page in
+  // the same narration line never ships alone —
+  //   3+1 → 2+2   ("DEFINE THIS" / "LIVING ROOM")
+  //   2+1 → 3     ("ENHANCE THE OPENNESS", when the merged span stays tight)
   for (let i = 1; i < groups.length; i++) {
     const g = groups[i], p = groups[i - 1];
-    if (g.lineStart !== true && g.words.length === 1 && p.words.length === 3) {
+    if (g.lineStart === true || g.words.length !== 1) continue;
+    if (p.words.length === 3) {
       const moved = p.words.pop();
       g.words.unshift(moved);
       g.start = moved.start;
       p.end = p.words[p.words.length - 1].end;
+    } else if (p.words.length <= 2 && (g.words[0].end - p.words[0].start) <= 1.8) {
+      p.words.push(g.words[0]);
+      p.end = g.words[0].end;
+      groups.splice(i, 1);
+      i--;
     }
   }
   // enforce a minimum on-screen time and no overlap with the next group
