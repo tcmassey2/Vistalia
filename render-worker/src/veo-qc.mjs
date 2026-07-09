@@ -41,12 +41,16 @@ export function qcEnabled() {
  */
 export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType, tempDir }) {
   if (!qcEnabled()) return { pass: true, reasons: [], checked: false };
+  const isExteriorQc = /exterior|backyard|outdoor|front|yard|patio|garden|deck/.test(String(roomType || "").toLowerCase());
   try {
     const frames = await extractFrames(clipPath, tempDir, sceneIndex);
     const images = [];
     for (const p of frames) {
       const b64 = (await fs.readFile(p)).toString("base64");
-      images.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}`, detail: "low" } });
+      // v41.2: exteriors are checked at high detail — the master-23 invented
+      // sidewalk lived in a dusk shot where "low" resolution erases exactly
+      // the ground features the inventory check needs to see.
+      images.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}`, detail: isExteriorQc ? "high" : "low" } });
     }
 
     const body = {
@@ -74,6 +78,14 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             "against the original photo; bushes, shrubs, trees, or planters that slide into " +
             "frame during the camera move but do not exist in the photo are invented, not " +
             "'revealed' — this is the most common defect on exterior scenes. " +
+            "FOR EXTERIOR SCENES, do an explicit GROUND-PLANE INVENTORY (master-23 miss: " +
+            "an invented sidewalk + bushes passed as 'consistent'): list mentally every " +
+            "walkway, path, driveway, curb, rock border, bush, and planter visible in the " +
+            "generated frames, and verify EACH ONE exists in the original photo. Any " +
+            "ground-level feature present in the frames but absent from the photo means " +
+            "object_artifacts=true — EVEN IF it looks natural and well-integrated. " +
+            "Plausible-looking additions are still inventions: the standard is presence " +
+            "in the photo, not visual plausibility. " +
             "motion_artifacts=true if, comparing the 3 frames AS A SEQUENCE from one " +
             "continuous camera move, any furniture or object moves RELATIVE TO THE ROOM: " +
             "it stays glued to the same frame position while walls/floor shift behind it, " +
@@ -91,7 +103,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
           role: "user",
           content: [
             { type: "text", text: `Room type: ${roomType || "unknown"}. First image = original photo. Next 3 = generated frames.` },
-            { type: "image_url", image_url: { url: sourceImageUrl, detail: "low" } },
+            { type: "image_url", image_url: { url: sourceImageUrl, detail: isExteriorQc ? "high" : "low" } },
             ...images
           ]
         }

@@ -1421,9 +1421,7 @@ function normalizeEditPlan(plan, photos, context) {
     // Cap at MAX_PLAN_SCENES (24) — was hard-capped at 12, which is why
     // 2-minute renders silently turned into 1-minute renders.
     .slice(0, MAX_PLAN_SCENES)
-    .map((scene, index) => ({
-      photoId: scene.photoId,
-      order: index + 1,
+    .map((scene, index) => {
       // v33.3 ROOM RECONCILIATION: the per-photo classifier (curate/classify,
       // one image per call) is more reliable than the Motion Director's
       // 16-images-in-one-context juggling, which mislabeled scenes in launch
@@ -1431,23 +1429,38 @@ function normalizeEditPlan(plan, photos, context) {
       // narration lines are WRITTEN from roomType, so mislabels became
       // "the kitchen offers ample cabinetry" spoken over a living room.
       // Category wins when present; Motion Director fills the gaps.
-      roomType: (() => {
+      const roomTypeNorm = (() => {
         const photo = photos.find((p) => p.id === scene.photoId);
         const fromCategory = roomTypeFromCategory(photo?.category);
         if (fromCategory) return fromCategory;
         return ROOM_TYPES.includes(scene.roomType) ? scene.roomType : inferRoomType(photo, index);
-      })(),
+      })();
+      const isExterior = /exterior|backyard|outdoor|front|yard|patio|garden|deck/.test(String(roomTypeNorm).toLowerCase());
+      let motion = CAMERA_MOTIONS.includes(scene.cameraMotion) ? scene.cameraMotion : "parallax_zoom";
+      // v41.2 (master-23 invented sidewalk): EXTERIORS ARE PUSH-IN ONLY.
+      // Reveals, pulls, and lateral pans hand Veo blank canvas at the frame
+      // edge — where it paints plausible sidewalks and bushes that pass any
+      // consistency check, because the photo has no data there. A push-in
+      // synthesizes no new area: every on-screen pixel descends from photo
+      // pixels. Hero-shot drama survives — push-in IS the classic house
+      // opener. (QC-ladder retries manage their own motion downstream.)
+      if (isExterior && motion !== "push_in") motion = "push_in";
+      return {
+      photoId: scene.photoId,
+      order: index + 1,
+      roomType: roomTypeNorm,
       visibleFeatures: cleanStringArray(scene.visibleFeatures).slice(0, 5),
       qualityScore: clamp(Number(scene.qualityScore || 70), 0, 100),
       duration: clamp(Number(scene.duration || defaultDuration), 1.2, maxDuration),
-      cameraMotion: CAMERA_MOTIONS.includes(scene.cameraMotion) ? scene.cameraMotion : "parallax_zoom",
+      cameraMotion: motion,
       transition: TRANSITIONS.includes(scene.transition) ? scene.transition : "crossfade",
       overlay: {
         headline: cleanText(scene.overlay?.headline || overlayFor(scene.roomType, context.listingDetails, index).headline, 70),
         subline: cleanText(scene.overlay?.subline || overlayFor(scene.roomType, context.listingDetails, index).subline, 90)
       },
       rawNarration: cleanText(scene.narrationLine || "", 240)
-    }));
+      };
+    });
 
   // v29 beat-timed transitions: snap each scene's CUT to the music beat grid so
   // transitions land on the beat. Done BEFORE narration sizing so the voice
