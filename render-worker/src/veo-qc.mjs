@@ -41,16 +41,16 @@ export function qcEnabled() {
  */
 export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType, tempDir }) {
   if (!qcEnabled()) return { pass: true, reasons: [], checked: false };
-  const isExteriorQc = /exterior|backyard|outdoor|front|yard|patio|garden|deck/.test(String(roomType || "").toLowerCase());
   try {
     const frames = await extractFrames(clipPath, tempDir, sceneIndex);
     const images = [];
     for (const p of frames) {
       const b64 = (await fs.readFile(p)).toString("base64");
-      // v41.2: exteriors are checked at high detail — the master-23 invented
-      // sidewalk lived in a dusk shot where "low" resolution erases exactly
-      // the ground features the inventory check needs to see.
-      images.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}`, detail: isExteriorQc ? "high" : "low" } });
+      // v41.5: ALL scenes at high detail. m23's sidewalk hid in a dusk
+      // exterior; m26's invented house hid through a living-room window —
+      // low-res images can't inventory either. At gpt-4.1-mini image-token
+      // pricing this costs ~2¢ per render. Cheap insurance.
+      images.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}`, detail: "high" } });
     }
 
     const body = {
@@ -85,6 +85,13 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             "generated frames, and verify EACH ONE exists in the original photo. Any " +
             "ground-level feature present in the frames but absent from the photo means " +
             "object_artifacts=true — EVEN IF it looks natural and well-integrated. " +
+            "FOR INTERIOR SCENES, do a THROUGH-WINDOW INVENTORY (master-26 miss: a house " +
+            "was invented outside a living-room window): check the view through every " +
+            "window and glass door in the frames against the same window in the photo. " +
+            "A building, structure, vehicle, or distinct landscape feature visible " +
+            "through glass in the frames but not in the photo = object_artifacts=true. " +
+            "A window view that is blurred or blown out in the photo must stay that way " +
+            "— the video 'revealing' detail behind glass is invention, not clarity. " +
             "Plausible-looking additions are still inventions: the standard is presence " +
             "in the photo, not visual plausibility. " +
             "motion_artifacts=true if, comparing the 3 frames AS A SEQUENCE from one " +
@@ -104,7 +111,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
           role: "user",
           content: [
             { type: "text", text: `Room type: ${roomType || "unknown"}. First image = original photo. Next 3 = generated frames.` },
-            { type: "image_url", image_url: { url: sourceImageUrl, detail: isExteriorQc ? "high" : "low" } },
+            { type: "image_url", image_url: { url: sourceImageUrl, detail: "high" } },
             ...images
           ]
         }

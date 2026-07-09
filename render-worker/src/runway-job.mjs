@@ -830,7 +830,10 @@ const VEO_FIDELITY_SUFFIX =
   "anywhere in the frame. Every piece of furniture and every object is bolted in place " +
   "in world space: nothing slides, drifts, follows, or travels with the camera — only " +
   "the camera moves, with correct perspective parallax, through a completely static " +
-  "scene. The scene must remain exactly as photographed apart from the camera motion " +
+  "scene. The view through every window and glass door stays exactly as photographed: " +
+  "no new buildings, structures, vehicles, or landscape elements may appear, sharpen, " +
+  "or resolve behind glass — blurred or bright window views stay blurred or bright. " +
+  "The scene must remain exactly as photographed apart from the camera motion " +
   "described.";
 
 // Per-scene Veo generation, mapped to the same clipResults shape that
