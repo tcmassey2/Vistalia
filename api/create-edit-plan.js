@@ -2001,7 +2001,16 @@ function clampNarrationSentenceSafe(text, maxWords) {
       break;
     }
   }
-  while (slackWords.length > 3 && FUNCTION_WORDS.test(slackWords[slackWords.length - 1])) {
+  // v41.3 (master-24: "…vaulted ceiling includes elegant"): after the
+  // function-word strip, a cut can still end on a hanging ADJECTIVE — the
+  // noun it modified is what the budget severed. Pop common real-estate
+  // adjectives too, then let the function-word strip resume ("includes
+  // elegant" → pop "elegant" → pop "includes" → "…vaulted ceiling.").
+  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium)$/i;
+  while (
+    slackWords.length > 3 &&
+    (FUNCTION_WORDS.test(slackWords[slackWords.length - 1]) || HANGING_ADJ.test(slackWords[slackWords.length - 1]))
+  ) {
     slackWords.pop();
   }
   if (slackWords.length >= 3) {
