@@ -44,6 +44,21 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     narration_applied: Boolean(narration?.applied),
     narration_voice_id: narration?.voiceId || null,
     status: "completed",
+    // v42: render_config was READ by api/library.js + the detail modal since
+    // v23.2 but never written here — the Library's "Video details" showed
+    // null fallbacks forever (Troy: "demo style thing"). Persist the
+    // customer-meaningful manifest facts + what per-scene regen needs to
+    // re-stitch faithfully.
+    render_config: {
+      selectedStyle: manifest?.selectedStyle || null,
+      musicMood: manifest?.musicMood || null,
+      musicTrack: manifest?.musicTrack || null,
+      captionsEnabled: manifest?.captionsEnabled !== false,
+      useCrossfades: manifest?.runwayConfig?.useCrossfades !== false,
+      targetDurationSec: Number(manifest?.targetDurationSec) || null,
+      twilightHero: Boolean(manifest?.twilightHero),
+      disableAddressCard: Boolean(manifest?.disableAddressCard)
+    },
     // Per-scene metadata for regenerate-scene flow. JSONB column.
     scenes: Array.isArray(scenes) ? scenes : []
   };

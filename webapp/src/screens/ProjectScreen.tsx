@@ -1691,9 +1691,12 @@ function VoiceDiagnosticButton() {
       const res = await fetch("/api/clone-voice?diagnose=1", { headers: await authHeaders() });
       const payload = await res.json().catch(() => ({}));
       if (payload.ok && payload.canCloneVoice) {
-        setToast(`✓ Connected to ElevenLabs (${payload.tierDisplay}). Voice cloning is available.`);
+        setToast(`✓ Voice service connected. Voice cloning is available.`);
       } else if (payload.ok && !payload.canCloneVoice) {
-        setError(`Connected to ElevenLabs (${payload.tierDisplay}) — but voice cloning is NOT included on your plan. Upgrade to Creator ($22/mo) or higher at elevenlabs.io.`);
+        // v42: this used to tell CUSTOMERS to upgrade Vistalia's own vendor
+        // plan at elevenlabs.io — operator diagnostics leaking into customer
+        // UI. Details for the operator live in the Vercel function logs.
+        setError(`Voice cloning is temporarily unavailable — studio voices still work. We're on it.`);
       } else {
         setError(payload.message || "Could not reach the voice service. Please try again in a moment.");
       }

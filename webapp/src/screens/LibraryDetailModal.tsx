@@ -109,6 +109,7 @@ export default function LibraryDetailModal({
         aria-modal="true"
         aria-label={heading}
         className="spring-in bg-surface border border-edge rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto"
+        style={{ background: "radial-gradient(600px 200px at 50% -5%, rgba(199,167,108,0.08), transparent 60%), #16161B" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -241,6 +242,11 @@ export default function LibraryDetailModal({
               {entry.listingPrice}
             </span>
           )}
+          {/* v42: discreet support reference (was a "Job ID" row inside the
+              details panel — demo energy; support still needs it). */}
+          <span className="text-[10px] text-ink-dim font-mono" title="Reference for support">
+            Ref {entry.jobId.slice(-8)}
+          </span>
           {/* v24.5: delete this render. Two-stage confirm so a mis-click
               doesn't nuke an entry the agent worked 10 minutes on. */}
           <div className="ml-auto flex items-center gap-2">
@@ -284,205 +290,58 @@ export default function LibraryDetailModal({
   );
 }
 
-/* v23: EngineBreakdownBadge — honest disclosure of how each scene was
-   actually rendered. Cinematic AI users paying for Runway should know
-   when scenes fell back to Ken Burns (motion-only) so they can trust
-   what they're getting. Click to expand for the per-scene reasons. */
-function EngineBreakdownBadge({ scenes }: { scenes: any[] }) {
-  const [expanded, setExpanded] = useState(false);
+/* (EngineBreakdownBadge + humanizeReason removed v42 — dead since v33.3
+   pulled the engine-breakdown telemetry out of customer UI.) */
 
-  // Tally engines used.
-  const total = scenes.length;
-  const cinematic = scenes.filter((s) => (s.engineUsed || (s.wasFallback ? "ken_burns" : "cinematic_ai")) === "cinematic_ai").length;
-  const kenBurns = total - cinematic;
-  const allCinematic = kenBurns === 0;
-
-  // Group fallback reasons for the expanded view.
-  const fallbacks = scenes
-    .filter((s) => (s.engineUsed || (s.wasFallback ? "ken_burns" : "cinematic_ai")) === "ken_burns")
-    .map((s) => ({
-      sceneIndex: s.sceneIndex,
-      roomType: s.roomType || "scene",
-      reason: s.fallbackReason || (s.wasFallback ? "fallback" : "")
-    }));
-
-  return (
-    <div className={
-      "rounded-lg border " +
-      (allCinematic
-        ? "border-gold/30 bg-gold/5"
-        : "border-edge-soft bg-surface-input")
-    }>
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full text-left px-4 py-3 flex items-center justify-between gap-3"
-      >
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className={
-            "w-7 h-7 rounded-full grid place-items-center text-[11px] font-bold flex-shrink-0 " +
-            (allCinematic
-              ? "bg-gold text-paper"
-              : "bg-surface text-ink-muted border border-edge")
-          }>
-            {allCinematic ? "✓" : `${kenBurns}`}
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold tracking-tightish">
-              {allCinematic
-                ? `All ${total} scenes used Cinematic AI`
-                : `${cinematic} of ${total} scenes used Cinematic AI`}
-            </div>
-            <div className="text-xs text-ink-muted mt-0.5 truncate">
-              {allCinematic
-                ? "Every scene rendered with the AI engine."
-                : `${kenBurns} scene${kenBurns === 1 ? "" : "s"} rendered with motion-only fallback. Tap to see which.`}
-            </div>
-          </div>
-        </div>
-        {!allCinematic && (
-          <span className="text-ink-muted text-sm flex-shrink-0">
-            {expanded ? "↑" : "↓"}
-          </span>
-        )}
-      </button>
-      {expanded && fallbacks.length > 0 && (
-        <div className="border-t border-edge-soft px-4 py-3">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-ink-dim mb-2">
-            Fallback details
-          </div>
-          <ul className="flex flex-col gap-1.5">
-            {fallbacks.map((f) => (
-              <li key={f.sceneIndex} className="text-xs flex items-start gap-2">
-                <span className="font-mono text-ink-dim flex-shrink-0">
-                  Scene {(f.sceneIndex ?? 0) + 1}
-                </span>
-                <span className="text-ink-muted">
-                  {formatRoomLabel(f.roomType)}
-                  {f.reason && (
-                    <span className="text-ink-dim"> — {humanizeReason(f.reason)}</span>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div className="text-[11px] text-ink-dim mt-3 leading-relaxed">
-            Motion-only scenes look polished but use a slow zoom/pan instead of AI motion.
-            We use them to protect against AI hallucinations on tricky scenes (kitchens,
-            mirrored bathrooms) and to recover when the AI service has an issue.
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Map machine reasons to readable phrases.
-function humanizeReason(reason: string): string {
-  if (reason.startsWith("hallucination_guard")) return "AI safety check (kitchen/detail risk)";
-  if (reason.startsWith("compliance_mode")) return "MLS-compliance mode";
-  if (reason.startsWith("runway_error")) return "AI service timed out, used motion fallback";
-  return reason;
-}
-
-/* v23.2 RenderDetailsPanel — collapsed diagnostic strip on every library
-   entry. Shows exactly what shipped on this render: which Runway model
-   ran, whether narration fired (and which voice), color grade, address
-   card, twilight conversion, etc. Replaces the "I think it worked?"
-   guesswork that hid the never-firing voice narrator for all of launch.
-
-   Closed by default so it doesn't compete with the video preview for
-   attention. One click reveals everything. Power-user / debug feature
-   but useful to every user when something looks off. */
+/* v42 "Video details" — the premium fact strip that replaced the collapsed
+   diagnostic panel (Troy: "more of a demo style thing"). Always visible,
+   landing-page design language: mono gold eyebrow, serif values, gold dot
+   markers. Customer vocabulary only — style, voice, captions, length,
+   formats. Support reference (job id) lives discreetly in the footer. */
 function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
-  const [open, setOpen] = useState(false);
   const cfg = entry.renderConfig || {};
-  // Diagnostic panel applies to any AI engine (runway or depth).
-  const isRunway = isAiVideoEngine(entry.engine);
 
-  // v33.3 CUSTOMER-FACING rows only. Engine/model names, hallucination-guard
-  // levels, prompt versions, plan tier, and vendor names are internal
-  // telemetry — they confused (and mildly alarmed) real users in launch QA.
-  // Keep what an agent actually cares about; internals live in worker logs.
-  const rows: Array<{ label: string; value: string; ok: boolean | null }> = [
-    {
-      label: "Style",
-      value: cfg.selectedStyle || "—",
-      ok: true
-    },
-    {
-      label: "Narration",
-      value: entry.narrationApplied
-        ? (entry.narrationVoiceId && !/^[a-z]+-[a-z]+$/.test(entry.narrationVoiceId) ? "On · your cloned voice" : "On")
-        : "Off",
-      ok: entry.narrationApplied
-    },
-    {
-      label: "Twilight Magic",
-      value: cfg.twilightHero ? "Applied to hero shot" : "Off",
-      ok: cfg.twilightHero ? true : null
-    },
-    {
-      label: "Address card",
-      value: cfg.disableAddressCard ? "Off" : "Included",
-      ok: !cfg.disableAddressCard
-    }
-  ];
+  const styleLabel = cfg.selectedStyle || engineLabel(entry.engine);
+  const narrationValue = entry.narrationApplied
+    ? (entry.narrationVoiceId && !/^[a-z]+-[a-z]+$/.test(entry.narrationVoiceId)
+        ? "Your cloned voice"
+        : "Studio voice")
+    : "Off";
+  const captionsValue = entry.narrationApplied
+    ? (cfg.captionsEnabled === false ? "Off" : "Word-synced")
+    : "—";
+  const lengthValue = cfg.targetDurationSec ? `~${cfg.targetDurationSec}s tour` : "";
+  const formatsValue = entry.formatsCount >= 2 ? "9:16 vertical + 1:1 square" : "9:16 vertical";
 
-  const sceneSummary = null;
-  void isRunway;
+  const facts: Array<{ label: string; value: string }> = [
+    { label: "Style", value: styleLabel },
+    { label: "Narration", value: narrationValue },
+    { label: "Captions", value: captionsValue },
+    ...(lengthValue ? [{ label: "Length", value: lengthValue }] : []),
+    { label: "Formats", value: formatsValue }
+  ].filter((f) => f.value && f.value !== "—");
 
   return (
-    <div className="rounded-xl border border-edge-soft bg-surface-input/40 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-surface-input transition-colors"
-        aria-expanded={open}
-      >
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="text-xs uppercase tracking-widest text-ink-dim font-mono">
-            Render details
-          </span>
-          {!entry.narrationApplied && (
-            <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40 uppercase">
-              No narration
-            </span>
-          )}
-        </div>
-        <span className={cn(
-          "text-ink-muted transition-transform flex-shrink-0 text-xs",
-          open ? "rotate-180" : "rotate-0"
-        )}>▼</span>
-      </button>
-      {open && (
-        <div className="px-4 pb-4 pt-2 border-t border-edge-soft flex flex-col gap-1.5">
-          {rows.map((r) => (
-            <div key={r.label} className="flex items-baseline justify-between gap-3 text-xs">
-              <span className="text-ink-dim font-mono uppercase tracking-wider text-[10px] flex-shrink-0 w-32">
-                {r.label}
-              </span>
-              <span className={cn(
-                "text-ink-muted text-right",
-                r.ok === false && "text-amber-300"
-              )}>
-                {r.value}
-              </span>
+    <div
+      className="rounded-xl border border-edge-soft px-5 py-4"
+      style={{ background: "radial-gradient(400px 120px at 0% 0%, rgba(199,167,108,0.06), transparent 60%), rgba(28,28,35,0.4)" }}
+    >
+      <p className="text-[10px] uppercase tracking-[0.22em] text-gold font-mono mb-3">
+        Video details
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+        {facts.map((f) => (
+          <div key={f.label} className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wider text-ink-dim font-mono mb-0.5">
+              {f.label}
             </div>
-          ))}
-          {sceneSummary && (
-            <div className="flex items-baseline justify-between gap-3 text-xs pt-1 border-t border-edge-soft mt-1">
-              <span className="text-ink-dim font-mono uppercase tracking-wider text-[10px] flex-shrink-0 w-32">
-                Scene breakdown
-              </span>
-              <span className="text-ink-muted text-right">{sceneSummary}</span>
+            <div className="text-sm text-ink flex items-center gap-1.5 truncate">
+              <span className="w-1 h-1 rounded-full bg-gold flex-shrink-0" />
+              <span className="truncate">{f.value}</span>
             </div>
-          )}
-          <div className="text-[10px] text-ink-dim leading-relaxed pt-2 mt-1 border-t border-edge-soft">
-            Job ID: <span className="font-mono">{entry.jobId}</span>
           </div>
-        </div>
-      )}
+        ))}
+      </div>
     </div>
   );
 }
@@ -674,8 +533,9 @@ function ScenesRegenGrid({
           ))}
       </div>
       <div className="text-[11px] text-ink-dim leading-relaxed">
-        Each regen takes 60–180 seconds and re-stitches the full video.
-        Regenerate re-creates a scene with fresh AI motion and re-stitches your video (60–180 seconds). Photo Motion swaps in a simple, artifact-free zoom — instant peace of mind for compliance-sensitive listings.
+        Redo with AI re-creates a scene with fresh cinematic motion and re-stitches your
+        video (60–180 seconds). Photo Motion swaps in a clean, artifact-free camera move —
+        instant peace of mind for compliance-sensitive listings.
       </div>
     </div>
   );
@@ -759,16 +619,16 @@ function SceneCell({
             type="button"
             disabled={disabled || isActive || !scene.clipUrl}
             onClick={() => onRegen(scene.sceneIndex, "ai")}
-            title={!scene.clipUrl ? "This scene wasn't persisted — can't regen." : "Re-roll the AI motion"}
+            title={!scene.clipUrl ? "This scene wasn't saved with the render — re-render the listing to enable fixes." : "Re-create this scene with fresh cinematic motion"}
             className="px-2 py-1.5 text-[10px] uppercase tracking-wider font-semibold bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 hover:border-gold rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            Regen AI
+            Redo with AI
           </button>
           <button
             type="button"
             disabled={disabled || isActive || !scene.clipUrl}
             onClick={() => onRegen(scene.sceneIndex, "kenburns")}
-            title={!scene.clipUrl ? "This scene wasn't persisted — can't regen." : "Replace with simple, artifact-free photo motion"}
+            title={!scene.clipUrl ? "This scene wasn't saved with the render — re-render the listing to enable fixes." : "Replace with a clean, artifact-free camera move"}
             className="px-2 py-1.5 text-[10px] uppercase tracking-wider font-semibold bg-surface-raised hover:bg-surface-input text-ink-muted hover:text-ink border border-edge hover:border-ink-muted rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             Photo Motion
@@ -860,12 +720,18 @@ function buildRegenManifest(
     orderedPhotos,
     introCard: { headline: "", subline: "" },
     outroCard: { headline: "", subline: "" },
-    musicMood: "",
-    selectedStyle: "cinematic-luxury",
+    // v42 FIX: these were hardcoded ("cinematic-luxury", crossfades off),
+    // so regenerating one scene on an MLS/Investor render re-stitched the
+    // video with the WRONG style context and different transitions than
+    // the original. Pull the original render's actual config.
+    musicMood: entry.renderConfig?.musicMood || "",
+    selectedStyle: entry.renderConfig?.selectedStyle || "Cinematic Luxury",
+    musicTrack: entry.renderConfig?.musicTrack || undefined,
+    captionsEnabled: entry.renderConfig?.captionsEnabled,
     runwayConfig: {
       model: "gen4_turbo",
       ratio: "9:16",
-      useCrossfades: false
+      useCrossfades: entry.renderConfig?.useCrossfades !== false
     },
     brandKit: branding,
     // Skip narration on regen by default — re-synthesizing 24 ElevenLabs

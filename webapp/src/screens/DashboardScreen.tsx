@@ -163,11 +163,12 @@ export default function DashboardScreen() {
               </svg>
             </div>
             <h2 className="font-display text-3xl sm:text-4xl font-semibold tracking-tighter2 mb-3 leading-tight">
-              Your first cinematic listing video, in three minutes.
+              Your first listing video, <em className="italic text-gold-light">directed like film.</em>
             </h2>
             <p className="text-ink-muted text-sm sm:text-base max-w-md mx-auto mb-8 leading-relaxed">
-              Upload your MLS photos, pick a style, and Vistalia directs the
-              motion, music, and pacing — then hands you every aspect ratio at once.
+              Upload your MLS photos, pick a style, and Vistalia directs the motion,
+              narration, and pacing — narrated in your voice, captions included,
+              ready the same hour.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 mb-2">
               <button onClick={newProject} className="btn-primary-em h-12 px-6 rounded-lg pulse-glow">
@@ -209,7 +210,7 @@ export default function DashboardScreen() {
                 <div className="font-mono text-[11px] text-gold mb-2">03</div>
                 <h3 className="text-sm font-semibold mb-1.5 tracking-tightish">Hit Generate</h3>
                 <p className="text-xs text-ink-muted leading-relaxed">
-                  Your cinematic video is ready in about three minutes. Review every scene, then download.
+                  Every scene is directed, verified, and narrated — review the cut, then download and post.
                 </p>
               </div>
             </div>
@@ -274,9 +275,9 @@ function LibraryCard({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => voi
             NARRATED
           </span>
         )}
-        {/* Bundle hint pill — bottom right */}
-        <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-paper/85 text-[10px] font-medium text-ink-soft border border-edge">
-          {entry.formatsCount + entry.socialShortCount} files
+        {/* Format hint pill — customer vocabulary, not a file count */}
+        <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-paper/85 text-[10px] font-mono text-ink-soft border border-edge">
+          {entry.formatsCount >= 2 ? "9:16 + 1:1" : "9:16"}
         </span>
       </div>
       <div className="p-4">

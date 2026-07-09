@@ -300,6 +300,14 @@ export interface LibraryEntry {
     disableAddressCard?: boolean;
     userTier?: string | null;
     runwayModelRequested?: string | null;
+    // v42: written by audit-log.mjs (render_config was read-but-never-
+    // written since v23.2). Powers the Library "Video details" panel and
+    // faithful per-scene regen re-stitching.
+    musicMood?: string | null;
+    musicTrack?: string | null;
+    captionsEnabled?: boolean;
+    useCrossfades?: boolean;
+    targetDurationSec?: number | null;
   } | null;
   createdAt: string;
 }
