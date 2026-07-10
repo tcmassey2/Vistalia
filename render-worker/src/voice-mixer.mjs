@@ -31,16 +31,77 @@ const DEFAULT_MODEL = process.env.ELEVENLABS_MODEL_ID || "eleven_turbo_v2_5";
 const FALLBACK_VOICE_ID = process.env.ELEVENLABS_DEFAULT_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // "Rachel"
 const SYNTH_CONCURRENCY = 4;
 const SYNTH_TIMEOUT_MS = 25000;
-// Music volume during narration. 0.30 ≈ -10 dB relative to the music bed,
-// which means with the runway-job pre-attenuating music to 0.35, music
-// during voice drops to ~0.105 (-19 dB). Combined with VOICE_WEIGHT=1.4
-// that puts voice ~22 dB above music when narration plays — broadcast
-// voiceover level. Override via env DUCK_LEVEL or manifest.duckLevel.
+// Music volume during narration. 0.30 ≈ -10 dB on the (stem-normalized)
+// bed while a line plays. Override via env DUCK_LEVEL or manifest.duckLevel.
 const DUCK_LEVEL = Number(process.env.DUCK_LEVEL ?? 0.30);
-// Voice gain in the final amix. 1.4 ≈ +3 dB push so voice cuts through
-// any low-frequency music rumble. Override via env VOICE_LEVEL or
-// manifest.voiceLevel.
-const VOICE_WEIGHT = Number(process.env.VOICE_LEVEL ?? 1.4);
+
+// v43.3 STEM-NORMALIZED MIX (m31 finding). The final loudnorm was DYNAMIC:
+// during the music fade-in it cranked gain up — boosting line 1 and its
+// sibilance into audible "clatter" — then pulled everything down once the
+// full bed arrived, burying the voice (~-25 dB under a -14 dB bed; the
+// Cinematic track happened to be mastered ~9 dB quieter, which is why
+// m30 sounded fine and MLS renders didn't). Root cause: catalog tracks
+// aren't loudness-matched and TTS output level varies, so fixed relative
+// gains can never hold a voice-over-music ratio. Fix: measure each stem's
+// integrated loudness, apply STATIC makeup gains to hit targets, and keep
+// the final stage deterministic (amix normalize=0 + limiter) — no
+// time-varying gain anywhere in the chain. VOICE_WEIGHT's old +3 dB push
+// is folded into VOICE_TARGET_I.
+const VOICE_TARGET_I = Number(process.env.VOICE_TARGET_LUFS ?? -17); // speech
+const BED_TARGET_I = Number(process.env.BED_TARGET_LUFS ?? -22);     // music between lines
+const MIX_MAKEUP_DB = 3; // static lift after amix → mix lands ≈ -16 LUFS
+
+const clampDb = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// Integrated loudness (LUFS) of a file's first audio stream via ffmpeg's
+// loudnorm analysis pass. Returns null on any failure — callers fail open.
+async function measureLoudnessI(filePath) {
+  return new Promise((resolve) => {
+    const proc = spawn("ffmpeg", [
+      "-hide_banner", "-nostats", "-i", filePath,
+      "-map", "a:0", "-af", "loudnorm=print_format=json", "-f", "null", "-"
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    proc.stderr.on("data", (c) => { stderr += c.toString(); });
+    const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} resolve(null); }, 30000);
+    proc.on("close", () => {
+      clearTimeout(timer);
+      const m = stderr.match(/"input_i"\s*:\s*"?(-?[\d.]+)/);
+      const v = m ? Number(m[1]) : NaN;
+      resolve(Number.isFinite(v) && v > -70 ? v : null);
+    });
+    proc.on("error", () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
+// Measure both stems, return static makeup gains. Fail-open: unmeasurable
+// stems get 0 dB (bed) / +3 dB (voice) — roughly the old fixed-weights feel.
+async function computeStemGains(masterMp4, narrationTrackPath) {
+  const [bedI, voiceI] = await Promise.all([
+    measureLoudnessI(masterMp4),
+    measureLoudnessI(narrationTrackPath)
+  ]);
+  const bedGainDb = bedI == null ? 0 : clampDb(BED_TARGET_I - bedI, -18, 6);
+  const voiceGainDb = voiceI == null ? 3 : clampDb(VOICE_TARGET_I - voiceI, -6, 18);
+  console.info(
+    `[voice] stem levels — narration ${voiceI == null ? "unmeasured" : `${voiceI.toFixed(1)} LUFS`} → ` +
+    `${voiceGainDb >= 0 ? "+" : ""}${voiceGainDb.toFixed(1)}dB, music bed ` +
+    `${bedI == null ? "unmeasured" : `${bedI.toFixed(1)} LUFS`} → ` +
+    `${bedGainDb >= 0 ? "+" : ""}${bedGainDb.toFixed(1)}dB (static mix, no dynamic rides).`
+  );
+  return { bedGainDb, voiceGainDb };
+}
+
+// The shared final-mix audio chain: normalized bed → duck under lines →
+// normalized voice → deterministic sum → static makeup → true-peak guard.
+function buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb) {
+  return (
+    `[0:a:0]volume=${bedGainDb.toFixed(1)}dB,volume=eval=frame:volume='${volumeExpr}'[ducked];` +
+    `[1:a]volume=${voiceGainDb.toFixed(1)}dB[vo];` +
+    `[ducked][vo]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,` +
+    `volume=${MIX_MAKEUP_DB}dB,alimiter=limit=0.841:level=false[aout]`
+  );
+}
 
 export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, crossfadeOverlapSec = 0, narrationScript = "", brandKit, tempDir, jobId, onProgress, captionsEnabled = true, captionsVariant = "luxury" }) {
   // v26.9: actual rendered clip duration per scene (keyed by photoId). When
@@ -380,13 +441,14 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   const masterHasAudio = await detectAudioStream(masterMp4);
 
   if (masterHasAudio) {
+    const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
     await runFFmpeg([
       "-y",
       "-threads", "1",
       "-i", masterMp4,
       "-i", narrationTrackPath,
       "-filter_complex",
-      `[0:a:0]volume=eval=frame:volume='${volumeExpr}'[ducked];[ducked][1:a]amix=inputs=2:duration=first:dropout_transition=0:weights=1 ${VOICE_WEIGHT.toFixed(2)},loudnorm=I=-16:TP=-1.5:LRA=11[aout]`,
+      buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb),
       "-map", "0:v:0",
       "-map", "[aout]",
       "-c:v", "copy",
@@ -601,11 +663,12 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     const vf = captionsAssPath
       ? [`[0:v:0]subtitles='${subtitlesFilterPath(captionsAssPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'[vout];`, "[vout]", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19"]]
       : ["", "0:v:0", ["-c:v", "copy"]];
+    const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex",
-      `${vf[0]}[0:a:0]volume=eval=frame:volume='${volumeExpr}'[ducked];[ducked][1:a]amix=inputs=2:duration=first:dropout_transition=0:weights=1 ${VOICE_WEIGHT.toFixed(2)},loudnorm=I=-16:TP=-1.5:LRA=11[aout]`,
+      vf[0] + buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb),
       "-map", vf[1], "-map", "[aout]",
       ...vf[2], "-c:a", "aac", "-b:a", "192k",
       "-shortest", mixedMp4
@@ -734,12 +797,13 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
   const masterHasAudio = await detectAudioStream(masterMp4);
 
   if (masterHasAudio) {
+    const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", masterMp4,
       "-i", narrationTrackPath,
       "-filter_complex",
-      `[0:a:0]volume=eval=frame:volume='${volumeExpr}'[ducked];[ducked][1:a]amix=inputs=2:duration=first:dropout_transition=0:weights=1 ${VOICE_WEIGHT.toFixed(2)},loudnorm=I=-16:TP=-1.5:LRA=11[aout]`,
+      buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb),
       "-map", "0:v:0", "-map", "[aout]",
       "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
       "-shortest",
