@@ -567,11 +567,15 @@ export async function renderRunwayJob(body, options = {}) {
           scenes: manifest.scenes,
           // v38: word-synced captions toggle (webapp Audio panel; default on)
           captionsEnabled: manifest?.captionsEnabled !== false,
-          // v38.2: caption skin by video style — same regex the music
-          // slotter uses. Modern Social gets the Captions-app gold-box
-          // karaoke; everything else gets the luxury serif skin.
+          // v38.2: caption skin by video style. v43.4: test the UNION of
+          // musicMood and selectedStyle — the old `musicMood || style`
+          // short-circuited on mood, so a Modern Social render with a
+          // hand-picked non-social track (m32) silently shipped the luxury
+          // serif skin instead of the gold-box karaoke. The customer's
+          // STYLE choice owns the caption look; an upbeat mood can still
+          // opt a non-social style into bold.
           captionsVariant: /social|upbeat|modern|viral/i.test(
-            String(manifest?.musicMood || manifest?.selectedStyle || "")
+            `${manifest?.musicMood || ""} ${manifest?.selectedStyle || ""}`
           ) ? "bold" : "luxury",
           sceneDurationsByPhoto: actualDurationsByPhoto,
           // v31 pipeline-audit fix: with crossfades on, every join consumes

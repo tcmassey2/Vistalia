@@ -404,7 +404,13 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     })
     .join(";");
   const mixInputs = placedNarrations.map((_, i) => `[n${i}]`).join("");
-  const filterComplex = `${adelaySteps};[0:a]${mixInputs}amix=inputs=${placedNarrations.length + 1}:duration=first:dropout_transition=0,atrim=duration=${narrTrackPadSec}[narr]`;
+  // v43.4 normalize=0: amix's default normalization divides every input by
+  // the input COUNT — with N lines + the silent base, speech shipped at
+  // -20·log10(N+1) dB (m32: 7 inputs = -16.9 dB, narration track measured
+  // -43 LUFS and saturated the stem-gain clamp). The old dynamic loudnorm
+  // masked this for months. Lines never overlap (windows are sequential),
+  // so summing at native level cannot clip.
+  const filterComplex = `${adelaySteps};[0:a]${mixInputs}amix=inputs=${placedNarrations.length + 1}:duration=first:dropout_transition=0:normalize=0,atrim=duration=${narrTrackPadSec}[narr]`;
 
   const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
   const narrationArgs = [
@@ -634,8 +640,11 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     return `[1:a]${chain}[s${i}]`;
   });
   const mixIns = placements.map((_, i) => `[s${i}]`).join("");
+  // v43.4 normalize=0 — see the per-line builder note: default amix
+  // normalization was attenuating speech by -20·log10(N+1) dB. Aligned
+  // placements are strictly sequential; native-level sum cannot clip.
   const filterComplex =
-    `${steps.join(";")};[0:a]${mixIns}amix=inputs=${placements.length + 1}:duration=first:dropout_transition=0,atrim=duration=${trackPadSec}[narr]`;
+    `${steps.join(";")};[0:a]${mixIns}amix=inputs=${placements.length + 1}:duration=first:dropout_transition=0:normalize=0,atrim=duration=${trackPadSec}[narr]`;
 
   const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
   await runFFmpeg([
@@ -776,7 +785,7 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
     `apad=whole_dur=${Math.round(trackDurSec * 1000)}ms`
   ].filter(Boolean).join(",");
   const filterComplex =
-    `[1:a]${chain}[n0];[0:a][n0]amix=inputs=2:duration=first:dropout_transition=0,atrim=duration=${trackDurSec}[narr]`;
+    `[1:a]${chain}[n0];[0:a][n0]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,atrim=duration=${trackDurSec}[narr]`;
 
   const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
   await runFFmpeg([
