@@ -549,6 +549,7 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
               <div className="text-xs text-ink-muted max-w-md">
                 Or <span className="text-gold underline">click to browse</span>. 8–{MAX_PHOTOS} photos works best —
                 exterior, kitchen, living, primary bedroom, plus any standout details.
+                Upload the original full-resolution exports; bigger photos make sharper video.
               </div>
               <div className="text-[10px] text-ink-dim font-mono uppercase tracking-widest mt-1">
                 JPG · PNG · WebP

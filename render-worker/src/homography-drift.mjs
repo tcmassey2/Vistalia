@@ -162,7 +162,15 @@ export async function renderHomographyDrift({
     baseZoom *= 1 + (overflow / Math.max(W, H)) * 2.2 + 0.002;
   }
 
-  const photoPng = await sharp(photoPath).resize(W, H, { fit: "cover" }).png().toBuffer();
+  // v44: attention-positioned crop (was default center). The 9:16 cover
+  // crop of a 4:3 photo keeps only ~42% of its width — the luxury-demo
+  // office photo's center was a bright mesh-shade window, so the floor
+  // faithfully rendered 2.5s of featureless gray (m-lux 14.4–16.4s).
+  // sharp's attention strategy targets the highest-detail region instead;
+  // for normally-composed listing photos it lands within pixels of center.
+  const photoPng = await sharp(photoPath)
+    .resize(W, H, { fit: "cover", position: sharp.strategy.attention })
+    .png().toBuffer();
   const rgb = await sharp(photoPng).raw().toBuffer();
   const npx = W * H;
   const imgT = new Float32Array(3 * npx);
