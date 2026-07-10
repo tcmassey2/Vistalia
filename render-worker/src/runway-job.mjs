@@ -472,10 +472,24 @@ export async function renderRunwayJob(body, options = {}) {
             roomType: scene.roomType || "",
             tempDir
           });
-          const hard = verdict.checked ? verdict.reasons.filter((r) => !r.startsWith("motion")) : [];
+          // v43.1: at the FINAL gate, every flag is hard — motion included.
+          // m29 proved the exemption wrong here: the sweep FAILed scenes 2
+          // ("object moves with camera" = invented landscaping on an
+          // unchecked pull-out) and 8 (chair gliding with the pan), both
+          // real, both shipped because motion-* was presumed a VLM false
+          // positive. That presumption belongs to the per-clip ladder,
+          // where a false positive burns a $0.90 regen. Here the remedy is
+          // the deterministic floor — cheap, clean, and exactly what Troy
+          // blessed ("even if we have to KB a scene that is fine"). The
+          // asymmetry flips: a floored good scene is acceptable; a shipped
+          // hallucination is not. MAX_SWEEP_REPLACEMENTS still caps blast
+          // radius if the VLM has a bad day.
+          const hard = verdict.checked ? verdict.reasons : [];
           if (hard.length > 0) sweepFlagged.push({ index: i, clip, scene, reasons: hard });
-          // Gentle pacing — sequential + spaced keeps us clear of rate limits.
-          await new Promise((r) => setTimeout(r, 250));
+          // Gentle pacing — sequential + spaced keeps us clear of rate
+          // limits. v43.1: 250→600ms; m29's sweep hit 429 on most scenes
+          // (all recovered via backoff, but each retry costs 8-16s).
+          await new Promise((r) => setTimeout(r, 600));
         }
         cursor += visible;
       }
