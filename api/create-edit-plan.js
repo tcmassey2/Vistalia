@@ -838,7 +838,7 @@ async function polishNarrationFlow(plan, context) {
     `- Word caps are ABSOLUTE and cuts are ugly: a line over its cap gets machine-truncated ` +
     `mid-phrase in the final audio ("an entryway filled—"). Count your words; land at least one ` +
     `word UNDER every cap. A 4-word complete sentence always beats a 9-word cut one. Every line ` +
-    `stands alone as one complete spoken sentence with a subject and verb — never split one idea ` +
+    `stands alone as one complete spoken sentence with a subject and verb. Never end a line on a transitive verb ('The kitchen boasts.' is an error — m27 shipped exactly that): if the object doesn't fit the cap, write a shorter complete thought instead. Never split one idea ` +
     `across two lines, never open with a verb fragment.\n` +
     `- Variety: no two lines open with the same word; use each of ` +
     `"cozy", "bright", "spacious", "beautiful", "stunning", "modern" at most once across the whole script.\n` +
@@ -1953,6 +1953,20 @@ function clampNarrationSentenceSafe(text, maxWords) {
     return "";
   }
   const words = trimmed.split(/\s+/);
+  // v41: += of/in/on/at + articles (a/an/the) — masters 20/22 produced
+  // "…reveals a warm." and "…charm of vaulted." because the scan couldn't
+  // see those phrase-boundary words; cutting BEFORE an article or
+  // preposition always ends on a complete grammatical unit.
+  const CONNECTIVES = /^(and|or|with|by|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards|of|in|on|at|a|an|the)$/i;
+  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|define|defines|continue|continues|extend|extends)$/i;
+  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium)$/i;
+  const stripTrailingJunk = (arr) => {
+    const out = arr.slice();
+    while (out.length > 0 && (FUNCTION_WORDS.test(out[out.length - 1].replace(/[.,;:]+$/, "")) || HANGING_ADJ.test(out[out.length - 1].replace(/[.,;:]+$/, "")))) {
+      out.pop();
+    }
+    return out;
+  };
   // v41 (pipeline audit, masters 20+22): slack was 1.35x on the theory that
   // "the mixer absorbs it" — but the mixer's ceiling is atempo 1.15x, so
   // every line in the 1.15-1.35x band shipped clamp-legal and GUARANTEED to
@@ -1960,7 +1974,17 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // 9 words = exactly ceil(6*1.35); m20 line 6: budget 4, 6 words = exactly
   // ceil(4*1.35) — one clipped line per render, every render). Slack now
   // matches what the mixer can genuinely absorb.
-  if (words.length <= Math.ceil(maxWords * 1.15)) return trimmed;
+  if (words.length <= Math.ceil(maxWords * 1.15)) {
+    // v42.2 (m27 "The kitchen boasts."): within-budget lines used to skip
+    // ALL quality checks — a model-written fragment ending on a dangling
+    // transitive verb shipped as the entire spoken line. Strip trailing
+    // junk here too; if fewer than 3 real words remain, the line is an
+    // unfixable fragment — silence beats "The kitchen boasts."
+    const cleaned = stripTrailingJunk(words);
+    if (cleaned.length === words.length) return trimmed;
+    if (cleaned.length < 3) return "";
+    return `${cleaned.join(" ").replace(/[,;:\s]+$/, "")}.`;
+  }
   const slack = words.slice(0, Math.ceil(maxWords * 1.15)).join(" ");
   // 1) A full sentence inside the slack window — best cut.
   const lastSentence = slack.match(/^(.+[.!?])(?:\s|$)/);
@@ -1985,12 +2009,6 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // v35.5: += "by" — test-21's "front entry surrounded by natural—" cut
   // after an adjective, and the dangler cascade can't pop non-list words.
   // Cutting BEFORE "by" lands the whole prepositional phrase cleanly.
-  // v41: += of/in/on/at + articles (a/an/the) — masters 20/22 produced
-  // "…reveals a warm." and "…charm of vaulted." because the scan couldn't
-  // see those phrase-boundary words; cutting BEFORE an article or
-  // preposition always ends on a complete grammatical unit.
-  const CONNECTIVES = /^(and|or|with|by|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards|of|in|on|at|a|an|the)$/i;
-  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|define|defines|continue|continues|extend|extends)$/i;
   let slackWords = slack.replace(/[,;:\s]+$/, "").split(/\s+/);
   // Keep at least half the slack — cutting at an EARLY connective guts the
   // sentence ("A curved walkway leads." after cutting at "to").
@@ -2001,12 +2019,7 @@ function clampNarrationSentenceSafe(text, maxWords) {
       break;
     }
   }
-  // v41.3 (master-24: "…vaulted ceiling includes elegant"): after the
-  // function-word strip, a cut can still end on a hanging ADJECTIVE — the
-  // noun it modified is what the budget severed. Pop common real-estate
-  // adjectives too, then let the function-word strip resume ("includes
-  // elegant" → pop "elegant" → pop "includes" → "…vaulted ceiling.").
-  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium)$/i;
+  // v41.3 (master-24): pop hanging adjectives too (defs hoisted v42.2).
   while (
     slackWords.length > 3 &&
     (FUNCTION_WORDS.test(slackWords[slackWords.length - 1]) || HANGING_ADJ.test(slackWords[slackWords.length - 1]))

@@ -307,8 +307,10 @@ function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
         ? "Your cloned voice"
         : "Studio voice")
     : "Off";
+  // Prefer what actually shipped (captionsApplied) over what was asked for
+  // (captionsEnabled); older rows have neither and default sensibly.
   const captionsValue = entry.narrationApplied
-    ? (cfg.captionsEnabled === false ? "Off" : "Word-synced")
+    ? (cfg.captionsApplied === false || cfg.captionsEnabled === false ? "Off" : "Word-synced")
     : "—";
   const lengthValue = cfg.targetDurationSec ? `~${cfg.targetDurationSec}s tour` : "";
   const formatsValue = entry.formatsCount >= 2 ? "9:16 vertical + 1:1 square" : "9:16 vertical";

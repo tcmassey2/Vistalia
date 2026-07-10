@@ -5,7 +5,7 @@
 // "4%" text artifact WITH the strict no-text fidelity suffix in the prompt.
 // The only architecture that ships is: generate → INSPECT → retry/downgrade.
 //
-// WHAT: after a Veo clip downloads, extract 3 frames (25/50/75%) and ask a
+// WHAT: after a Veo clip downloads, extract 4 frames (12/40/66/92%) and ask a
 // cheap vision model to compare them against the source listing photo:
 //   - text_artifacts:   any text/numbers/symbols/watermarks not in the photo
 //   - object_artifacts: objects warped/floating/duplicated/sliding, or new
@@ -62,7 +62,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
           role: "system",
           content:
             "You are a strict quality inspector for AI-generated real-estate video. " +
-            "You receive the ORIGINAL listing photo first, then 3 frames IN TIME ORDER " +
+            "You receive the ORIGINAL listing photo first, then 4 frames IN TIME ORDER " +
             "from a video generated FROM that photo. The video may only move the camera — " +
             "the scene itself must match the photo and behave rigidly. Respond with strict JSON: " +
             '{"text_artifacts": boolean, "object_artifacts": boolean, "motion_artifacts": boolean, "occlusion_artifacts": boolean, "notes": "≤20 words"}. ' +
@@ -94,7 +94,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             "— the video 'revealing' detail behind glass is invention, not clarity. " +
             "Plausible-looking additions are still inventions: the standard is presence " +
             "in the photo, not visual plausibility. " +
-            "motion_artifacts=true if, comparing the 3 frames AS A SEQUENCE from one " +
+            "motion_artifacts=true if, comparing the 4 frames AS A SEQUENCE from one " +
             "continuous camera move, any furniture or object moves RELATIVE TO THE ROOM: " +
             "it stays glued to the same frame position while walls/floor shift behind it, " +
             "it slides across the floor, or it drifts against the direction everything else " +
@@ -110,7 +110,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
         {
           role: "user",
           content: [
-            { type: "text", text: `Room type: ${roomType || "unknown"}. First image = original photo. Next 3 = generated frames.` },
+            { type: "text", text: `Room type: ${roomType || "unknown"}. First image = original photo. Next 4 = generated frames.` },
             { type: "image_url", image_url: { url: sourceImageUrl, detail: "high" } },
             ...images
           ]
@@ -118,26 +118,38 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
       ]
     };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), QC_TIMEOUT_MS);
+    // v42.2 (m27): high-detail images raised tokens/call enough that 11
+    // parallel QC calls tripped OpenAI's rate limit and scenes 10-11
+    // shipped UNCHECKED (429 → immediate fail-open). Rate limits are
+    // transient by definition — retry with backoff before failing open.
     let res;
-    try {
-      res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
-    } finally {
-      clearTimeout(timer);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), QC_TIMEOUT_MS);
+      try {
+        res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (res.status !== 429 && res.status < 500) break;
+      if (attempt < 2) {
+        const waitMs = (attempt + 1) * 8000 + Math.floor(Math.random() * 2000);
+        console.warn(`[qc] scene ${sceneIndex + 1}: OpenAI ${res.status} — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 2}/3).`);
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
     }
     for (const p of frames) fs.unlink(p).catch(() => {});
 
     if (!res.ok) {
-      console.warn(`[qc] scene ${sceneIndex + 1}: OpenAI ${res.status} — fail-open.`);
+      console.warn(`[qc] scene ${sceneIndex + 1}: OpenAI ${res.status} after retries — fail-open.`);
       return { pass: true, reasons: [], checked: false };
     }
     const data = await res.json().catch(() => null);
@@ -166,7 +178,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
 }
 
 async function extractFrames(clipPath, tempDir, sceneIndex) {
-  // 3 frames at 25/50/75% of the clip. Probe duration cheaply via ffmpeg -i
+  // 4 frames across the clip. Probe duration cheaply via ffmpeg -i
   // is messy; use select over fps with known bucket lengths instead: sample
   // at 1s, mid, and late via percentage seek (-ss ratios need duration — use
   // the select filter with n-based picks at 30fps assuming ≥2.5s clips).
@@ -177,10 +189,14 @@ async function extractFrames(clipPath, tempDir, sceneIndex) {
       (e, stdout) => resolve(e ? 0 : Number(String(stdout).trim()) || 0));
   });
   const d = dur > 0 ? dur : 4;
-  for (let i = 0; i < 3; i++) {
-    // v32.2: 15/50/85% — wider spread gives the motion-artifact check a
-    // larger camera-move baseline to judge relative object displacement.
-    const t = Math.max(0.2, d * [0.15, 0.5, 0.85][i]);
+  // v42.2 (m27): 4 frames at 12/40/66/92% — a transient invented window
+  // flashed "for a slight second" INSIDE a scene that passed 3-frame QC.
+  // A fourth sample tightens the largest blind window from ~35% to ~26%
+  // of the clip; transients that dodge four frames remain review-gate
+  // territory (and are, honestly, sub-second blips).
+  const SAMPLE_POINTS = [0.12, 0.4, 0.66, 0.92];
+  for (let i = 0; i < SAMPLE_POINTS.length; i++) {
+    const t = Math.max(0.2, d * SAMPLE_POINTS[i]);
     const framePath = path.join(tempDir, `qc-${String(sceneIndex).padStart(3, "0")}-${i}.jpg`);
     await runFFmpeg(
       ["-y", "-ss", t.toFixed(2), "-i", clipPath, "-frames:v", "1", "-q:v", "5", "-vf", "scale=512:-2", framePath],

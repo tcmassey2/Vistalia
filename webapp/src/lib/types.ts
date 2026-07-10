@@ -306,6 +306,7 @@ export interface LibraryEntry {
     musicMood?: string | null;
     musicTrack?: string | null;
     captionsEnabled?: boolean;
+    captionsApplied?: boolean;
     useCrossfades?: boolean;
     targetDurationSec?: number | null;
   } | null;

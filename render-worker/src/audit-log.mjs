@@ -41,7 +41,11 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     thumbnail_url: upload?.thumbnailUrl || "",
     social_short_count: Array.isArray(upload?.socialShorts) ? upload.socialShorts.length : 0,
     formats_count: Object.keys(upload?.formats || {}).length || 1,
-    narration_applied: Boolean(narration?.applied),
+    // v42.1 (Troy: "library shows captions off even though they are on"):
+    // the mixer returns `narrationApplied`; this read `.applied` — undefined
+    // → narration_applied has been FALSE for every narrated render since
+    // the audit log shipped. Read the real field (keep .applied as compat).
+    narration_applied: Boolean(narration?.narrationApplied ?? narration?.applied),
     narration_voice_id: narration?.voiceId || null,
     status: "completed",
     // v42: render_config was READ by api/library.js + the detail modal since
@@ -53,7 +57,10 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
       selectedStyle: manifest?.selectedStyle || null,
       musicMood: manifest?.musicMood || null,
       musicTrack: manifest?.musicTrack || null,
+      // What the user asked for AND what actually shipped — the panel
+      // shows truth, not intent.
       captionsEnabled: manifest?.captionsEnabled !== false,
+      captionsApplied: Boolean(narration?.captionsApplied),
       useCrossfades: manifest?.runwayConfig?.useCrossfades !== false,
       targetDurationSec: Number(manifest?.targetDurationSec) || null,
       twilightHero: Boolean(manifest?.twilightHero),
