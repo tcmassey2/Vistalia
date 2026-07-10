@@ -43,6 +43,17 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
   if (!qcEnabled()) return { pass: true, reasons: [], checked: false };
   try {
     const frames = await extractFrames(clipPath, tempDir, sceneIndex);
+    return await runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, logTag: "qc" });
+  } catch (err) {
+    console.warn(`[qc] scene ${sceneIndex + 1}: QC error (${err.message}) — fail-open.`);
+    return { pass: true, reasons: [], checked: false };
+  }
+}
+
+/** Shared inspection core — used by the per-clip pass ("qc") and the
+ *  final master sweep ("sweep"). v43. */
+async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, logTag = "qc", extraContext = "" }) {
+  try {
     const images = [];
     for (const p of frames) {
       const b64 = (await fs.readFile(p)).toString("base64");
@@ -62,7 +73,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
           role: "system",
           content:
             "You are a strict quality inspector for AI-generated real-estate video. " +
-            "You receive the ORIGINAL listing photo first, then 4 frames IN TIME ORDER " +
+            `You receive the ORIGINAL listing photo first, then ${frames.length} frames IN TIME ORDER ` +
             "from a video generated FROM that photo. The video may only move the camera — " +
             "the scene itself must match the photo and behave rigidly. Respond with strict JSON: " +
             '{"text_artifacts": boolean, "object_artifacts": boolean, "motion_artifacts": boolean, "occlusion_artifacts": boolean, "notes": "≤20 words"}. ' +
@@ -102,7 +113,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             "— the video 'revealing' detail behind glass is invention, not clarity. " +
             "Plausible-looking additions are still inventions: the standard is presence " +
             "in the photo, not visual plausibility. " +
-            "motion_artifacts=true if, comparing the 4 frames AS A SEQUENCE from one " +
+            `motion_artifacts=true if, comparing the ${frames.length} frames AS A SEQUENCE from one ` +
             "continuous camera move, any furniture or object moves RELATIVE TO THE ROOM: " +
             "it stays glued to the same frame position while walls/floor shift behind it, " +
             "it slides across the floor, or it drifts against the direction everything else " +
@@ -118,7 +129,7 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
         {
           role: "user",
           content: [
-            { type: "text", text: `Room type: ${roomType || "unknown"}. First image = original photo. Next 4 = generated frames.` },
+            { type: "text", text: `Room type: ${roomType || "unknown"}. First image = original photo. Next ${frames.length} = generated frames.` + (extraContext ? ` ${extraContext}` : "") },
             { type: "image_url", image_url: { url: sourceImageUrl, detail: "high" } },
             ...images
           ]
@@ -150,21 +161,21 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
       if (res.status !== 429 && res.status < 500) break;
       if (attempt < 2) {
         const waitMs = (attempt + 1) * 8000 + Math.floor(Math.random() * 2000);
-        console.warn(`[qc] scene ${sceneIndex + 1}: OpenAI ${res.status} — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 2}/3).`);
+        console.warn(`[${logTag}] scene ${sceneIndex + 1}: OpenAI ${res.status} — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 2}/3).`);
         await new Promise((r) => setTimeout(r, waitMs));
       }
     }
     for (const p of frames) fs.unlink(p).catch(() => {});
 
     if (!res.ok) {
-      console.warn(`[qc] scene ${sceneIndex + 1}: OpenAI ${res.status} after retries — fail-open.`);
+      console.warn(`[${logTag}] scene ${sceneIndex + 1}: OpenAI ${res.status} after retries — fail-open.`);
       return { pass: true, reasons: [], checked: false };
     }
     const data = await res.json().catch(() => null);
     const raw = data?.choices?.[0]?.message?.content || "";
     let verdict;
     try { verdict = JSON.parse(raw); } catch {
-      console.warn(`[qc] scene ${sceneIndex + 1}: unparseable verdict — fail-open.`);
+      console.warn(`[${logTag}] scene ${sceneIndex + 1}: unparseable verdict — fail-open.`);
       return { pass: true, reasons: [], checked: false };
     }
 
@@ -175,12 +186,53 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
     if (verdict.occlusion_artifacts === true) reasons.push("occlusion (camera collides with foreground)");
     const pass = reasons.length === 0;
     console.info(
-      `[qc] scene ${sceneIndex + 1} (${roomType || "?"}): ${pass ? "PASS" : `FAIL (${reasons.join(", ")})`}` +
+      `[${logTag}] scene ${sceneIndex + 1} (${roomType || "?"}): ${pass ? "PASS" : `FAIL (${reasons.join(", ")})`}` +
       (verdict.notes ? ` — ${String(verdict.notes).slice(0, 80)}` : "")
     );
     return { pass, reasons, checked: true };
   } catch (err) {
-    console.warn(`[qc] scene ${sceneIndex + 1}: QC error (${err.message}) — fail-open.`);
+    console.warn(`[${logTag}] scene ${sceneIndex + 1}: inspection error (${err.message}) — fail-open.`);
+    return { pass: true, reasons: [], checked: false };
+  }
+}
+
+/**
+ * v43 FINAL SWEEP — re-verify one scene as it appears in the STITCHED
+ * master. Extracts 2 frames from the master inside the scene's visible
+ * window and runs the same inspector against the source photo. This is
+ * the net under the net: it catches scenes the per-scene pass skipped
+ * (429 fail-open), transients at different timestamps, and anything the
+ * first verdict got wrong. The master legitimately carries branding at
+ * this stage — the prompt tells the inspector to ignore it.
+ */
+export async function qcMasterSceneCheck({ masterPath, startSec, endSec, sourceImageUrl, sceneIndex, roomType, tempDir }) {
+  if (!qcEnabled()) return { pass: true, reasons: [], checked: false };
+  try {
+    const span = Math.max(0.6, endSec - startSec);
+    const times = [startSec + span * 0.3, startSec + span * 0.75];
+    const frames = [];
+    for (let i = 0; i < times.length; i++) {
+      const framePath = path.join(tempDir, `sweep-${String(sceneIndex).padStart(3, "0")}-${i}.jpg`);
+      await runFFmpeg(
+        ["-y", "-ss", times[i].toFixed(2), "-i", masterPath, "-frames:v", "1", "-q:v", "5", "-vf", "scale=512:-2", framePath],
+        { timeoutMs: 20000, label: `sweep:frame-${sceneIndex}-${i}` }
+      );
+      frames.push(framePath);
+    }
+    return await runQcInspection({
+      frames,
+      sourceImageUrl,
+      sceneIndex,
+      roomType,
+      logTag: "sweep",
+      extraContext:
+        "These frames come from the FINAL assembled video, which legitimately contains " +
+        "small branded elements: a circular logo in a top corner, a small text watermark " +
+        "near a bottom corner, and sometimes a lower-third label chip. IGNORE all of " +
+        "those — they are intentional graphics, not artifacts. Judge only the scene itself."
+    });
+  } catch (err) {
+    console.warn(`[sweep] scene ${sceneIndex + 1}: sweep error (${err.message}) — fail-open.`);
     return { pass: true, reasons: [], checked: false };
   }
 }

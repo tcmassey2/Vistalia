@@ -25,7 +25,7 @@ import { renderHomographyDrift } from "./homography-drift.mjs";
 import { CAPTIONS_FONTS_DIR } from "./captions.mjs";
 import { runFFmpeg, timed } from "./ffmpeg-runner.mjs";
 import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
-import { qcVeoClip, qcEnabled } from "./veo-qc.mjs";
+import { qcVeoClip, qcEnabled, qcMasterSceneCheck } from "./veo-qc.mjs";
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -434,7 +434,75 @@ export async function renderRunwayJob(body, options = {}) {
   const finalMp4 = path.join(tempDir, `${jobId}.mp4`);
   const thumbnailPath = path.join(tempDir, `${jobId}.png`);
 
-  const { normalizedClips } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options);
+  let { normalizedClips } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options);
+
+  // ── v43 FINAL SWEEP ─────────────────────────────────────────────────
+  // The net under the net (Troy, m28: "build a final vision pass to catch
+  // any stragglers — agent re-rendering is an extremely last-case plan C").
+  // Re-verify every photo scene as it appears in the ASSEMBLED master —
+  // fresh timestamps, fresh verdicts — catching scenes the per-clip pass
+  // skipped (429 fail-open), transients, and first-verdict mistakes.
+  // Any flagged scene is replaced with the DETERMINISTIC floor (it already
+  // fooled QC once; no more generative rolls) and the master re-stitches.
+  // Runs BEFORE voice/captions so a fix never forces re-narration.
+  // Kill switch: FINAL_SWEEP_ENABLED=false.
+  if (qcEnabled() && String(process.env.FINAL_SWEEP_ENABLED || "").toLowerCase() !== "false") {
+    try {
+      options.onProgress?.({ phase: "Final inspection", progress: 78 });
+      const useCrossfades = manifest?.runwayConfig?.useCrossfades !== false;
+      const overlap = useCrossfades ? 0.5 : 0;
+      const sweepFlagged = [];
+      let cursor = 0;
+      for (let i = 0; i < clipResults.length; i++) {
+        const clip = clipResults[i];
+        // Mirror voice-mixer timeline math exactly (visible = d − overlap
+        // for EVERY clip — the last photo scene crossfades into the outro).
+        const visible = Math.max(0.8, (Number(clip.duration) || 4) - overlap);
+        const scene = (manifest.scenes || []).find((s) => s.photoId === clip.photoId) || {};
+        const photo = (manifest.orderedPhotos || []).find((p) => p.id === clip.photoId);
+        const srcUrl = pickImageUrl(scene, photo);
+        // Floor clips are deterministic — nothing to inspect. Skip them.
+        if (srcUrl && !clip.fallback && !clip.usedPhotoMotionFloor) {
+          const verdict = await qcMasterSceneCheck({
+            masterPath: finalMp4,
+            startSec: cursor,
+            endSec: cursor + visible,
+            sourceImageUrl: srcUrl,
+            sceneIndex: clip.sceneIndex ?? i,
+            roomType: scene.roomType || "",
+            tempDir
+          });
+          const hard = verdict.checked ? verdict.reasons.filter((r) => !r.startsWith("motion")) : [];
+          if (hard.length > 0) sweepFlagged.push({ index: i, clip, scene, reasons: hard });
+          // Gentle pacing — sequential + spaced keeps us clear of rate limits.
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        cursor += visible;
+      }
+
+      if (sweepFlagged.length > 0) {
+        const MAX_SWEEP_REPLACEMENTS = 4;
+        const toReplace = sweepFlagged.slice(0, MAX_SWEEP_REPLACEMENTS);
+        if (sweepFlagged.length > MAX_SWEEP_REPLACEMENTS) {
+          console.warn(`[sweep] ${sweepFlagged.length} scenes flagged — capping replacements at ${MAX_SWEEP_REPLACEMENTS}; check this photoset.`);
+        }
+        for (const f of toReplace) {
+          console.warn(`[sweep] scene ${f.clip.sceneIndex + 1} (${f.scene.roomType || "?"}) flagged on final inspection (${f.reasons.join(", ")}) — replacing with deterministic floor.`);
+          const floor = await generateKenBurnsFallback(f.scene, manifest, tempDir, f.clip.sceneIndex, {
+            durationSec: Number(f.clip.duration) > 0 ? Number(f.clip.duration) : undefined
+          });
+          clipResults[f.index] = { ...floor, usedPhotoMotionFloor: true, sweepReplaced: true };
+        }
+        console.info(`[sweep] re-stitching master with ${toReplace.length} floor replacement${toReplace.length === 1 ? "" : "s"}.`);
+        options.onProgress?.({ phase: "Finalizing video", progress: 79 });
+        ({ normalizedClips } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options));
+      }
+      console.info(`[sweep] Final inspection summary — ${clipResults.length} scenes swept, ${sweepFlagged.length} flagged, ${Math.min(sweepFlagged.length, 4)} replaced with the deterministic floor.`);
+    } catch (sweepErr) {
+      // Fail-open, always: the sweep must never make a render less reliable.
+      console.warn(`[sweep] final inspection errored (${sweepErr.message}) — shipping the stitched master as-is.`);
+    }
+  }
 
   // Voice narration — synthesize per-scene narration via ElevenLabs and mix
   // it into the master with music ducking. Wrapped in fail-soft try/catch
