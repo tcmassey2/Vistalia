@@ -865,7 +865,16 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   const foliageLock = isExteriorScene
     ? " Trees, plants, hedges, leaves, and branches must hold their exact shape, count, and position — foliage must NOT morph, ripple, shimmer, multiply, grow, or regenerate. NOTHING NEW ENTERS THE FRAME: as the camera moves, any newly revealed area at the frame edges contains only plain pavement, ground, wall, or sky consistent with the photo — never new plants, bushes, trees, rocks, or furniture sliding into view. The plant count in the final frame equals the plant count in the photo. Keep camera movement minimal and shallow so foliage stays perfectly stable."
     : "";
-  const prompt = basePrompt + foliageLock + VEO_FIDELITY_SUFFIX;
+  // v42.3 (m28: Veo invented a whole ENTRYWAY with wooden doors and warped
+  // the sectional): the interior twin of the v34.9 exterior edge lock.
+  // Troy's rule, encoded: when the model must fill space the photo doesn't
+  // show, it must default to BORING — plain wall continuation — never
+  // structure. An invented blank wall is survivable; an invented doorway
+  // misrepresents the floor plan.
+  const interiorLock = !isExteriorScene
+    ? " STRUCTURAL LOCK: the room's architecture is fixed exactly as photographed — the number of doorways, doors, archways, openings, hallways, windows, and stairs in every frame equals the number in the photo. As the camera moves, any newly visible area at the frame edges continues the existing plain walls, floor, and ceiling — where the photo gives no information, show plain undecorated wall, NEVER a new doorway, opening, room, or piece of furniture. Large furniture keeps its exact shape and size: sofas and sectionals must not stretch, extend, bend, or grow new cushions."
+    : "";
+  const prompt = basePrompt + foliageLock + interiorLock + VEO_FIDELITY_SUFFIX;
 
   const config = manifest.runwayConfig || {};
   const ratio = config.ratio === "16:9" || config.ratio === "wide" ? "16:9" : "9:16";

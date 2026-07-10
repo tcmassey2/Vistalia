@@ -85,7 +85,15 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
             "generated frames, and verify EACH ONE exists in the original photo. Any " +
             "ground-level feature present in the frames but absent from the photo means " +
             "object_artifacts=true — EVEN IF it looks natural and well-integrated. " +
-            "FOR INTERIOR SCENES, do a THROUGH-WINDOW INVENTORY (master-26 miss: a house " +
+            "FOR INTERIOR SCENES, do a STRUCTURAL INVENTORY (master-28 miss: a whole " +
+            "entryway with wooden doors was invented): count the doorways, doors, " +
+            "archways, openings, hallways, and staircases in the frames — the count and " +
+            "placement must match the original photo exactly. A doorway or opening in " +
+            "the frames that is not in the photo = object_artifacts=true, even if it " +
+            "looks architecturally plausible. Also check large furniture SHAPE: a sofa " +
+            "or sectional that stretches, extends, bends, or changes configuration " +
+            "versus the photo = object_artifacts=true. " +
+            "Also do a THROUGH-WINDOW INVENTORY (master-26 miss: a house " +
             "was invented outside a living-room window): check the view through every " +
             "window and glass door in the frames against the same window in the photo. " +
             "A building, structure, vehicle, or distinct landscape feature visible " +
