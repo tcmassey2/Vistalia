@@ -63,6 +63,11 @@ fbq('track', 'PageView');
 <noscript><img height="1" width="1" style="display:none" alt=""
 src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></noscript>
 <!-- End Meta Pixel -->
+<link rel="canonical" href="https://vistalia.ai/help">
+<meta property="og:image" content="https://vistalia.ai/og-image.jpg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body class="bg-paper text-ink">
   <header class="nav">
@@ -128,7 +133,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
         <summary>Refunds?</summary>
         <div class="faq-body">
           <p>If a render fails because of something on our end (worker outage, bad hallucination flagged within 24 hours), we credit you a replacement render at no charge.</p>
-          <p>Subscription fees aren't refundable except where required by law. Email <a href="mailto:support@estatemotion.ai">support@estatemotion.ai</a> if you think your case is the exception.</p>
+          <p>Subscription fees aren't refundable except where required by law. Email <a href="mailto:support@vistalia.ai">support@vistalia.ai</a> if you think your case is the exception.</p>
         </div>
       </details>
     </section>
@@ -211,12 +216,12 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
             status.hidden = false;
             form.reset();
           } else {
-            status.textContent = payload.error || "Couldn't send. Try emailing support@estatemotion.ai directly.";
+            status.textContent = payload.error || "Couldn't send. Try emailing support@vistalia.ai directly.";
             status.classList.add("err");
             status.hidden = false;
           }
         } catch (err) {
-          status.textContent = "Network error. Email support@estatemotion.ai directly.";
+          status.textContent = "Network error. Email support@vistalia.ai directly.";
           status.classList.add("err");
           status.hidden = false;
         } finally {

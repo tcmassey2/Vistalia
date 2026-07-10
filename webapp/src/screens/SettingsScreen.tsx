@@ -123,7 +123,7 @@ export default function SettingsScreen() {
       const a = document.createElement("a");
       a.href = url;
       const today = new Date().toISOString().split("T")[0];
-      a.download = `estatemotion-export-${today}.json`;
+      a.download = `vistalia-export-${today}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

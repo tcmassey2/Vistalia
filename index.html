@@ -256,6 +256,9 @@ fbq('track', 'PageView');
 <noscript><img height="1" width="1" style="display:none" alt=""
 src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></noscript>
 <!-- End Meta Pixel -->
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
 
@@ -310,16 +313,6 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
 </section>
 </main>
 
-<!-- TRUST LOGOS -->
-<div class="logos">
-  <div class="wrap">
-    <p class="lbl">Built for agents at brokerages like</p>
-    <div class="row">
-      <span>Compass</span><span>Coldwell Banker</span><span>Keller Williams</span><span>Sotheby's</span><span>@properties</span><span>eXp Realty</span>
-    </div>
-  </div>
-</div>
-
 <main>
 <!-- PROOF -->
 <section class="block wrap">
@@ -329,10 +322,10 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     <p>Most "AI" listing tools produce the pan-and-zoom slideshows agents have used since 2008. Vistalia directs each scene like a cinematographer — and the numbers move.</p>
   </div>
   <div class="proof">
-    <div class="pstat reveal"><div class="n">12s <span class="ar">→</span> 47s</div><div class="l">Avg. watch-through</div><div class="note">Buyers stop scrolling when motion is intentional.</div></div>
-    <div class="pstat reveal"><div class="n">200 <span class="ar">→</span> 4,000+</div><div class="l">Reel views per listing</div><div class="note">Reported by agents in the closed beta.</div></div>
     <div class="pstat reveal"><div class="n">$850 <span class="ar">→</span> $8.17</div><div class="l">Cost per listing video</div><div class="note">Average videographer shoot vs. Vistalia Pro annual. That's $19,000+ a year back in your pocket at 2 listings a month.</div></div>
     <div class="pstat reveal"><div class="n">3–7 days <span class="ar">→</span> same hour</div><div class="l">Time to a finished MP4</div><div class="note">No scheduling, no editing timeline. Upload and post while the listing is still fresh.</div></div>
+    <div class="pstat reveal"><div class="n">100%</div><div class="l">Scenes verified against your photos</div><div class="note">A vision model inspects every scene before it reaches you. Anything off is re-rendered automatically.</div></div>
+    <div class="pstat reveal"><div class="n">9:16 <span class="ar">+</span> 1:1</div><div class="l">Formats from one render</div><div class="note">Vertical for Reels, TikTok, and Shorts; square for feed — each properly composed, never cropped.</div></div>
   </div>
 </section>
 
@@ -353,21 +346,22 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     <h2>Four directions. <em>Built for how you sell.</em></h2>
     <p>Hover any style to preview it. Each delivers a distinctly different cinematographic feel.</p>
   </div>
-  <!-- Each card plays a real Vistalia clip on hover. Fill data-src + data-poster per card. -->
+  <!-- Cards hover-play the same showcase clips as #examples; the JS falls
+       back to the gradient panel silently until those files exist. -->
   <div class="styles" id="styles-grid">
-    <div class="scard" style="--c1:#1d1a14" data-src="" data-poster="">
+    <div class="scard" style="--c1:#1d1a14" data-src="/showcase/example-luxury.mp4" data-poster="/showcase/example-luxury.jpg">
       <span class="tag">VS-L1</span><span class="pace">Slow · 54s</span>
       <div class="info"><h3 class="serif">Cinematic Luxury</h3><div class="best">Premium · $1M+</div><p>Slow moves, editorial tone, premium feel.</p></div>
     </div>
-    <div class="scard" style="--c1:#13181c" data-src="" data-poster="">
+    <div class="scard" style="--c1:#13181c" data-src="/showcase/example-social.mp4" data-poster="/showcase/example-social.jpg">
       <span class="tag">VS-S2</span><span class="pace">Fast · 22s</span>
       <div class="info"><h3 class="serif">Modern Social</h3><div class="best">Reels · TikTok</div><p>Punchy pacing built for scroll-stop.</p></div>
     </div>
-    <div class="scard" style="--c1:#15140f" data-src="" data-poster="">
+    <div class="scard" style="--c1:#15140f" data-src="/showcase/example-mls.mp4" data-poster="/showcase/example-mls.jpg">
       <span class="tag">VS-M3</span><span class="pace">Clean · 45s</span>
       <div class="info"><h3 class="serif">MLS Clean</h3><div class="best">Standard listings</div><p>Neutral, factual, broker-compliant.</p></div>
     </div>
-    <div class="scard" style="--c1:#161616" data-src="" data-poster="">
+    <div class="scard" style="--c1:#161616" data-src="/showcase/example-investor.mp4" data-poster="/showcase/example-investor.jpg">
       <span class="tag">VS-I4</span><span class="pace">Direct · 38s</span>
       <div class="info"><h3 class="serif">Investor Tour</h3><div class="best">Wholesale · deals</div><p>Direct walkthroughs for deal-flow agents.</p></div>
     </div>
@@ -473,15 +467,9 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
   <div class="note">First video free · cancel anytime · annual billing saves up to 45% (Pro $490/yr, Studio $990/yr)</div>
 </section>
 
-<!-- TESTIMONIALS -->
-<section class="block wrap">
-  <div class="head reveal"><div class="eyebrow">What agents say</div><h2>The shift is real, <em>and measurable.</em></h2></div>
-  <div class="tgrid">
-    <div class="tcard reveal"><div class="stars">★★★★★</div><p class="q">My open-house video used to take a Saturday to edit. Vistalia does it in the time it takes to make coffee — and it looks better than my old DSLR cuts.</p><div class="who"><div class="av">JR</div><div><div class="nm">Jordan Rivera</div><div class="role">Realtor · Phoenix, AZ</div></div></div></div>
-    <div class="tcard reveal"><div class="stars">★★★★★</div><p class="q">Buyers stop scrolling. That's the only metric that matters. My listing reels went from 200 views to 4,000+, with messages.</p><div class="who"><div class="av">SM</div><div><div class="nm">Samantha Mitchell</div><div class="role">Listing Agent · Scottsdale, AZ</div></div></div></div>
-    <div class="tcard reveal"><div class="stars">★★★★★</div><p class="q">I was paying $850 a shoot for a videographer. This turns my $300K listings into listings that look like $1M.</p><div class="who"><div class="av">DK</div><div><div class="nm">Derrick Kim</div><div class="role">Broker · Los Angeles, CA</div></div></div></div>
-  </div>
-</section>
+<!-- Testimonials intentionally absent pre-launch: no fake quotes, no fake
+     stars. When real customer quotes exist (with permission), restore a
+     .tgrid section here — the CSS is already in place. -->
 
 <!-- FAQ -->
 <section class="block wrap" id="faq" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
@@ -516,8 +504,8 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
       <div class="col"><h5>Product</h5><a href="#how">How it works</a><a href="#styles">Styles</a><a href="#examples">Examples</a><a href="/pricing">Pricing</a><a href="/real-estate-video-in-your-own-voice">Videos in your voice</a><a href="/ai-listing-video">AI listing video</a><a href="/real-estate-video-maker">Real estate video maker</a><a href="/photo-to-video-real-estate">Photo to video</a><a href="/app">Sign in</a></div>
       <div class="col"><h5>Solutions</h5><a href="/for-realtors">For realtors</a><a href="/for-investors">For investors</a><a href="/for-teams">For teams &amp; brokerages</a><a href="/for-property-managers">For property managers</a></div>
       <div class="col"><h5>Compare</h5><a href="/compare/vistalia-vs-reel-e">Vistalia vs Reel-E</a><a href="/reel-e-alternative">Reel-E alternative</a><a href="/real-estate-video-with-voiceover">Video with voiceover</a></div>
-      <div class="col"><h5>Company</h5><a href="/help.html">Help center</a><a href="mailto:hello@estatemotion.ai">Contact</a></div>
-      <div class="col"><h5>Legal</h5><a href="/legal/terms.html">Terms</a><a href="/legal/privacy.html">Privacy</a><a href="mailto:support@estatemotion.ai?subject=Refund%20request">Refund policy</a></div>
+      <div class="col"><h5>Company</h5><a href="/help">Help center</a><a href="mailto:hello@vistalia.ai">Contact</a></div>
+      <div class="col"><h5>Legal</h5><a href="/legal/terms.html">Terms</a><a href="/legal/privacy.html">Privacy</a><a href="mailto:support@vistalia.ai?subject=Refund%20request">Refund policy</a></div>
     </div>
     <div class="foot-bottom"><span>© 2026 Vistalia. Built for listing agents.</span><span>Made with intent in Scottsdale, AZ.</span></div>
   </div>

@@ -40,7 +40,7 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: "Tell us a bit more about what you need help with." });
   }
 
-  const supportTo = process.env.SUPPORT_INBOX || "support@estatemotion.ai";
+  const supportTo = process.env.SUPPORT_INBOX || "support@vistalia.ai";
   const safeName = escape(name || "(unnamed)");
   const safeEmail = escape(email);
   const safeSubject = escape(subject);
@@ -64,7 +64,7 @@ export default async function handler(request, response) {
     tags: ["contact-form"]
   });
   if (!result.ok && !result.skipped) {
-    return response.status(500).json({ error: "We couldn't send the message. Email support@estatemotion.ai directly." });
+    return response.status(500).json({ error: "We couldn't send the message. Email support@vistalia.ai directly." });
   }
   return response.status(200).json({ status: "ok" });
 }

@@ -37,7 +37,7 @@ Descriptions (30 chars):
 1. No shoot. No editing. No card.
 2. Made for Reels & TikTok.
 
-CTA button: **Try it free** (fallback: Learn More) → https://vistalia.ai/start
+CTA button: **Try it free** (fallback: Learn More) → https://vistalia.ai
 
 ## Campaign 2 — statics (same ad set, creative rotation)
 
