@@ -205,11 +205,18 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
  * first verdict got wrong. The master legitimately carries branding at
  * this stage — the prompt tells the inspector to ignore it.
  */
-export async function qcMasterSceneCheck({ masterPath, startSec, endSec, sourceImageUrl, sceneIndex, roomType, tempDir }) {
+export async function qcMasterSceneCheck({ masterPath, startSec, endSec, sourceImageUrl, sceneIndex, roomType, tempDir, highScrutiny = false }) {
   if (!qcEnabled()) return { pass: true, reasons: [], checked: false };
   try {
     const span = Math.max(0.6, endSec - startSec);
-    const times = [startSec + span * 0.3, startSec + span * 0.75];
+    // v43.2: scenes whose per-clip QC never completed (429 fail-open) get
+    // THREE frames and a sharper brief — the sweep is their ONLY inspection.
+    // m28/m29-s2/m30-s7: three renders running, the defect scene was the
+    // unchecked scene every time. m30-s7's invented window sliver sat at the
+    // frame edge early in the scene; 30%/75% sampling read past it.
+    const times = highScrutiny
+      ? [startSec + span * 0.18, startSec + span * 0.5, startSec + span * 0.85]
+      : [startSec + span * 0.3, startSec + span * 0.75];
     const frames = [];
     for (let i = 0; i < times.length; i++) {
       const framePath = path.join(tempDir, `sweep-${String(sceneIndex).padStart(3, "0")}-${i}.jpg`);
@@ -229,7 +236,14 @@ export async function qcMasterSceneCheck({ masterPath, startSec, endSec, sourceI
         "These frames come from the FINAL assembled video, which legitimately contains " +
         "small branded elements: a circular logo in a top corner, a small text watermark " +
         "near a bottom corner, and sometimes a lower-third label chip. IGNORE all of " +
-        "those — they are intentional graphics, not artifacts. Judge only the scene itself."
+        "those — they are intentional graphics, not artifacts. Judge only the scene itself." +
+        (highScrutiny
+          ? " CRITICAL: this scene's earlier per-clip verification never completed, so " +
+            "THIS is its only inspection before delivery. Be maximally vigilant. Count " +
+            "every window and doorway against the source photo — an extra window, even a " +
+            "small sliver at a frame edge, is object_artifacts=true. Inspect the frame " +
+            "edges specifically for architecture, openings, or objects the photo does not show."
+          : "")
     });
   } catch (err) {
     console.warn(`[sweep] scene ${sceneIndex + 1}: sweep error (${err.message}) — fail-open.`);

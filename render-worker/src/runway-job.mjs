@@ -256,6 +256,12 @@ export async function renderRunwayJob(body, options = {}) {
             clipPath: result.clipPath, sourceImageUrl: qcSrcUrl,
             sceneIndex: index, roomType: scene.roomType, tempDir
           });
+          // v43.2: track whether the clip that SHIPS carried a completed
+          // verdict. Fail-open (429) scenes are the defect carriers — m28,
+          // m29 scene 2, m30 scene 7: three renders, the hallucination was
+          // on the unchecked scene every time. The final sweep gives these
+          // scenes a 3-frame high-scrutiny inspection instead of 2.
+          let shipChecked = verdict.checked;
           if (verdict.checked && !verdict.pass && !usedConstrained) {
             console.warn(`[qc] scene ${index + 1} failed QC (${verdict.reasons.join(", ")}) — regenerating constrained.`);
             qcRetryCount++;
@@ -272,6 +278,7 @@ export async function renderRunwayJob(body, options = {}) {
               } else {
                 result = retry;
                 verdict = verdict2;
+                shipChecked = verdict2.checked;
               }
             } catch (qcRetryErr) {
               console.warn(`[qc] scene ${index + 1} constrained regen failed (${qcRetryErr.message}) — Ken Burns floor.`);
@@ -337,6 +344,13 @@ export async function renderRunwayJob(body, options = {}) {
                 }
               }
               result = third;
+              shipChecked = verdict3.checked;
+            }
+          }
+          if (result) {
+            result.qcEverChecked = shipChecked;
+            if (!shipChecked) {
+              console.warn(`[qc] scene ${index + 1} ships UNVERIFIED (rate-limited fail-open) — final sweep will inspect it with high scrutiny.`);
             }
           }
         }
@@ -463,6 +477,13 @@ export async function renderRunwayJob(body, options = {}) {
         const srcUrl = pickImageUrl(scene, photo);
         // Floor clips are deterministic — nothing to inspect. Skip them.
         if (srcUrl && !clip.fallback && !clip.usedPhotoMotionFloor) {
+          // v43.2: a scene that shipped without a completed per-clip verdict
+          // gets the 3-frame high-scrutiny inspection — the sweep is its
+          // ONLY check (unchecked scenes carried the defect in m28/m29/m30).
+          const highScrutiny = clip.qcEverChecked === false;
+          if (highScrutiny) {
+            console.info(`[sweep] scene ${(clip.sceneIndex ?? i) + 1} shipped unverified per-clip — high-scrutiny sweep (3 frames).`);
+          }
           const verdict = await qcMasterSceneCheck({
             masterPath: finalMp4,
             startSec: cursor,
@@ -470,7 +491,8 @@ export async function renderRunwayJob(body, options = {}) {
             sourceImageUrl: srcUrl,
             sceneIndex: clip.sceneIndex ?? i,
             roomType: scene.roomType || "",
-            tempDir
+            tempDir,
+            highScrutiny
           });
           // v43.1: at the FINAL gate, every flag is hard — motion included.
           // m29 proved the exemption wrong here: the sweep FAILed scenes 2
