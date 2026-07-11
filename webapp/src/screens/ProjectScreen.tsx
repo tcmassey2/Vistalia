@@ -58,7 +58,7 @@ export default function ProjectScreen() {
           className="bg-transparent border-0 outline-none font-display text-3xl sm:text-4xl font-semibold tracking-tighter2 text-ink placeholder:text-ink-dim w-full"
         />
         <p className="text-sm text-ink-muted leading-relaxed">
-          Tell us about the listing, drop in your photos, pick a style — your cinematic video is ready in about 3 minutes.
+          Tell us about the listing, drop in your photos, pick a style — your cinematic video is ready in about ten minutes, every scene verified.
         </p>
       </header>
 
@@ -1461,7 +1461,7 @@ function VoiceCloneCard() {
           </div>
           <div className="text-sm font-semibold tracking-tightish">Cloning your voice…</div>
           <p className="text-xs text-ink-muted mt-1.5 leading-relaxed max-w-sm mx-auto">
-            ElevenLabs is fingerprinting your speech. About 30 seconds. Don't refresh.
+            Locking in your voiceprint. About 30 seconds — don't refresh.
           </p>
         </div>
       </div>
@@ -2280,7 +2280,7 @@ function RenderControls() {
         engine: renderEngine
       });
       setToast(
-        `Render started — your cinematic video is usually ready in about ${useStore.getState().includeSquare ? 8 : 6} minutes.`
+        `Render started — your cinematic video is usually ready in about ${useStore.getState().includeSquare ? 12 : 10} minutes, every scene verified.`
       );
 
       // 4. Poll
@@ -2466,7 +2466,7 @@ function RenderControls() {
         }
       }
     }
-    setError("Render exceeded the 18-minute hard timeout. The worker may have crashed silently — check Render.com logs.");
+    setError("This render is taking longer than expected and timed out. Your credit hasn't been consumed by a failed render — check your Library in a few minutes in case it finished, or generate again. If this keeps happening, contact support@vistalia.ai.");
   };
 
   // After a 404 from the status endpoint, look at the library for a
@@ -2566,9 +2566,9 @@ function RenderStatusPanel() {
 
   if (!renderJob) return null;
 
-  // Render completed but no master MP4 URL — almost always a Supabase
-  // Storage size-limit rejection. Show actionable error rather than
-  // leaving the user staring at "in progress."
+  // Render completed but no master MP4 URL — a storage/delivery hiccup on
+  // our side. Launch sweep: the old panel walked CUSTOMERS through the
+  // Supabase dashboard; ops instructions belong in the runbook, not the UI.
   if (renderJob.status === "completed" && !renderJob.mp4Url) {
     return (
       <div className="bg-surface border border-amber-500/40 rounded-xl p-5 fade-up-in">
@@ -2579,24 +2579,14 @@ function RenderStatusPanel() {
             </svg>
           </div>
           <div className="flex-1">
-            <h3 className="text-sm font-semibold text-amber-400">Render finished, but upload was rejected</h3>
+            <h3 className="text-sm font-semibold text-amber-400">Your video rendered — delivery hit a snag</h3>
             <p className="text-xs text-ink-soft mt-1.5 leading-relaxed">
-              Your video rendered successfully, but Supabase Storage rejected the master MP4 — usually because the bucket's file-size limit is too small. A 30-second 1080p video is typically 20–40 MB.
+              The render finished, but the final file didn't make it to your library.
+              This is on our side, not yours. Check your Library in a few minutes —
+              it often lands after a short delay. If it doesn't, email{" "}
+              <a href="mailto:support@vistalia.ai" className="text-gold underline">support@vistalia.ai</a>{" "}
+              with this reference and we'll recover it: <code className="text-gold font-mono">{renderJob.jobId?.slice(-8) || "n/a"}</code>
             </p>
-            <div className="mt-3 p-3 bg-surface-input rounded-lg border border-edge text-xs leading-relaxed">
-              <strong className="text-ink">To fix it:</strong>
-              <ol className="text-ink-muted mt-2 ml-4 list-decimal space-y-1">
-                <li>Open Supabase dashboard → Storage → click <code className="text-gold font-mono">generated-videos</code> bucket</li>
-                <li>Click "Configuration" or the gear icon</li>
-                <li>Bump <strong>File Size Limit</strong> to <strong>500MB</strong> (or 1GB for headroom)</li>
-                <li>Save, then hit Generate again</li>
-              </ol>
-            </div>
-            {renderJob.thumbnailUrl && (
-              <div className="mt-3 text-xs text-ink-muted">
-                The thumbnail and short clips uploaded fine — only the main MP4 was over the limit.
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -2737,55 +2727,34 @@ function RenderStatusPanel() {
   }
 
   if (renderJob.status === "failed") {
-    // Detect Runway daily-cap errors from the worker so we can show a
-    // proper upgrade card instead of a scary red error box. The worker
-    // surfaces this with the literal phrase "daily render cap".
+    // Launch sweep: the legacy Runway daily-cap card (which linked customers
+    // to runwayml.com pricing!) is gone — that vendor and its cap left the
+    // pipeline at v25. One branded failure card, refund-aware, support CTA.
     const errorText = renderJob.error || "";
-    const isRunwayDailyCap = /daily render cap|daily.*(task|limit|cap|quota)|429/i.test(errorText) && /runway|cinematic ai/i.test(errorText);
-
-    if (isRunwayDailyCap) {
-      return (
-        <div className="bg-surface border border-gold/40 rounded-xl p-5 fade-up-in">
-          <div className="flex items-start gap-3">
-            <div className="grid place-items-center w-9 h-9 rounded-full bg-gold/15 text-gold flex-shrink-0">
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 8v4m0 4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z" />
-              </svg>
-            </div>
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-gold-light">Cinematic AI is at its daily cap</h3>
-              <p className="text-xs text-ink-soft mt-1 leading-relaxed">
-                Your Runway plan ran out of tasks for today. Upgrade to Runway Unlimited
-                ($95/mo) to remove the daily cap and run uncapped renders. Or wait until
-                tomorrow — Runway's daily limit resets at midnight UTC.
-              </p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                <a
-                  href="https://runwayml.com/pricing"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-primary-em h-9 px-4 rounded-lg text-xs inline-flex items-center"
-                >
-                  Upgrade Runway →
-                </a>
-                <button
-                  type="button"
-                  onClick={() => useStore.getState().setEngine("remotion")}
-                  className="btn-secondary-em h-9 px-4 rounded-lg text-xs"
-                >
-                  Switch to Photo Motion
-                </button>
-              </div>
-            </div>
+    const mentionsRefund = /refund/i.test(errorText);
+    return (
+      <div className="bg-surface border border-red-500/30 rounded-xl p-5 fade-up-in">
+        <div className="flex items-start gap-3">
+          <div className="grid place-items-center w-9 h-9 rounded-full bg-red-500/15 text-red-300 flex-shrink-0">
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 8v4m0 4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-semibold text-red-200">This render didn't make it</h3>
+            <p className="text-xs text-ink-soft mt-1.5 leading-relaxed">
+              {errorText || "Something went wrong on our side. Try again — most hiccups are one-off."}
+            </p>
+            <p className="text-xs text-ink-muted mt-2 leading-relaxed">
+              {mentionsRefund
+                ? "Your credit is being returned automatically."
+                : "If this repeats, a different photo set order or removing an unusual photo often clears it — or email "}
+              {!mentionsRefund && (
+                <a href="mailto:support@vistalia.ai" className="text-gold underline">support@vistalia.ai</a>
+              )}
+            </p>
           </div>
         </div>
-      );
-    }
-
-    return (
-      <div className="bg-surface border border-red-500/30 rounded-xl p-4 text-sm text-red-300">
-        <strong className="text-red-200">Render failed.</strong>{" "}
-        {errorText || "Try again or contact support."}
       </div>
     );
   }
@@ -3044,6 +3013,15 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
   if (raw.includes("ready")) {
     return { title: "Ready for download", detail: "" };
   }
+  // v45 launch sweep: the v43 final sweep re-verifies every scene on the
+  // assembled master — that's the moat, so say it proudly instead of the
+  // old generic "final touches".
+  if (raw.includes("inspect") || raw.includes("verif")) {
+    return {
+      title: "Verifying every scene",
+      detail: "A vision model is comparing each scene against your original photos before delivery."
+    };
+  }
   if (raw.includes("final")) {
     return { title: "Final touches", detail: "Color correction and audio normalization." };
   }
@@ -3052,7 +3030,7 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
   return {
     title: fallback.charAt(0).toUpperCase() + fallback.slice(1),
     detail: isRunway
-      ? "Cinematic AI typically completes in 5 to 7 minutes (a bit longer with the square format)."
+      ? "Most cinematic renders finish in about ten minutes — every scene is generated, inspected, and stitched before delivery."
       : "Photo Motion typically completes in under 90 seconds."
   };
 }
@@ -3063,10 +3041,12 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
 function useStableEta({ startedAt, isRunway }: { startedAt: number; isRunway: boolean }): string {
   const [label, setLabel] = useState("");
   useEffect(() => {
-    // v34.4: real Veo renders complete in ~6-7 min (QC regens included) —
-    // the old 240s cap made the ETA read "4 min left" forever.
+    // v45 launch sweep: with the v43 final sweep + QC retries in the path,
+    // real renders land at 9-13 minutes (m-lux: 13.3 with two floors; m31:
+    // 9.5). The old 400/520s estimates made the ETA read "1 min left" for
+    // the last five minutes — worse than no ETA.
     const totalEstimateSec = isRunway
-      ? (useStore.getState().includeSquare ? 520 : 400)
+      ? (useStore.getState().includeSquare ? 780 : 620)
       : 75;
     const interval = window.setInterval(() => {
       const job = useStore.getState().renderJob;
