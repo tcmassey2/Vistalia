@@ -429,14 +429,27 @@ export default async function handler(request, response) {
       timeoutMs: Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS)
     });
 
-    const openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(buildOpenAIRequest({ allPhotos: photos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine, brandKit, includeNarration, targetDurationSec }))
+    // v45.1 (m32b "audio broke"): ONE retry on 429/5xx before falling back.
+    // During the July 10 rate-limit storm the single-shot call 429'd
+    // straight into the deterministic fallback — and the fallback's
+    // narration enrichment ALSO needs OpenAI, so the render shipped with a
+    // 2-line script. Most 429 bursts clear in seconds; the retry uses a
+    // shorter timeout so worst-case stays inside the function budget.
+    const directorBody = JSON.stringify(buildOpenAIRequest({ allPhotos: photos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine, brandKit, includeNarration, targetDurationSec }));
+    const directorHeaders = {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    };
+    let openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+      method: "POST", headers: directorHeaders, body: directorBody
     }, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
+    if (!openaiResponse.ok && (openaiResponse.status === 429 || openaiResponse.status >= 500)) {
+      logMotionDirector("warn", `OpenAI ${openaiResponse.status} — retrying once in 4s`, { status: openaiResponse.status });
+      await new Promise((r) => setTimeout(r, 4000));
+      openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+        method: "POST", headers: directorHeaders, body: directorBody
+      }, Math.min(25000, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS)));
+    }
 
     const payload = await openaiResponse.json().catch(() => ({}));
     if (!openaiResponse.ok) {
@@ -768,6 +781,26 @@ async function enrichFallbackPlan(plan, photos, context) {
       }
     }
     if (isNarrated.length > 1) isNarrated[isNarrated.length - 1] = true;
+    // v45.1 BLACKOUT-PROOF STOCK LINES (m32b): the old seeds were opener +
+    // CTA only — every other narrated scene expected the per-scene OpenAI
+    // repair pass to write its line. In a full rate-limit blackout those
+    // calls all fail and the render ships a 2-line script over 50 seconds
+    // of video. Seed EVERY narrated scene with a grounded, generic-safe
+    // stock line keyed to its room type; when OpenAI is healthy, the
+    // verify pass replaces them with photo-specific lines exactly as
+    // before. Deliberately staging-free and feature-free — nothing a
+    // stock line asserts can contradict the photo.
+    const STOCK_LINES = {
+      exterior: ["A striking first impression from the curb.", "Great presence from the street."],
+      outdoor: ["Outdoor living, ready to enjoy.", "Room to breathe outside."],
+      kitchen: ["The kitchen sits at the heart of the home.", "A kitchen made for gathering."],
+      living: ["Natural light carries through the main living space.", "An easy, open flow through the living areas."],
+      bedroom: ["A calm and comfortable retreat.", "Rest comes easy here."],
+      bathroom: ["A clean, well-appointed bath.", "Simple, polished, and functional."],
+      amenity: ["A standout feature of this home.", "An amenity buyers remember."],
+      detail: ["The details set this one apart.", "Craftsmanship worth a closer look."]
+    };
+    let stockIdx = 0;
     scenes.forEach((s, i) => {
       if (!isNarrated[i]) {
         s.narrationWindowSec = 0;
@@ -779,6 +812,11 @@ async function enrichFallbackPlan(plan, photos, context) {
       s.narrationWindowSec = Math.round(w * 100) / 100;
       // Keep the stock opener/CTA as seeds; verify rewrites or fills.
       s.narrationLine = String(s.narrationLine || "").trim();
+      if (!s.narrationLine && w >= 2.4) {
+        const pool = STOCK_LINES[String(s.roomType || "").toLowerCase()] || STOCK_LINES.living;
+        s.narrationLine = pool[stockIdx % pool.length];
+        stockIdx += 1;
+      }
     });
     await verifyAndRepairScenes(plan, photos, context);
     await polishNarrationFlow(plan, context);

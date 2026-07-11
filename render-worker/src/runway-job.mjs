@@ -175,6 +175,7 @@ export async function renderRunwayJob(body, options = {}) {
   let qcRetryCount = 0;      // v31.2: clips regenerated constrained after QC fail
   let qcThirdTryCount = 0;   // v34: clips that needed the third (pull_out) attempt
   let qcFloorCount = 0;      // v36: clips shipped on the premium photo-motion floor
+  let qcFailOpenCount = 0;   // v45.1: clips that shipped with NO completed verdict (rate-limit blackout telemetry)
   let guardForcedCount = 0;
   // v34.6 DROP-SCENE TERMINAL: scenes that fail every attempt are dropped
   // from the render instead of killing it. Each entry: { sceneIndex,
@@ -350,6 +351,7 @@ export async function renderRunwayJob(body, options = {}) {
           if (result) {
             result.qcEverChecked = shipChecked;
             if (!shipChecked) {
+              qcFailOpenCount += 1;
               console.warn(`[qc] scene ${index + 1} ships UNVERIFIED (rate-limited fail-open) — final sweep will inspect it with high scrutiny.`);
             }
           }
@@ -440,6 +442,18 @@ export async function renderRunwayJob(body, options = {}) {
       `${qcThirdTryCount} needed the third (pull_out) attempt, ${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
       `${droppedCount} dropped (floor-of-the-floor). Detected artifacts shipped: 0 by construction.`
     );
+    // v45.1 blackout telemetry (m32b: EVERY inspection 429'd and the render
+    // shipped fully unverified without a single loud line saying so).
+    if (qcFailOpenCount > 0) {
+      const total = clipResults.length;
+      const level = qcFailOpenCount >= Math.ceil(total / 2) ? "ALERT" : "notice";
+      console.warn(
+        `[qc] ${level}: ${qcFailOpenCount}/${total} scenes shipped with NO completed inspection (OpenAI rate-limited). ` +
+        (qcFailOpenCount >= Math.ceil(total / 2)
+          ? `Verification was effectively DARK for this render — check platform.openai.com usage/limits before rendering again.`
+          : `The final sweep re-inspects these with high scrutiny.`)
+      );
+    }
   } else if (isVeo) {
     console.warn(`[qc] Verify-then-deliver DISABLED — set OPENAI_API_KEY on the worker to enable per-scene artifact QC.`);
   }
@@ -466,6 +480,7 @@ export async function renderRunwayJob(body, options = {}) {
       const useCrossfades = manifest?.runwayConfig?.useCrossfades !== false;
       const overlap = useCrossfades ? 0.5 : 0;
       const sweepFlagged = [];
+      let sweepFailOpen = 0; // v45.1 blackout telemetry
       let cursor = 0;
       for (let i = 0; i < clipResults.length; i++) {
         const clip = clipResults[i];
@@ -507,6 +522,7 @@ export async function renderRunwayJob(body, options = {}) {
           // hallucination is not. MAX_SWEEP_REPLACEMENTS still caps blast
           // radius if the VLM has a bad day.
           const hard = verdict.checked ? verdict.reasons : [];
+          if (!verdict.checked) sweepFailOpen += 1;
           if (hard.length > 0) sweepFlagged.push({ index: i, clip, scene, reasons: hard });
           // Gentle pacing — sequential + spaced keeps us clear of rate
           // limits. v43.1: 250→600ms; m29's sweep hit 429 on most scenes
@@ -533,7 +549,10 @@ export async function renderRunwayJob(body, options = {}) {
         options.onProgress?.({ phase: "Finalizing video", progress: 79 });
         ({ normalizedClips } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options));
       }
-      console.info(`[sweep] Final inspection summary — ${clipResults.length} scenes swept, ${sweepFlagged.length} flagged, ${Math.min(sweepFlagged.length, 4)} replaced with the deterministic floor.`);
+      console.info(`[sweep] Final inspection summary — ${clipResults.length} scenes swept, ${sweepFlagged.length} flagged, ${Math.min(sweepFlagged.length, 4)} replaced with the deterministic floor${sweepFailOpen > 0 ? `, ${sweepFailOpen} UNINSPECTED (rate-limited fail-open)` : ""}.`);
+      if (sweepFailOpen >= Math.ceil(clipResults.length / 2)) {
+        console.warn(`[sweep] ALERT: the final sweep was effectively DARK (${sweepFailOpen}/${clipResults.length} inspections rate-limited). This render shipped with reduced verification — check platform.openai.com usage/limits.`);
+      }
     } catch (sweepErr) {
       // Fail-open, always: the sweep must never make a render less reliable.
       console.warn(`[sweep] final inspection errored (${sweepErr.message}) — shipping the stitched master as-is.`);
