@@ -455,7 +455,7 @@ export async function renderRunwayJob(body, options = {}) {
       );
     }
   } else if (isVeo) {
-    console.warn(`[qc] Verify-then-deliver DISABLED — set OPENAI_API_KEY on the worker to enable per-scene artifact QC.`);
+    console.warn(`[qc] Verify-then-deliver DISABLED — set GEMINI_API_KEY (preferred) or OPENAI_API_KEY on the worker to enable per-scene artifact QC.`);
   }
 
   options.onProgress?.({ phase: "Stitching final video", progress: 76 });

@@ -18,9 +18,12 @@
 //   Burns floor for that scene. Detected garbage never ships; the floor is
 //   static but artifact-free.
 //
-// FAIL-OPEN: any QC infrastructure error (no OPENAI_API_KEY on the worker,
+// FAIL-OPEN: any QC infrastructure error (no provider key on the worker,
 // timeout, malformed response) passes the clip through and logs — QC must
 // never make renders less reliable than they were without it.
+// v45.2: dual-provider — Gemini primary when GEMINI_API_KEY is set, OpenAI
+// fallback (and vice versa). One provider's rate ceiling can no longer
+// black out verification.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -29,9 +32,57 @@ import { runFFmpeg } from "./ffmpeg-runner.mjs";
 const QC_MODEL = process.env.VEO_QC_MODEL || "gpt-4o-mini";
 const QC_TIMEOUT_MS = Number(process.env.VEO_QC_TIMEOUT_MS) || 25000;
 
+// v45.2 PROVIDER SPLIT (July 11 blackout): the entire verification layer
+// hung off one OpenAI account, and one rate-limit ceiling turned QC + sweep
+// completely dark for a whole render. QC now runs on Gemini when
+// GEMINI_API_KEY is set (huge limits, cheap vision, and it moves the
+// biggest token burn OFF the OpenAI account that the Motion Director
+// needs) with automatic failover in BOTH directions on 429/5xx.
+// QC_PROVIDER env: "gemini" | "openai" | "auto" (default: gemini if keyed).
+const GEMINI_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_QC_MODEL = process.env.GEMINI_QC_MODEL || "gemini-2.5-flash";
+
+function resolveQcProvider() {
+  const p = String(process.env.QC_PROVIDER || "auto").toLowerCase();
+  if (p === "gemini" && GEMINI_KEY) return "gemini";
+  if (p === "openai" && process.env.OPENAI_API_KEY) return "openai";
+  return GEMINI_KEY ? "gemini" : "openai";
+}
+function providerAvailable(name) {
+  return name === "gemini" ? Boolean(GEMINI_KEY) : Boolean(process.env.OPENAI_API_KEY);
+}
+
+// Source photos arrive as URLs; Gemini needs inline base64. Tiny cache —
+// the same source image is inspected several times per render (QC attempts
+// + sweep), no need to re-download it each call.
+const srcB64Cache = new Map();
+async function fetchSourceImageB64(url) {
+  if (srcB64Cache.has(url)) return srcB64Cache.get(url);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`source image HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > 15 * 1024 * 1024) throw new Error("source image over 15MB");
+    const mime = buf[0] === 0x89 && buf[1] === 0x50 ? "image/png"
+      : buf[0] === 0x52 && buf[1] === 0x49 ? "image/webp"
+      : "image/jpeg";
+    const entry = { data: buf.toString("base64"), mime };
+    if (srcB64Cache.size > 30) srcB64Cache.clear();
+    srcB64Cache.set(url, entry);
+    return entry;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function stripJsonFences(s) {
+  return String(s || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
+}
+
 export function qcEnabled() {
   if (String(process.env.VEO_QC_ENABLED || "").toLowerCase() === "false") return false;
-  return Boolean(process.env.OPENAI_API_KEY);
+  return Boolean(process.env.OPENAI_API_KEY || GEMINI_KEY);
 }
 
 /**
@@ -54,24 +105,16 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
  *  final master sweep ("sweep"). v43. */
 async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, logTag = "qc", extraContext = "" }) {
   try {
-    const images = [];
+    // v45.2: frames as raw base64 once; each provider adapter formats them
+    // its own way (OpenAI data-URLs at high detail — v41.5 finding, low-res
+    // images can't inventory edge/through-glass inventions — vs Gemini
+    // inline_data parts).
+    const frameB64s = [];
     for (const p of frames) {
-      const b64 = (await fs.readFile(p)).toString("base64");
-      // v41.5: ALL scenes at high detail. m23's sidewalk hid in a dusk
-      // exterior; m26's invented house hid through a living-room window —
-      // low-res images can't inventory either. At gpt-4.1-mini image-token
-      // pricing this costs ~2¢ per render. Cheap insurance.
-      images.push({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}`, detail: "high" } });
+      frameB64s.push((await fs.readFile(p)).toString("base64"));
     }
 
-    const body = {
-      model: QC_MODEL,
-      response_format: { type: "json_object" },
-      max_tokens: 200,
-      messages: [
-        {
-          role: "system",
-          content:
+    const systemText =
             "You are a strict quality inspector for AI-generated real-estate video. " +
             `You receive the ORIGINAL listing photo first, then ${frames.length} frames IN TIME ORDER ` +
             "from a video generated FROM that photo. The video may only move the camera — " +
@@ -124,57 +167,105 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
             "fills or wipes a major part of the frame, or the room becomes mostly blocked. " +
             "A well-framed shot keeps the space clearly visible in every frame. " +
             "Small softness/blur/lighting shifts are NOT artifacts. Be tolerant of minor " +
-            "differences; flag only clearly visible defects a home buyer would notice."
-        },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: `Room type: ${roomType || "unknown"}. First image = original photo. Next ${frames.length} = generated frames.` + (extraContext ? ` ${extraContext}` : "") },
-            { type: "image_url", image_url: { url: sourceImageUrl, detail: "high" } },
-            ...images
-          ]
+            "differences; flag only clearly visible defects a home buyer would notice.";
+    const userText =
+      `Room type: ${roomType || "unknown"}. First image = original photo. Next ${frames.length} = generated frames.` +
+      (extraContext ? ` ${extraContext}` : "");
+
+    // Shared retry loop: 429/5xx retried with backoff (v42.2 finding —
+    // rate limits are transient by definition), everything else breaks.
+    const withRetries = async (label, attempts, doFetch) => {
+      let res;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), QC_TIMEOUT_MS);
+        try {
+          res = await doFetch(controller.signal);
+        } finally {
+          clearTimeout(timer);
         }
-      ]
+        if (res.status !== 429 && res.status < 500) break;
+        if (attempt < attempts - 1) {
+          const waitMs = (attempt + 1) * 8000 + Math.floor(Math.random() * 2000);
+          console.warn(`[${logTag}] scene ${sceneIndex + 1}: ${label} ${res.status} — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 2}/${attempts}).`);
+          await new Promise((r) => setTimeout(r, waitMs));
+        }
+      }
+      return res;
     };
 
-    // v42.2 (m27): high-detail images raised tokens/call enough that 11
-    // parallel QC calls tripped OpenAI's rate limit and scenes 10-11
-    // shipped UNCHECKED (429 → immediate fail-open). Rate limits are
-    // transient by definition — retry with backoff before failing open.
-    let res;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), QC_TIMEOUT_MS);
-      try {
-        res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const callOpenAI = async (attempts) => {
+      const body = {
+        model: QC_MODEL,
+        response_format: { type: "json_object" },
+        max_tokens: 200,
+        messages: [
+          { role: "system", content: systemText },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userText },
+              { type: "image_url", image_url: { url: sourceImageUrl, detail: "high" } },
+              ...frameB64s.map((b64) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}`, detail: "high" } }))
+            ]
+          }
+        ]
+      };
+      const res = await withRetries("OpenAI", attempts, (signal) => fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal
+      }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const data = await res.json().catch(() => null);
+      return { ok: true, rawText: data?.choices?.[0]?.message?.content || "" };
+    };
+
+    const callGemini = async (attempts) => {
+      const src = await fetchSourceImageB64(sourceImageUrl);
+      const body = {
+        systemInstruction: { parts: [{ text: systemText }] },
+        contents: [{
+          role: "user",
+          parts: [
+            { text: userText },
+            { inline_data: { mime_type: src.mime, data: src.data } },
+            ...frameB64s.map((b64) => ({ inline_data: { mime_type: "image/jpeg", data: b64 } }))
+          ]
+        }],
+        generationConfig: { responseMimeType: "application/json", maxOutputTokens: 200, temperature: 0 }
+      };
+      const res = await withRetries("Gemini", attempts, (signal) => fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_QC_MODEL}:generateContent`,
+        {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json"
-          },
+          headers: { "x-goog-api-key": GEMINI_KEY, "Content-Type": "application/json" },
           body: JSON.stringify(body),
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(timer);
-      }
-      if (res.status !== 429 && res.status < 500) break;
-      if (attempt < 2) {
-        const waitMs = (attempt + 1) * 8000 + Math.floor(Math.random() * 2000);
-        console.warn(`[${logTag}] scene ${sceneIndex + 1}: OpenAI ${res.status} — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 2}/3).`);
-        await new Promise((r) => setTimeout(r, waitMs));
-      }
+          signal
+        }
+      ));
+      if (!res.ok) return { ok: false, status: res.status };
+      const data = await res.json().catch(() => null);
+      const rawText = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+      return { ok: true, rawText };
+    };
+
+    const primary = resolveQcProvider();
+    const secondary = primary === "gemini" ? "openai" : "gemini";
+    let out = await (primary === "gemini" ? callGemini(3) : callOpenAI(3)).catch((e) => ({ ok: false, status: e.message }));
+    if (!out.ok && providerAvailable(secondary)) {
+      console.warn(`[${logTag}] scene ${sceneIndex + 1}: ${primary} unavailable (${out.status}) — failing over to ${secondary}.`);
+      out = await (secondary === "gemini" ? callGemini(2) : callOpenAI(2)).catch((e) => ({ ok: false, status: e.message }));
     }
     for (const p of frames) fs.unlink(p).catch(() => {});
 
-    if (!res.ok) {
-      console.warn(`[${logTag}] scene ${sceneIndex + 1}: OpenAI ${res.status} after retries — fail-open.`);
+    if (!out.ok) {
+      console.warn(`[${logTag}] scene ${sceneIndex + 1}: all providers unavailable (${out.status}) — fail-open.`);
       return { pass: true, reasons: [], checked: false };
     }
-    const data = await res.json().catch(() => null);
-    const raw = data?.choices?.[0]?.message?.content || "";
     let verdict;
-    try { verdict = JSON.parse(raw); } catch {
+    try { verdict = JSON.parse(stripJsonFences(out.rawText)); } catch {
       console.warn(`[${logTag}] scene ${sceneIndex + 1}: unparseable verdict — fail-open.`);
       return { pass: true, reasons: [], checked: false };
     }
