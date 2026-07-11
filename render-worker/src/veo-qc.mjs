@@ -41,6 +41,18 @@ const QC_TIMEOUT_MS = Number(process.env.VEO_QC_TIMEOUT_MS) || 25000;
 // QC_PROVIDER env: "gemini" | "openai" | "auto" (default: gemini if keyed).
 const GEMINI_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_QC_MODEL = process.env.GEMINI_QC_MODEL || "gemini-2.5-flash";
+// v45.4: GEMINI_API_MODE=vertex routes Gemini calls through Vertex AI
+// (aiplatform.googleapis.com, express-mode API key), which bills to the
+// CLOUD billing account — where Troy's $300 trial credits live. The
+// default "gemini" mode (generativelanguage.googleapis.com) bills from
+// AI Studio PREPAY credits, a separate wallet that was empty ("Your
+// prepayment credits are depleted", July 11). Same request/response
+// shapes, same x-goog-api-key header; the key's API restriction decides
+// which door is open (Agent Platform API = vertex, Gemini API = gemini).
+const GEMINI_API_MODE = String(process.env.GEMINI_API_MODE || "gemini").toLowerCase();
+const GEMINI_ENDPOINT = GEMINI_API_MODE === "vertex"
+  ? `https://aiplatform.googleapis.com/v1/publishers/google/models/${GEMINI_QC_MODEL}:generateContent`
+  : `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_QC_MODEL}:generateContent`;
 
 function resolveQcProvider() {
   const p = String(process.env.QC_PROVIDER || "auto").toLowerCase();
@@ -236,8 +248,8 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
         }],
         generationConfig: { responseMimeType: "application/json", maxOutputTokens: 200, temperature: 0 }
       };
-      const res = await withRetries("Gemini", attempts, (signal) => fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_QC_MODEL}:generateContent`,
+      const res = await withRetries(GEMINI_API_MODE === "vertex" ? "Gemini(Vertex)" : "Gemini", attempts, (signal) => fetch(
+        GEMINI_ENDPOINT,
         {
           method: "POST",
           headers: { "x-goog-api-key": GEMINI_KEY, "Content-Type": "application/json" },
