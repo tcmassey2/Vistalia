@@ -1412,7 +1412,32 @@ function normalizeEditPlan(plan, photos, context) {
   // tempo decides whether that lands on beats, half-bars, bars, or 2-bars.
   const trackFile = String(context.musicTrack || STYLE_DEFAULT_TRACK[context.selectedStyle] || "").trim();
   const beatGrid = BEAT_GRID[trackFile] || null;
-  const targetCadence = STYLE_TARGET_CADENCE[context.selectedStyle] || DEFAULT_TARGET_CADENCE;
+  const styleCadence = STYLE_TARGET_CADENCE[context.selectedStyle] || DEFAULT_TARGET_CADENCE;
+  // v44.1 PHOTO-LIMITED STRETCH (luxury-demo finding): the target duration
+  // used to drive only the scene COUNT — with fewer photos than the count
+  // wants, every scene still took the style's short cadence and a "60s"
+  // render shipped at ~31s (12 photos × 2.6s luxury cadence) while charging
+  // 2 credits. When photos cap the count, stretch the cadence so
+  // photos × cadence ≈ target: the beat snapper then lands scenes on a
+  // LONGER musical subdivision (poradovskyi: 2 bars = 5.016s → 12 × 5s ≈
+  // 60s, still on the grid). Never shrinks below the style's feel; capped
+  // at 5.2s so clips stay inside the 6s generation bucket. 30s renders and
+  // photo-rich 60s renders are numerically unchanged.
+  const targetSecForPlan = Number(context.targetDurationSec) || 30;
+  const plannedSceneCount = Math.min(
+    [...(plan.scenes || [])].filter((s) => photoIds.has(s.photoId)).length || photos.length,
+    MAX_PLAN_SCENES
+  );
+  const OUTRO_ALLOWANCE_SEC = 4;
+  // Gate: long targets only (the 2-credit product). 30s renders keep the
+  // style's editorial feel untouched — simulation showed the ungated
+  // stretch blew a 12-photo Modern Social 30s render out to ~48s.
+  const stretchEligible = targetSecForPlan >= 45;
+  const stretchedCadence = stretchEligible && plannedSceneCount > 0
+    ? (targetSecForPlan - OUTRO_ALLOWANCE_SEC) / plannedSceneCount
+    : styleCadence;
+  const targetCadence = Math.max(styleCadence, Math.min(5.2, stretchedCadence));
+  const cadenceStretched = targetCadence > styleCadence + 0.05;
   const snapUnit = chooseSnapUnitSec(beatGrid, targetCadence);
 
   const baseScenes = [...(plan.scenes || [])]
@@ -1462,6 +1487,16 @@ function normalizeEditPlan(plan, photos, context) {
       };
     });
 
+  // v44.1: when the cadence was stretched (photo-limited long render), lift
+  // each planned duration to the stretched cadence BEFORE snapping — the AI
+  // Director writes 3-3.5s durations, and without the lift the snapper's
+  // round() can land them back on a short grid point. Also covers tracks
+  // with no measured beat grid (no snap pass at all).
+  if (cadenceStretched) {
+    for (const s of baseScenes) {
+      s.duration = clamp(Math.max(s.duration, targetCadence * 0.95), 1.2, maxDuration);
+    }
+  }
   // v29 beat-timed transitions: snap each scene's CUT to the music beat grid so
   // transitions land on the beat. Done BEFORE narration sizing so the voice
   // still fits its (snapped) scene. Fail-safe: durations unchanged if no grid.
