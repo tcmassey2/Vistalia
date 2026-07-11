@@ -800,7 +800,19 @@ async function enrichFallbackPlan(plan, photos, context) {
       amenity: ["A standout feature of this home.", "An amenity buyers remember."],
       detail: ["The details set this one apart.", "Craftsmanship worth a closer look."]
     };
-    let stockIdx = 0;
+    // v45.3: per-line used-set — the v45.1 global counter let two scenes of
+    // the same room type draw the IDENTICAL stock line ("the details set
+    // this one apart" twice in one 25s render). Never repeat a line; if a
+    // pool is exhausted, borrow the first unused line from any pool.
+    const usedStock = new Set();
+    const pickStock = (roomType) => {
+      const pool = STOCK_LINES[String(roomType || "").toLowerCase()] || STOCK_LINES.living;
+      for (const line of pool) if (!usedStock.has(line)) { usedStock.add(line); return line; }
+      for (const anyPool of Object.values(STOCK_LINES)) {
+        for (const line of anyPool) if (!usedStock.has(line)) { usedStock.add(line); return line; }
+      }
+      return ""; // every line used — better one silent scene than a repeat
+    };
     scenes.forEach((s, i) => {
       if (!isNarrated[i]) {
         s.narrationWindowSec = 0;
@@ -812,10 +824,9 @@ async function enrichFallbackPlan(plan, photos, context) {
       s.narrationWindowSec = Math.round(w * 100) / 100;
       // Keep the stock opener/CTA as seeds; verify rewrites or fills.
       s.narrationLine = String(s.narrationLine || "").trim();
+      if (s.narrationLine) usedStock.add(s.narrationLine);
       if (!s.narrationLine && w >= 2.4) {
-        const pool = STOCK_LINES[String(s.roomType || "").toLowerCase()] || STOCK_LINES.living;
-        s.narrationLine = pool[stockIdx % pool.length];
-        stockIdx += 1;
+        s.narrationLine = pickStock(s.roomType);
       }
     });
     await verifyAndRepairScenes(plan, photos, context);
