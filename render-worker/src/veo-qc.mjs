@@ -246,7 +246,17 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
             ...frameB64s.map((b64) => ({ inline_data: { mime_type: "image/jpeg", data: b64 } }))
           ]
         }],
-        generationConfig: { responseMimeType: "application/json", maxOutputTokens: 200, temperature: 0 }
+        // v45.5 (July 11 "unparseable verdict" on every call): gemini-2.5
+        // models THINK by default and thinking tokens count against
+        // maxOutputTokens — a 200-token cap was consumed entirely by
+        // thinking, returning an empty text part. Disable thinking for
+        // this simple structured task and leave generous headroom.
+        generationConfig: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 1024,
+          temperature: 0,
+          thinkingConfig: { thinkingBudget: 0 }
+        }
       };
       const res = await withRetries(GEMINI_API_MODE === "vertex" ? "Gemini(Vertex)" : "Gemini", attempts, (signal) => fetch(
         GEMINI_ENDPOINT,
@@ -260,7 +270,11 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
       if (!res.ok) return { ok: false, status: res.status };
       const data = await res.json().catch(() => null);
       const rawText = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
-      return { ok: true, rawText };
+      // v45.5 diagnostics: when the model answers 200 but the verdict can't
+      // be parsed, the finishReason is the tell (MAX_TOKENS = thinking ate
+      // the budget; SAFETY = blocked). Surface it instead of a blind
+      // "unparseable".
+      return { ok: true, rawText, finishReason: data?.candidates?.[0]?.finishReason || "" };
     };
 
     const primary = resolveQcProvider();
@@ -278,7 +292,11 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
     }
     let verdict;
     try { verdict = JSON.parse(stripJsonFences(out.rawText)); } catch {
-      console.warn(`[${logTag}] scene ${sceneIndex + 1}: unparseable verdict — fail-open.`);
+      console.warn(
+        `[${logTag}] scene ${sceneIndex + 1}: unparseable verdict — fail-open.` +
+        (out.finishReason ? ` finishReason=${out.finishReason}.` : "") +
+        ` raw="${String(out.rawText || "").slice(0, 120)}"`
+      );
       return { pass: true, reasons: [], checked: false };
     }
 

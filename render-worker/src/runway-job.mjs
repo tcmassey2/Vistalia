@@ -352,7 +352,7 @@ export async function renderRunwayJob(body, options = {}) {
             result.qcEverChecked = shipChecked;
             if (!shipChecked) {
               qcFailOpenCount += 1;
-              console.warn(`[qc] scene ${index + 1} ships UNVERIFIED (rate-limited fail-open) — final sweep will inspect it with high scrutiny.`);
+              console.warn(`[qc] scene ${index + 1} ships UNVERIFIED (inspection incomplete — fail-open) — final sweep will inspect it with high scrutiny.`);
             }
           }
         }
@@ -448,9 +448,9 @@ export async function renderRunwayJob(body, options = {}) {
       const total = clipResults.length;
       const level = qcFailOpenCount >= Math.ceil(total / 2) ? "ALERT" : "notice";
       console.warn(
-        `[qc] ${level}: ${qcFailOpenCount}/${total} scenes shipped with NO completed inspection (OpenAI rate-limited). ` +
+        `[qc] ${level}: ${qcFailOpenCount}/${total} scenes shipped with NO completed inspection (provider errors — see per-scene lines above). ` +
         (qcFailOpenCount >= Math.ceil(total / 2)
-          ? `Verification was effectively DARK for this render — check platform.openai.com usage/limits before rendering again.`
+          ? `Verification was effectively DARK for this render — check the QC provider (Gemini/OpenAI) status before rendering again.`
           : `The final sweep re-inspects these with high scrutiny.`)
       );
     }
@@ -549,9 +549,9 @@ export async function renderRunwayJob(body, options = {}) {
         options.onProgress?.({ phase: "Finalizing video", progress: 79 });
         ({ normalizedClips } = await stitchClipsAndOverlays(clipResults, manifest, finalMp4, thumbnailPath, options));
       }
-      console.info(`[sweep] Final inspection summary — ${clipResults.length} scenes swept, ${sweepFlagged.length} flagged, ${Math.min(sweepFlagged.length, 4)} replaced with the deterministic floor${sweepFailOpen > 0 ? `, ${sweepFailOpen} UNINSPECTED (rate-limited fail-open)` : ""}.`);
+      console.info(`[sweep] Final inspection summary — ${clipResults.length} scenes swept, ${sweepFlagged.length} flagged, ${Math.min(sweepFlagged.length, 4)} replaced with the deterministic floor${sweepFailOpen > 0 ? `, ${sweepFailOpen} UNINSPECTED (fail-open)` : ""}.`);
       if (sweepFailOpen >= Math.ceil(clipResults.length / 2)) {
-        console.warn(`[sweep] ALERT: the final sweep was effectively DARK (${sweepFailOpen}/${clipResults.length} inspections rate-limited). This render shipped with reduced verification — check platform.openai.com usage/limits.`);
+        console.warn(`[sweep] ALERT: the final sweep was effectively DARK (${sweepFailOpen}/${clipResults.length} inspections failed open). This render shipped with reduced verification — check the QC provider (Gemini/OpenAI) status before rendering again.`);
       }
     } catch (sweepErr) {
       // Fail-open, always: the sweep must never make a render less reliable.
