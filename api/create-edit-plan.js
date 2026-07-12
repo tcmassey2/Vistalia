@@ -2044,10 +2044,24 @@ function clampNarrationSentenceSafe(text, maxWords) {
   const CONNECTIVES = /^(and|or|with|by|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards|of|in|on|at|a|an|the)$/i;
   const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|define|defines|continue|continues|extend|extends)$/i;
   const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium)$/i;
+  // v45.6 (m38): a predicate adjective after a copula is a COMPLETE ending —
+  // "…is bright." reads fine and must survive the strip; "…and bright." must
+  // not. Without this guard the junk strip gutted grammatical sentences like
+  // "The office is bright." all the way down to silence.
+  const COPULA = /^(is|are|was|were|feels|looks|stays|remains|sits|stands)$/i;
   const stripTrailingJunk = (arr) => {
     const out = arr.slice();
-    while (out.length > 0 && (FUNCTION_WORDS.test(out[out.length - 1].replace(/[.,;:]+$/, "")) || HANGING_ADJ.test(out[out.length - 1].replace(/[.,;:]+$/, "")))) {
-      out.pop();
+    while (out.length > 0) {
+      const last = out[out.length - 1].replace(/[.,;:]+$/, "");
+      if (HANGING_ADJ.test(last)) {
+        const prev = out.length >= 2 ? out[out.length - 2].replace(/[.,;:]+$/, "") : "";
+        if (COPULA.test(prev)) break; // "…is bright." — complete, keep it
+        out.pop();
+      } else if (FUNCTION_WORDS.test(last)) {
+        out.pop();
+      } else {
+        break;
+      }
     }
     return out;
   };
@@ -2104,18 +2118,24 @@ function clampNarrationSentenceSafe(text, maxWords) {
     }
   }
   // v41.3 (master-24): pop hanging adjectives too (defs hoisted v42.2).
-  while (
-    slackWords.length > 3 &&
-    (FUNCTION_WORDS.test(slackWords[slackWords.length - 1]) || HANGING_ADJ.test(slackWords[slackWords.length - 1]))
-  ) {
-    slackWords.pop();
-  }
+  // v45.6 (m38 "The office is."): the pop loop used a `> 3` length floor, so
+  // it stopped popping even when word 3 was itself junk — "The office is
+  // bathed in warm natural light" (budget 6) cut before "in", popped
+  // "bathed", and the floor shipped "The office is." as the ENTIRE spoken
+  // line: 1.2s of audio, then 3s of dead air (Troy heard it at 31s). Pop
+  // with NO floor — a cut that can't end on content is an unfixable
+  // fragment, and the v42.2 doctrine applies at this exit too: silence
+  // beats "The office is." (stripTrailingJunk carries the copula guard, so
+  // complete predicates like "…is bright." still survive.)
+  slackWords = stripTrailingJunk(slackWords);
   if (slackWords.length >= 3) {
     return `${slackWords.join(" ").replace(/[,;:\s]+$/, "")}.`;
   }
-  // 4) Last resort: hard cut at budget.
-  const within = words.slice(0, maxWords).join(" ");
-  return `${within.replace(/[,;:\s]+$/, "")}.`;
+  // 4) Last resort: hard cut at budget — held to the same fragment standard
+  //    (v45.6: this exit used to ship ANY residue, fragments included).
+  const within = stripTrailingJunk(words.slice(0, maxWords));
+  if (within.length < 3) return "";
+  return `${within.join(" ").replace(/[,;:\s]+$/, "")}.`;
 }
 
 // v23: structural validation of an edit plan. Returns { ok: bool, errors: [] }.
