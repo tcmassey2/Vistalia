@@ -62,6 +62,11 @@ body{background:var(--bg);color:var(--ink);font-family:var(--font-body);line-hei
 a{color:inherit;text-decoration:none}
 img,video{display:block;max-width:100%}
 .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+/* Full-bleed section tint: the old inline background painted the 1120px
+   wrap box, leaving hard light/dark seams at the column edges (Troy,
+   launch eve). The pseudo spans the viewport; content stays wrapped. */
+.band{position:relative}
+.band::before{content:"";position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);width:100vw;background:rgba(16,16,20,.4);border-block:1px solid var(--edge);z-index:-1}
 .gold{color:var(--gold)}
 .eyebrow{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold)}
 .serif{font-family:var(--font-display)}
@@ -150,6 +155,9 @@ section.block{padding:88px 0}
 .scard:hover{transform:translateY(-6px);border-color:var(--gold)}
 .scard video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s var(--ease);z-index:1}
 .scard.playing video{opacity:1}
+/* Style cards autoplay lightweight loops — always visible, no hover needed
+   (Troy, launch eve: hover-to-play read as unfinished empty boxes). */
+.scard video.preview{opacity:1;transition:none}
 .scard .tag{position:absolute;top:16px;left:16px;z-index:2;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
 .scard .pace{position:absolute;top:16px;right:16px;z-index:2;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-muted);background:rgba(11,11,13,.5);padding:4px 8px;border-radius:6px;border:1px solid var(--edge)}
 .scard .info{position:relative;z-index:2;padding:22px;background:linear-gradient(0deg,rgba(11,11,13,.85),transparent)}
@@ -330,7 +338,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
 </section>
 
 <!-- HOW IT WORKS -->
-<section class="block wrap" id="how" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
+<section class="block wrap band" id="how">
   <div class="head reveal"><div class="eyebrow">How it works</div><h2>Three steps. Zero editing. <em>Done.</em></h2></div>
   <div class="steps">
     <div class="step reveal"><div class="num">01 — Upload</div><h3>Drop in your MLS photos</h3><p>8–24 photos from your shoot, phone, or MLS export. We handle JPEG, HEIC, and PNG.</p></div>
@@ -344,24 +352,27 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
   <div class="head reveal">
     <div class="eyebrow">Styles</div>
     <h2>Four directions. <em>Built for how you sell.</em></h2>
-    <p>Hover any style to preview it. Each delivers a distinctly different cinematographic feel.</p>
+    <p>Live previews, straight out of Vistalia — each a distinctly different cinematographic feel.</p>
   </div>
-  <!-- Cards hover-play the same showcase clips as #examples; the JS falls
-       back to the gradient panel silently until those files exist. -->
+  <!-- Autoplaying lightweight loops (8s, ~1MB each); full videos live in #examples. -->
   <div class="styles" id="styles-grid">
-    <div class="scard" style="--c1:#1d1a14" data-src="/showcase/example-luxury.mp4" data-poster="/showcase/example-luxury.jpg">
+    <div class="scard" style="--c1:#1d1a14">
+      <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-luxury.jpg" src="/showcase/style-luxury.mp4" onerror="this.remove()"></video>
       <span class="tag">VS-L1</span><span class="pace">Slow &amp; editorial</span>
       <div class="info"><h3 class="serif">Cinematic Luxury</h3><div class="best">Premium · $1M+</div><p>Slow moves, editorial tone, premium feel.</p></div>
     </div>
-    <div class="scard" style="--c1:#13181c" data-src="/showcase/example-social.mp4" data-poster="/showcase/example-social.jpg">
+    <div class="scard" style="--c1:#13181c">
+      <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-social.jpg" src="/showcase/style-social.mp4" onerror="this.remove()"></video>
       <span class="tag">VS-S2</span><span class="pace">Fast &amp; punchy</span>
       <div class="info"><h3 class="serif">Modern Social</h3><div class="best">Reels · TikTok</div><p>Punchy pacing built for scroll-stop.</p></div>
     </div>
-    <div class="scard" style="--c1:#15140f" data-src="/showcase/example-mls.mp4" data-poster="/showcase/example-mls.jpg">
+    <div class="scard" style="--c1:#15140f">
+      <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-mls.jpg" src="/showcase/style-mls.mp4" onerror="this.remove()"></video>
       <span class="tag">VS-M3</span><span class="pace">Clean &amp; factual</span>
       <div class="info"><h3 class="serif">MLS Clean</h3><div class="best">Standard listings</div><p>Neutral, factual, broker-compliant.</p></div>
     </div>
-    <div class="scard" style="--c1:#161616" data-src="/showcase/example-investor.mp4" data-poster="/showcase/example-investor.jpg">
+    <div class="scard" style="--c1:#161616">
+      <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-investor.jpg" src="/showcase/style-investor.mp4" onerror="this.remove()"></video>
       <span class="tag">VS-I4</span><span class="pace">Direct &amp; clear</span>
       <div class="info"><h3 class="serif">Investor Tour</h3><div class="best">Wholesale · deals</div><p>Direct walkthroughs for deal-flow agents.</p></div>
     </div>
@@ -384,7 +395,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
 </section>
 
 <!-- COMPARISON TABLE -->
-<section class="block wrap" id="compare" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
+<section class="block wrap band" id="compare">
   <div class="head reveal">
     <div class="eyebrow">The math</div>
     <h2>Videographer, slideshow app, <em>or Vistalia.</em></h2>
@@ -414,19 +425,19 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     <p>Four properties, four styles — from a Paradise Valley estate to a Mesa duplex, straight out of Vistalia, no manual editing. Hover to play.</p>
   </div>
   <div class="styles" id="examples-grid">
-    <div class="scard" style="--c1:#1d1a14" data-src="/showcase/example-luxury.mp4" data-poster="/showcase/example-luxury.jpg">
+    <div class="scard" style="--c1:#1d1a14;background-image:url(/showcase/example-luxury.jpg);background-size:cover;background-position:center" data-src="/showcase/example-luxury.mp4" data-poster="/showcase/example-luxury.jpg">
       <span class="tag">Narrated</span><span class="pace">Cinematic</span>
       <div class="info"><h3 class="serif">The Signature Tour</h3><div class="best">Cinematic Luxury</div><p>Slow editorial moves, luxury serif captions.</p></div>
     </div>
-    <div class="scard" style="--c1:#13181c" data-src="/showcase/example-social.mp4" data-poster="/showcase/example-social.jpg">
+    <div class="scard" style="--c1:#13181c;background-image:url(/showcase/example-social.jpg);background-size:cover;background-position:center" data-src="/showcase/example-social.mp4" data-poster="/showcase/example-social.jpg">
       <span class="tag">Captions</span><span class="pace">Social</span>
       <div class="info"><h3 class="serif">The Scroll-Stopper</h3><div class="best">Modern Social</div><p>Punchy cuts, gold word-pop captions.</p></div>
     </div>
-    <div class="scard" style="--c1:#15140f" data-src="/showcase/example-mls.mp4" data-poster="/showcase/example-mls.jpg">
+    <div class="scard" style="--c1:#15140f;background-image:url(/showcase/example-mls.jpg);background-size:cover;background-position:center" data-src="/showcase/example-mls.mp4" data-poster="/showcase/example-mls.jpg">
       <span class="tag">Broker-safe</span><span class="pace">MLS</span>
       <div class="info"><h3 class="serif">The Compliant Cut</h3><div class="best">MLS Clean</div><p>Neutral, factual, broker-safe narration.</p></div>
     </div>
-    <div class="scard" style="--c1:#161616" data-src="/showcase/example-investor.mp4" data-poster="/showcase/example-investor.jpg">
+    <div class="scard" style="--c1:#161616;background-image:url(/showcase/example-investor.jpg);background-size:cover;background-position:center" data-src="/showcase/example-investor.mp4" data-poster="/showcase/example-investor.jpg">
       <span class="tag">Deal-flow</span><span class="pace">Investor</span>
       <div class="info"><h3 class="serif">The Deal Walkthrough</h3><div class="best">Investor Tour</div><p>Numbers-first, direct, clear CTA.</p></div>
     </div>
@@ -434,7 +445,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
 </section>
 
 <!-- PRICING -->
-<section class="block wrap" id="pricing" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
+<section class="block wrap band" id="pricing">
   <div class="head reveal">
     <div class="eyebrow">Pricing</div>
     <h2>One price per listing video. <em>Voice and captions included.</em></h2>
@@ -472,7 +483,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
      .tgrid section here — the CSS is already in place. -->
 
 <!-- FAQ -->
-<section class="block wrap" id="faq" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
+<section class="block wrap band" id="faq">
   <div class="head reveal"><div class="eyebrow">Questions</div><h2>The honest answers</h2></div>
   <div class="faq reveal">
     <details open><summary>What if a scene looks wrong?</summary><p>AI video isn't perfect — occasionally a scene needs a redo. You review every scene before publishing, and regenerating any scene is free. Risky rooms like kitchens and baths render conservatively by design to stay true to your photo.</p></details>
@@ -565,7 +576,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
   }
 
   // Hover-to-play style previews (lazy; gradient fallback if no clip).
-  document.querySelectorAll('#styles-grid .scard, #examples-grid .scard').forEach(function (card) {
+  document.querySelectorAll('#examples-grid .scard').forEach(function (card) {
     var src = card.getAttribute('data-src'); if (!src || !fine) return;
     var vid = null;
     card.addEventListener('pointerenter', function () {

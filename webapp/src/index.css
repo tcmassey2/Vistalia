@@ -211,3 +211,15 @@
     transform: none !important;
   }
 }
+
+/* ---- Motion chrome (matches the landing page — PolishFX.tsx) ---- */
+.fx-scrollbar{position:fixed;top:0;left:0;height:2px;width:100%;transform:scaleX(0);transform-origin:0 50%;background:linear-gradient(90deg,#9C773B,#DBBE7E);z-index:60;will-change:transform;pointer-events:none}
+.has-cursor{cursor:none}
+.has-cursor a,.has-cursor button,.has-cursor summary,.has-cursor label,.has-cursor select{cursor:none}
+/* Typing surfaces keep their native cursor — flair loses to usability. */
+.has-cursor input,.has-cursor textarea,.has-cursor [contenteditable]{cursor:auto}
+.cursor-dot,.cursor-ring{position:fixed;top:0;left:0;pointer-events:none;z-index:9999;border-radius:50%;will-change:transform;opacity:0}
+.cursor-dot{width:6px;height:6px;margin:-3px 0 0 -3px;background:#DBBE7E}
+.cursor-ring{width:32px;height:32px;margin:-16px 0 0 -16px;border:1px solid rgba(199,167,108,.55);transition:width .22s cubic-bezier(0.16,1,0.3,1),height .22s cubic-bezier(0.16,1,0.3,1),margin .22s cubic-bezier(0.16,1,0.3,1),background .22s cubic-bezier(0.16,1,0.3,1),border-color .22s cubic-bezier(0.16,1,0.3,1)}
+.cursor-ring.snap{width:56px;height:56px;margin:-28px 0 0 -28px;background:rgba(199,167,108,.12);border-color:#DBBE7E}
+@media (prefers-reduced-motion:reduce){.fx-scrollbar,.cursor-dot,.cursor-ring{display:none}}

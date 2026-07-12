@@ -8,6 +8,7 @@ import SettingsScreen from "./screens/SettingsScreen";
 import EditStudioScreen from "./screens/EditStudioScreen";
 import TopBar from "./components/TopBar";
 import Toast from "./components/Toast";
+import PolishFX from "./components/PolishFX";
 import { initPixel, consumeCheckoutReturn } from "./lib/pixel";
 
 class ErrorBoundary extends Component<
@@ -93,6 +94,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      <PolishFX />
       {screen !== "auth" && <TopBar />}
       {/*
         Re-keying <main> on screen change forces a fresh mount, which

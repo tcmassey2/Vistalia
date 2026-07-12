@@ -50,6 +50,7 @@ Bakeoff Clips/
 EstateMotion Test Photos./
 *.mp4
 !showcase/example-*.mp4
+!showcase/style-*.mp4
 !showcase/preview.mp4
 *.mov
 
