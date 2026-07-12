@@ -886,7 +886,10 @@ async function polishNarrationFlow(plan, context) {
     `already contains — light, windows, views, space. Furniture never appears in your output.\n` +
     `- Word caps are ABSOLUTE and cuts are ugly: a line over its cap gets machine-truncated ` +
     `mid-phrase in the final audio ("an entryway filled—"). Count your words; land at least one ` +
-    `word UNDER every cap. A 4-word complete sentence always beats a 9-word cut one. Every line ` +
+    `word UNDER every cap. USE the airtime you're given: for any line whose cap is 8 words or ` +
+    `more, write exactly one word under the cap — a short line in a long window leaves seconds ` +
+    `of dead silence in the video (m44 shipped a 3.5s hole this way). ` +
+    `A 4-word complete sentence always beats a 9-word cut one. Every line ` +
     `stands alone as one complete spoken sentence with a subject and verb. Never end a line on a transitive verb ('The kitchen boasts.' is an error — m27 shipped exactly that): if the object doesn't fit the cap, write a shorter complete thought instead. Never split one idea ` +
     `across two lines, never open with a verb fragment.\n` +
     `- Variety: no two lines open with the same word; use each of ` +

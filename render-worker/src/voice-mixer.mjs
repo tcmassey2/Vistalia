@@ -567,8 +567,20 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     const a = Math.min(from, chars.length - 1);
     const b = Math.min(to - 1, chars.length - 1);
     const segStart = Math.max(0, (starts[a] ?? 0) - 0.03);
-    const segEnd = Math.min((ends[b] ?? segStart + 1) + 0.05, ends[ends.length - 1] ?? segStart + 1);
+    // v45.10 (m44 "voice cuts off"): the old +0.05s release chopped the final
+    // syllable's natural decay (~120ms measured on the CTA's "today" vs
+    // ~300ms natural) — masked mid-video, naked on the last line before the
+    // outro. Keep 300ms of release; the old clamp to the last word's end
+    // timestamp is GONE because it deleted exactly this padding on the final
+    // line (atrim past real audio EOF is harmless). Next-line overlap is
+    // clamped in the pass below.
+    const segEnd = (ends[b] ?? segStart + 1) + 0.3;
     segs.push({ index: lines[i].index, segStart, segEnd, dur: Math.max(0.2, segEnd - segStart), charFrom: from, charTo: to });
+  }
+  // Release padding must never swallow the next line's first word.
+  for (let i = 0; i < segs.length - 1; i++) {
+    segs[i].segEnd = Math.min(segs[i].segEnd, Math.max(segs[i].segStart + 0.2, segs[i + 1].segStart - 0.02));
+    segs[i].dur = Math.max(0.2, segs[i].segEnd - segs[i].segStart);
   }
 
   // Placement: sentence i starts at its scene start (+lead-in); its window
