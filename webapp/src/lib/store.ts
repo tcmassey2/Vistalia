@@ -553,7 +553,29 @@ export const useStore = create<AppState>((set, get) => ({
   setExport4K: (enabled) => set({ export4K: enabled }),
   setRenderSafety: (level) => set({ renderSafety: level, editPlan: null }),
   setEditPlan: (plan) => set({ editPlan: plan }),
-  setRenderJob: (job) => set({ renderJob: job }),
+  setRenderJob: (job) => {
+    // v45.9: renders survive refresh. The active jobId used to live only in
+    // memory — a refresh mid-render dumped the customer to My Work with no
+    // way back to the progress screen while the worker kept going (Troy hit
+    // this live). Persist at the setter choke point: write once when a real
+    // jobId appears, clear on terminal/null. The jobId-change guard keeps
+    // the 350ms phase-creep ticks from hammering localStorage.
+    try {
+      const prev = get().renderJob;
+      const ACTIVE_KEY = "vistalia.active-render.v1";
+      if (!job || job.status === "completed" || job.status === "failed") {
+        localStorage.removeItem(ACTIVE_KEY);
+      } else if (job.jobId && job.jobId !== prev?.jobId) {
+        localStorage.setItem(
+          ACTIVE_KEY,
+          JSON.stringify({ jobId: job.jobId, engine: job.engine || null, startedAt: Date.now() })
+        );
+      }
+    } catch {
+      /* storage unavailable — render still works, just not refresh-proof */
+    }
+    set({ renderJob: job });
+  },
   setLastRenderManifest: (m) => set({ lastRenderManifest: m }),
   setLoading: (msg) => set({ loading: msg }),
   setError: (msg) => set({ error: msg }),

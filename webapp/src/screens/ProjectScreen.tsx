@@ -2334,6 +2334,37 @@ function RenderControls() {
     };
   }
 
+  // v45.9: reconnect to an in-flight render after a refresh. Pairs with the
+  // store's active-render persistence and App's boot routing. The first real
+  // poll overwrites the placeholder phase/progress with server truth; if the
+  // job finished while the tab was away, the poll lands on the completed
+  // panel exactly as if we never left.
+  useEffect(() => {
+    if (useStore.getState().renderJob) return;
+    try {
+      const raw = localStorage.getItem("vistalia.active-render.v1");
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { jobId?: string; engine?: string; startedAt?: number };
+      const ageMs = Date.now() - (saved.startedAt || 0);
+      // 35 min = worker's 25-min overall cap + polling slack. Older = stale key.
+      if (!saved.jobId || ageMs > 35 * 60 * 1000) {
+        localStorage.removeItem("vistalia.active-render.v1");
+        return;
+      }
+      setRenderJob({
+        jobId: saved.jobId,
+        status: "rendering",
+        phase: "Reconnecting to your render",
+        progress: 15,
+        engine: (saved.engine as typeof renderEngine) || renderEngine
+      });
+      pollUntilDone(saved.jobId);
+    } catch {
+      /* unparseable key — ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const pollUntilDone = async (jobId: string) => {
     const startTime = Date.now();
     const maxMs = 26 * 60 * 1000; // worker's overall cap is 25 min (v31 audit) + 1 min slack

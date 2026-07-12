@@ -66,6 +66,23 @@ export default function App() {
     }
   }, [init]);
 
+  // v45.9: if a render was in flight when the tab reloaded, boot straight
+  // back into the render screen instead of My Work. ProjectScreen's
+  // reconnect effect then resumes live polling on the saved jobId.
+  useEffect(() => {
+    if (!authReady) return;
+    try {
+      const raw = localStorage.getItem("vistalia.active-render.v1");
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { jobId?: string; startedAt?: number };
+      if (saved?.jobId && Date.now() - (saved.startedAt || 0) < 35 * 60 * 1000) {
+        useStore.getState().goToScreen("project");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [authReady]);
+
   if (!authReady) {
     return (
       <div className="min-h-screen flex items-center justify-center">
