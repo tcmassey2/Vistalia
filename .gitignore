@@ -69,3 +69,4 @@ _local/
 
 # Meta pixel ID is public by design — the webapp build needs it.
 !webapp/.env.production
+showcase/photosets/**/*.png
