@@ -103,6 +103,22 @@ function buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb) {
   );
 }
 
+// v45.7 (music-off audit during the hero render): the voice-only twin of
+// buildMixAudioFilter. All three narration-only branches (skipMusic masters)
+// used to map the narration track RAW — native ElevenLabs loudness ≈ −26
+// LUFS, ~9 dB under VOICE_TARGET_I — so every music-off render shipped
+// noticeably quiet. Same measurement, same target, same true-peak guard as
+// the mixed path; fail-open +3 dB mirrors computeStemGains.
+async function voiceOnlyAudioFilter(narrationTrackPath) {
+  const voiceI = await measureLoudnessI(narrationTrackPath);
+  const voiceGainDb = voiceI == null ? 3 : clampDb(VOICE_TARGET_I - voiceI, -6, 18);
+  console.info(
+    `[voice] stem levels — narration ${voiceI == null ? "unmeasured" : `${voiceI.toFixed(1)} LUFS`} → ` +
+    `${voiceGainDb >= 0 ? "+" : ""}${voiceGainDb.toFixed(1)}dB, no music bed (voice-only master).`
+  );
+  return `[1:a:0]volume=${voiceGainDb.toFixed(1)}dB,alimiter=limit=0.841:level=false[aout]`;
+}
+
 export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, crossfadeOverlapSec = 0, narrationScript = "", brandKit, tempDir, jobId, onProgress, captionsEnabled = true, captionsVariant = "luxury" }) {
   // v26.9: actual rendered clip duration per scene (keyed by photoId). When
   // present it overrides the manifest's stated duration so narration timing
@@ -465,16 +481,18 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     ], { timeoutMs: 90000, label: "voice:final-mix-with-music" });
   } else {
     // No music in master — narration becomes the only audio.
+    // v45.7: lifted to VOICE_TARGET_I (was mapped raw at native ≈ −26 LUFS).
     await runFFmpeg([
       "-y",
       "-threads", "1",
       "-i", masterMp4,
       "-i", narrationTrackPath,
+      "-filter_complex", await voiceOnlyAudioFilter(narrationTrackPath),
+      "-map", "0:v:0",
+      "-map", "[aout]",
       "-c:v", "copy",
       "-c:a", "aac",
       "-b:a", "192k",
-      "-map", "0:v:0",
-      "-map", "1:a:0",
       "-shortest",
       mixedMp4
     ], { timeoutMs: 60000, label: "voice:final-mix-narration-only" });
@@ -683,13 +701,21 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
       "-shortest", mixedMp4
     ], { timeoutMs: captionsAssPath ? 240000 : 90000, label: "voice:aligned-final-mix" });
   } else {
+    // v45.7: this branch used to `-c:v copy` + raw-map the narration —
+    // music OFF + captions ON silently burned NO captions, and voice
+    // shipped ~9 dB under target. Now mirrors the mixed path: captions
+    // burn when present, voice lifted to VOICE_TARGET_I.
+    const vf = captionsAssPath
+      ? [`[0:v:0]subtitles='${subtitlesFilterPath(captionsAssPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'[vout];`, "[vout]", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19"]]
+      : ["", "0:v:0", ["-c:v", "copy"]];
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", masterMp4, "-i", narrationTrackPath,
-      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-      "-map", "0:v:0", "-map", "1:a:0",
+      "-filter_complex", vf[0] + (await voiceOnlyAudioFilter(narrationTrackPath)),
+      "-map", vf[1], "-map", "[aout]",
+      ...vf[2], "-c:a", "aac", "-b:a", "192k",
       "-shortest", mixedMp4
-    ], { timeoutMs: 60000, label: "voice:aligned-mix-narration-only" });
+    ], { timeoutMs: captionsAssPath ? 240000 : 60000, label: "voice:aligned-mix-narration-only" });
   }
 
   await fs.unlink(audioPath).catch(() => {});
@@ -819,11 +845,13 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
       mixedMp4
     ], { timeoutMs: 90000, label: "voice:continuous-final-mix" });
   } else {
+    // v45.7: lifted to VOICE_TARGET_I (was mapped raw at native ≈ −26 LUFS).
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", masterMp4, "-i", narrationTrackPath,
+      "-filter_complex", await voiceOnlyAudioFilter(narrationTrackPath),
+      "-map", "0:v:0", "-map", "[aout]",
       "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-      "-map", "0:v:0", "-map", "1:a:0",
       "-shortest",
       mixedMp4
     ], { timeoutMs: 60000, label: "voice:continuous-mix-narration-only" });
