@@ -457,6 +457,11 @@ async function downloadToFile(url, destPath) {
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok || !res.body) {
+      // Release the socket: undici only returns a keep-alive connection to
+      // the pool once the body is consumed or cancelled. Un-cancelled error
+      // bodies accumulate across consecutive renders (Troy's 4-in-a-row run)
+      // and starve the pool.
+      res.body?.cancel().catch(() => {});
       throw new Error(`HTTP ${res.status} downloading ${url}`);
     }
     const buf = Buffer.from(await res.arrayBuffer());
