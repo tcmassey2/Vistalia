@@ -439,11 +439,29 @@ function toBool(value, fallback) {
 }
 
 // Stream-download a public URL into a local file using built-in fetch.
+// v45.8 (investor duplex render, 2026-07-12): this await had NO deadline.
+// fal's CDN black-holed both in-flight clip downloads at once and both
+// worker slots hung inside arrayBuffer() indefinitely — no error, no
+// FAL_TIMEOUT (the v26.11 subscribe guard ends when subscribe RESOLVES;
+// this hang is after it), heartbeat still green, UI parked at 15%, log
+// silent for 10+ minutes. Same treatment as v26.11: hard deadline + abort.
+// On abort the caller's catch logs it as a scene download failure and the
+// QC ladder retries/floors — lines appear instead of eternal silence.
+const DOWNLOAD_TIMEOUT_MS = Number(process.env.FAL_DOWNLOAD_TIMEOUT_MS) || 120000; // 2 min
 async function downloadToFile(url, destPath) {
-  const res = await fetch(url);
-  if (!res.ok || !res.body) {
-    throw new Error(`HTTP ${res.status} downloading ${url}`);
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`download exceeded ${Math.round(DOWNLOAD_TIMEOUT_MS / 1000)}s`)),
+    DOWNLOAD_TIMEOUT_MS
+  );
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok || !res.body) {
+      throw new Error(`HTTP ${res.status} downloading ${url}`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    await fs.writeFile(destPath, buf);
+  } finally {
+    clearTimeout(timer);
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  await fs.writeFile(destPath, buf);
 }
