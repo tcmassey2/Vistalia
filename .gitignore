@@ -49,6 +49,8 @@ marketing/higgsfield-ads/
 Bakeoff Clips/
 EstateMotion Test Photos./
 *.mp4
+!showcase/example-*.mp4
+!showcase/preview.mp4
 *.mov
 
 # TypeScript incremental build cache (auto-generated, machine-specific)
@@ -70,3 +72,4 @@ _local/
 # Meta pixel ID is public by design — the webapp build needs it.
 !webapp/.env.production
 showcase/photosets/**/*.png
+showcase/photosets/*.zip

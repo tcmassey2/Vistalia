@@ -2406,16 +2406,21 @@ function RenderControls() {
           return;
         }
 
-        // Stuck detection — fire ONCE when threshold first crossed.
+        // Stuck detection — console-only (launch: Troy 2026-07-12). The old
+        // red banner ("worker may have crashed… check Render.com logs") fired
+        // on every long stitch/sweep pause at ~81% and every render completed
+        // anyway — a false alarm with a vendor name in it, shown to paying
+        // customers at the most anxious moment. Real failures still surface
+        // through status="failed" (refund-aware card) and the worker-restart
+        // 404 → library recovery below. Keep the telemetry for us, show
+        // nothing scary to the customer — the verification phases are SLOW
+        // BY DESIGN and the ETA copy already says so.
         const stuckMs = Date.now() - lastProgressMovedAt;
         if (!stuckFlagged && stuckMs > STUCK_THRESHOLD_MS) {
           stuckFlagged = true;
-          const stuckSec = Math.round(stuckMs / 1000);
-          setError(
-            `Render appears stuck at ${Math.round(safeProgress)}% (no progress for ${stuckSec}s). The worker may have crashed or hit a slow step. Check Render.com logs, or hit Generate again to retry.`
+          console.warn(
+            `[render] no progress for ${Math.round(stuckMs / 1000)}s at ${Math.round(safeProgress)}% — assembly/verification phases run long; failure paths will surface via status if real.`
           );
-          // Don't return — keep polling. If the worker recovers we'll
-          // clear the error on the next progress update.
         }
       } catch (err) {
         // SPECIAL CASE: the worker restarted while we were rendering. That
