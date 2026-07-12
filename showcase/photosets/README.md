@@ -13,7 +13,7 @@ bright HDR for the tract home, flat documentary for the duplex.
 | p1-signature | "Olivara Estate" — Spanish Colonial, Paradise Valley | Cinematic Luxury | 60s | OFF | OFF | OFF | ✅ DONE (m40) — silent demo, Troy's call |
 | p2-social | "Citrus Ranch" — mid-century, Arcadia | Modern Social | 30s | **ON** | ON | **ON** (bold skin) | captions need voice to burn; page mutes autoplay anyway |
 | p3-mls | Gilbert two-story (vacant) | MLS Clean | 45s | **ON** | ON | **ON** (luxury skin) | same — voice ON so captions exist |
-| p4-investor | Mesa duplex (turn-key) | Investor Tour | 30s | OFF | OFF | OFF | silent demo; upload 01→09, 11, 12 — **skip 10-exterior-corner** (reads as a different building; spare only) |
+| p4-investor | Mesa duplex (turn-key) | Investor Tour | 30s | OFF | OFF | OFF | voice+captions luxury (Troy's final call); corner view FIXED: use 10-exterior-corner-v2 (reference-matched gray roof; old tan-roof original renamed ZZ-spare — never upload it) |
 
 Upload in filename order — the planner sees photos in upload order and the
 exterior must lead. Two captioned demos = both caption skins shown on the
