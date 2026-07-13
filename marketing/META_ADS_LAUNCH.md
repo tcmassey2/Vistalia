@@ -10,8 +10,8 @@ Ranked for a cold real-estate-agent audience on Reels:
    anchor). Pair with Primary B, headline "$850 videographer → ~$8 a listing".
 2. **hero-15s** — the only creative that shows the product (photo snaps into
    motion → second room → branded end card). Runs as the demo anchor. Pair
-   with Primary A, headline "Listing video in 3 minutes", desc 1.
-3. **ugc-secret** (17.8s, NEW Jul 13) — exclusivity angle ("don't tell the
+   with Primary A, headline "Listing video in minutes", desc 1.
+3. **ugc-secret** (15.4s, NEW Jul 13) — exclusivity angle ("don't tell the
    other agents in my market… keep this one to yourself"), golden-hour car
    take, signature luxury captions (pipeline-generated, word-synced gild).
    Pair with Primary F below, headline "Your photos. Cinematic. Narrated."
@@ -32,13 +32,13 @@ Kill rule unchanged: CTR <0.8% after ~3 days / $150.
 Primary text (F, exclusivity — for ugc-secret):
 > The agents winning listings right now aren't telling you how. Every
 > listing goes up as a narrated, cinematic tour the same day it hits the
-> MLS — about $8 a listing on an annual plan. Takes 3 minutes. First one
+> MLS — about $8 a listing on an annual plan. First one
 > free. Keep it to yourself.
 
 Primary text (D, time anchor — for ugc-9pm, rotation bench):
 > It's 9pm and half the agents you know are still editing listing video.
 > Vistalia turns the photos you already have into a narrated, cinematic
-> Reel in about 3 minutes — about $8 a listing on an annual plan. Post it
+> Reel the same hour — about $8 a listing on an annual plan. Post it
 > and go to bed. First video free.
 
 Primary text (E, objection — for ugc-techy):
@@ -51,8 +51,8 @@ Primary text (E, objection — for ugc-techy):
 
 > Creative rules (standing): faceless, no founder face/voice. Kling for motion,
 > never Marketing Studio. All prices q7: first video free · $39/video · plans
-> from $69/mo ($41/mo annual). Product claims must stay true: ~3 minutes,
-> AI camera motion, on-beat music, narration incl. your own cloned voice.
+> from $69/mo ($41/mo annual). Product claims must stay true: 
+> AI camera motion, on-beat music, narration incl. your own cloned voice. Render-time claim: "ready the same hour" ONLY — real renders land 10–20 min; NEVER state a minutes count (Troy, Jul 13: all "3 minutes" claims scrubbed from ads by excision).
 >
 > **Price anchor (Troy, Jul 13): promote "about $8 a listing," not $39.**
 > Basis: Pro annual $490/yr ÷ 60 videos = $8.17; Studio annual = $8.25.
@@ -64,13 +64,13 @@ Primary text (E, objection — for ugc-techy):
 
 ## Campaign 1 — "Still photos are costing you listings" (hero video)
 
-**Creative:** vistalia-ad-hero-15s.mp4 (15s, 1080×1920). Flat listing photo
+**Creative:** vistalia-ad-hero-15s.mp4 (15s, 1080×1920, signature luxury titles). Flat listing photo
 snaps into cinematic motion → second room → end card.
 
 Primary text (A, short):
 > Your listing photos are already good. They're just not moving.
 > Vistalia turns them into a cinematic vertical tour — AI camera motion,
-> on-beat music, professional narration — in about 3 minutes.
+> on-beat music, professional narration — ready the same hour.
 > First video free. No card.
 
 Primary text (B, cost anchor):
@@ -81,10 +81,10 @@ Primary text (B, cost anchor):
 Primary text (C, social proof of behavior):
 > The listings getting DMs right now aren't the ones with the best photos —
 > they're the ones that move. Upload your listing photos, pick a style, and
-> post a cinematic tour before your coffee's done. First video free.
+> post a cinematic tour the same hour. First video free.
 
 Headlines (40 chars):
-1. Listing video in 3 minutes
+1. Listing video in minutes
 2. Your photos. Cinematic. Narrated.
 3. First listing video free
 4. $850 videographer → ~$8 a listing
@@ -102,7 +102,7 @@ CTA button: **Try it free** (fallback: Learn More) → https://vistalia.ai
 - vistalia-ad-static-dusk.jpg — twilight exterior, overlay: "Your listing,
   cinematic. First video free." + logo + vistalia.ai
 - vistalia-ad-static-living.jpg — living room, overlay: "Photos → narrated
-  video tour. 3 minutes." + logo + vistalia.ai
+  video tour, the same hour." + logo + vistalia.ai
 
 Use Primary text A/B above.
 
@@ -125,7 +125,7 @@ Use Primary text A/B above.
 
 ## Compliance / honesty checklist
 
-- "3 minutes" = render time claim from landing page — keep consistent.
+- "same hour" = the only render-time claim (real renders 10–20 min). No minutes counts anywhere — ads, statics, landing.
 - Footage is exemplar AI-generated listing imagery, not a client's property —
   don't imply a specific sold listing or client result.
 - No "guaranteed leads/sales" claims. No competitor names in ads (organic
