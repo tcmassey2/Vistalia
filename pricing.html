@@ -271,8 +271,8 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
 <section class="block wrap" style="padding-top:20px">
   <div style="display:flex;justify-content:center;margin-bottom:34px" class="reveal">
     <div style="display:inline-flex;border:1px solid var(--edge-strong);border-radius:12px;overflow:hidden;font-size:14px">
-      <button id="bill-monthly" onclick="setBill('monthly')" style="padding:10px 22px;border:none;cursor:pointer;background:var(--gold);color:#0B0B0D;font-weight:600">Monthly</button>
-      <button id="bill-annual" onclick="setBill('annual')" style="padding:10px 22px;border:none;cursor:pointer;background:transparent;color:var(--ink-soft);font-weight:600">Annual · save up to 45%</button>
+      <button id="bill-annual" onclick="setBill('annual')" style="padding:10px 22px;border:none;cursor:pointer;background:var(--gold);color:#0B0B0D;font-weight:600">Annual · save up to 45%</button>
+      <button id="bill-monthly" onclick="setBill('monthly')" style="padding:10px 22px;border:none;cursor:pointer;background:transparent;color:var(--ink-soft);font-weight:600">Monthly</button>
     </div>
   </div>
   <div class="pricing">
@@ -310,6 +310,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     document.querySelectorAll('.amt[data-m]').forEach(function(el){ el.querySelector('.v').textContent = m?el.getAttribute('data-m'):el.getAttribute('data-a'); });
     document.querySelectorAll('.save[data-m]').forEach(function(el){ el.textContent = m?el.getAttribute('data-m'):el.getAttribute('data-a'); });
   }
+  setBill('annual'); // annual-first: the $8.17/video story leads
   </script>
 </section>
 <section class="block wrap" style="background:rgba(16,16,20,.4);border-block:1px solid var(--edge)">
