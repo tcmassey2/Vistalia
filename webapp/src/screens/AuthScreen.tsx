@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useStore } from "../lib/store";
 import {
   signIn,
@@ -27,17 +27,27 @@ export default function AuthScreen() {
   // Track the email of the just-finished signup so the "Resend confirmation"
   // button knows which address to retarget when the original mail vanishes.
   const [pendingConfirmEmail, setPendingConfirmEmail] = useState("");
-  // hCaptcha token from the widget. Required by Supabase Auth when CAPTCHA
-  // is enabled in the project settings AND HCAPTCHA_SITE_KEY is configured.
+  // Turnstile token from the widget. Required by Supabase Auth when CAPTCHA
+  // is enabled in the project settings AND TURNSTILE_SITE_KEY is configured.
   // When the site key is empty, the widget renders nothing and this stays
   // empty — Supabase accepts the request without it.
   const [captchaToken, setCaptchaToken] = useState("");
-  // Bumped after every failed submit so the HCaptcha widget gets
-  // remounted with a fresh iframe — otherwise hCaptcha returns the
+  // Bumped after every failed submit so the Turnstile widget gets
+  // remounted with a fresh iframe — otherwise the widget returns the
   // SAME token from its internal cache and Supabase 422s with
   // 'captcha protection: request disallowed (already-seen-response)'.
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const captchaRequired = Boolean(env().TURNSTILE_SITE_KEY);
+  // Turnstile tokens are only valid for 300s after the widget solves — but
+  // the widget solves ON MOUNT and then displays "Success!" forever. A user
+  // who loads the page, types slowly (or tabs away), and submits minutes
+  // later sends a dead token and Supabase rejects with the cryptic
+  // 'captcha protection: request disallowed (timeout-or-duplicate)'.
+  // So we stamp each token's birth time and, at submit, refresh any token
+  // older than CAPTCHA_MAX_AGE_MS before calling auth.
+  const CAPTCHA_MAX_AGE_MS = 120_000;
+  const captchaTokenAtRef = useRef(0);
+  const captchaWaiterRef = useRef<{ resolve: (token: string) => void } | null>(null);
 
   // Reset both the local token AND force the widget to re-render.
   // Call after any failed submit OR after a successful submit that
@@ -45,7 +55,29 @@ export default function AuthScreen() {
   // a fresh challenge).
   const resetCaptcha = () => {
     setCaptchaToken("");
+    captchaTokenAtRef.current = 0;
     setCaptchaResetKey((k) => k + 1);
+  };
+
+  // Return a token guaranteed to be fresh enough for Supabase's siteverify
+  // call. If the current one is young, use it; otherwise remount the widget
+  // (which auto-solves) and await the new token from onVerify. Rejects after
+  // 30s so a broken/blocked widget surfaces a readable error instead of
+  // hanging the submit button.
+  const ensureFreshCaptcha = (): Promise<string> => {
+    const age = Date.now() - captchaTokenAtRef.current;
+    if (captchaToken && age < CAPTCHA_MAX_AGE_MS) return Promise.resolve(captchaToken);
+    const fresh = new Promise<string>((resolve, reject) => {
+      captchaWaiterRef.current = { resolve };
+      window.setTimeout(() => {
+        if (captchaWaiterRef.current) {
+          captchaWaiterRef.current = null;
+          reject(new Error("The security check didn't respond. Complete the CAPTCHA below, then try again."));
+        }
+      }, 30_000);
+    });
+    resetCaptcha(); // burn the stale token; the remounted widget solves and resolves the promise
+    return fresh;
   };
   // 2FA challenge state. When sign-in returns with the user enrolled in
   // TOTP, we flip to mode='totp' and stash the factorId here for the
@@ -74,16 +106,19 @@ export default function AuthScreen() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    // Guard against double-submit: setBusy is async, so two clicks in the
+    // same frame would both pass a disabled-button check and fire two auth
+    // calls with the SAME single-use token — the second one dies with
+    // 'timeout-or-duplicate'.
+    if (busy) return;
     setError("");
     setInfo("");
     setBusy(true);
     try {
       if (mode === "signup") {
-        if (captchaRequired && !captchaToken) {
-          throw new Error("Please complete the CAPTCHA below to continue.");
-        }
+        const token = captchaRequired ? await ensureFreshCaptcha() : undefined;
         track(events.signupStarted);
-        await signUp(email, password, captchaToken || undefined);
+        await signUp(email, password, token);
         track(events.signupCompleted);
         trackLead(); // Meta pixel Lead — the ad account optimizes on this
         resetCaptcha(); // single-use token; force re-challenge on retry
@@ -94,10 +129,8 @@ export default function AuthScreen() {
         // Captcha is required on sign-in too when Supabase has bot protection
         // enabled (which we do, project-wide). Without a token Supabase
         // rejects with "captcha protection: request disallowed".
-        if (captchaRequired && !captchaToken) {
-          throw new Error("Please complete the CAPTCHA below to continue.");
-        }
-        await signIn(email, password, captchaToken || undefined);
+        const token = captchaRequired ? await ensureFreshCaptcha() : undefined;
+        await signIn(email, password, token);
         resetCaptcha();
         // Check whether this account has 2FA enrolled. If so, the session
         // is at aal1 — we need a TOTP challenge to upgrade to aal2 before
@@ -122,10 +155,8 @@ export default function AuthScreen() {
         // store.init's onAuthChange will route to dashboard now that
         // the session is at aal2.
       } else if (mode === "forgot") {
-        if (captchaRequired && !captchaToken) {
-          throw new Error("Please complete the CAPTCHA below to continue.");
-        }
-        await requestPasswordReset(email, captchaToken || undefined);
+        const token = captchaRequired ? await ensureFreshCaptcha() : undefined;
+        await requestPasswordReset(email, token);
         resetCaptcha();
         setInfo(
           "If an account exists for " + email + ", a password-reset link is on its way. Check your inbox."
@@ -153,16 +184,13 @@ export default function AuthScreen() {
   };
 
   const handleResendConfirmation = async () => {
-    if (!pendingConfirmEmail) return;
+    if (!pendingConfirmEmail || busy) return;
     setError("");
     setInfo("");
-    if (captchaRequired && !captchaToken) {
-      setError("Please complete the CAPTCHA below before requesting another email.");
-      return;
-    }
     setBusy(true);
     try {
-      await resendConfirmationEmail(pendingConfirmEmail, captchaToken || undefined);
+      const token = captchaRequired ? await ensureFreshCaptcha() : undefined;
+      await resendConfirmationEmail(pendingConfirmEmail, token);
       resetCaptcha();
       setInfo("Confirmation email re-sent to " + pendingConfirmEmail + ".");
     } catch (err) {
@@ -337,8 +365,17 @@ export default function AuthScreen() {
                   // so hCaptcha can't cache and replay the burned token —
                   // root cause of 'already-seen-response' on retry.
                   key={`${mode}-${captchaResetKey}`}
-                  onVerify={(token) => setCaptchaToken(token)}
-                  onExpire={() => setCaptchaToken("")}
+                  onVerify={(token) => {
+                    setCaptchaToken(token);
+                    captchaTokenAtRef.current = Date.now();
+                    // A submit may be awaiting this fresh token (ensureFreshCaptcha).
+                    captchaWaiterRef.current?.resolve(token);
+                    captchaWaiterRef.current = null;
+                  }}
+                  onExpire={() => {
+                    setCaptchaToken("");
+                    captchaTokenAtRef.current = 0;
+                  }}
                 />
               )}
 
@@ -355,7 +392,11 @@ export default function AuthScreen() {
 
               <button
                 type="submit"
-                disabled={busy || (captchaRequired && !captchaToken && (mode === "signup" || mode === "signin" || mode === "forgot"))}
+                // Don't gate the button on captchaToken: tokens expire and get
+                // cleared (onExpire), which used to brick the button silently.
+                // submit() now acquires a fresh token itself via
+                // ensureFreshCaptcha(), so a click always works or errors loudly.
+                disabled={busy}
                 className="btn-primary-em h-11 mt-2 rounded-lg disabled:opacity-50"
               >
                 {busy ? (
@@ -446,6 +487,12 @@ function humanizeAuthError(msg: string): string {
   if (/password.{0,30}(short|weak|6 character)/i.test(msg)) return "Password must be at least 8 characters.";
   if (/Supabase isn't configured/i.test(msg)) return "Auth isn't configured yet. Contact support.";
   if (/rate.?limit|too many requests/i.test(msg)) return "Too many attempts — wait a minute and try again.";
+  // Supabase's raw captcha rejections are cryptic. All of them mean the same
+  // thing to the user: the check went stale, and a retry (which now always
+  // fetches a fresh token) will fix it.
+  if (/timeout-or-duplicate|already-seen-response|captcha protection/i.test(msg)) {
+    return "The security check expired. Just click the button again — it refreshes automatically.";
+  }
   if (/user not found|no user/i.test(msg)) return "We couldn't find that account.";
   return msg;
 }
