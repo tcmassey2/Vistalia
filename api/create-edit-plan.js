@@ -661,7 +661,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
                 // camera). Depth-axis moves (push/pull) are the most stable
                 // on image-to-video. Keep laterals rare and only where
                 // there's real depth to traverse.
-                ? "Engine is Cinematic AI (Veo image-to-video). Set scene duration to 3-3.5 seconds for most scenes; the exterior hero and one or two showcase rooms may run 4-6 seconds; never exceed 6. Camera motion: strongly prefer push_in and pull_out (most stable). Use lateral_pan or parallax_zoom ONLY for wide, open, deep spaces (large great rooms, exteriors with long sightlines) — never in furnished rooms shot at close or medium range. Use detail_sweep only on true close-up detail shots. For rooms with prominent exposed ceiling beams, low soffits, or large foreground obstructions near the camera, choose pull_out instead of push_in — a forward move risks colliding with the foreground."
+                ? "Engine is Cinematic AI (Veo image-to-video). Set scene duration to 3-3.5 seconds for most scenes; the exterior hero and one or two showcase rooms may run 4-6 seconds; never exceed 6. Camera motion: strongly prefer push_in (most stable). NEVER use pull_out — backward moves reveal frame-edge area the photo has no data for, and the model invents content there. Use lateral_pan or parallax_zoom ONLY for wide, open, deep spaces (large great rooms, exteriors with long sightlines) — never in furnished rooms shot at close or medium range. Use detail_sweep only on true close-up detail shots. For rooms with prominent exposed ceiling beams, low soffits, or large foreground obstructions near the camera, keep push_in but make it very slow and shallow so the camera never reaches the foreground."
                 : "Engine is Quick Reel (Ken Burns photo motion). Scene duration 2.0–3.0s for kitchen/living, 1.6–2.4s for detail shots, 2.6–3.2s for hero shots.",
               narrationGuidance,
               "Return strict JSON only."
@@ -1522,6 +1522,13 @@ function normalizeEditPlan(plan, photos, context) {
       // pixels. Hero-shot drama survives — push-in IS the classic house
       // opener. (QC-ladder retries manage their own motion downstream.)
       if (isExterior && motion !== "push_in") motion = "push_in";
+      // v46 (m50, launch day): PULL-OUT IS RETIRED EVERYWHERE, not just
+      // exteriors. Troy: "the camera should not be panning out." Backward
+      // moves reveal edge area the photo has no data for — Veo paints
+      // plausible streets/sidewalks/furniture there and QC can't falsify
+      // what the photo never showed (m50 scene 1 shipped an invented brick
+      // street). Interiors keep the rest of the palette.
+      if (motion === "pull_out") motion = "push_in";
       return {
       photoId: scene.photoId,
       order: index + 1,
@@ -1980,7 +1987,7 @@ function motionFor(roomType, style, index) {
   if (roomType === "bathroom") return "vertical_reveal";
   if (roomType === "detail") return "detail_sweep";
   if (/mls/i.test(style || "")) return "push_in";
-  if (roomType === "outdoor" || roomType === "amenity") return "pull_out";
+  if (roomType === "outdoor" || roomType === "amenity") return "push_in"; // v46: pull_out retired (m50 invented street)
   return "push_in";
 }
 

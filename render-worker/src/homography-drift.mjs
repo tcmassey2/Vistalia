@@ -91,7 +91,10 @@ const MOVES = [
   { yaw: [0, 1.5],    pitch: [0, -0.35], roll: 0,     zoom: [1.0, 1.13] },  // push + slow turn R
   { yaw: [1.6, -1.6], pitch: [0, 0],     roll: 0,     zoom: [1.0, 1.06] },  // glide sweep L
   { yaw: [0, -1.2],   pitch: [0.3, -0.3], roll: 0,    zoom: [1.0, 1.12] },  // push + turn L, rise
-  { yaw: [-0.8, 0],   pitch: [-0.3, 0],  roll: 0,     zoom: [1.12, 1.0] },  // settling reveal (pull)
+  // v46 (m50): was a settling PULL (zoom 1.12→1.0) — the rotation pool handed
+  // it to floored scenes at random (m50 scene 5 got it), so even deterministic
+  // floors could pan out. Troy: "the camera should not be panning out." Push only.
+  { yaw: [-0.8, 0],   pitch: [-0.3, 0],  roll: 0,     zoom: [1.0, 1.1] },   // settling push
   { yaw: [-1.5, 1.5], pitch: [0, 0],     roll: 0.15,  zoom: [1.0, 1.07] },  // glide sweep R
   { yaw: [0, 0.6],    pitch: [0.45, -0.25], roll: 0,  zoom: [1.0, 1.15] }   // hero push, tilt up
 ];
@@ -129,7 +132,8 @@ export async function renderHomographyDrift({
 
   const motion = String(cameraMotion || "push_in").toLowerCase();
   let mv = MOVES[(sceneIndex * 5 + 1) % MOVES.length];
-  if (motion === "pull_out") mv = MOVES[3];
+  // v46: legacy pull_out motions render as the hero push — no backward moves.
+  if (motion === "pull_out") mv = MOVES[5];
   else if (motion === "lateral_pan" || motion === "detail_sweep")
     mv = MOVES[sceneIndex % 2 === 0 ? 1 : 4];
   const flip = sceneIndex % 2 === 0 ? 1 : -1;

@@ -325,27 +325,36 @@ export async function renderRunwayJob(body, options = {}) {
                 `shipping it (likely VLM false positive; Edit Studio regen is the remedy if real).`
               );
             } else {
-              // v34 NO-FLOOR POLICY (Troy, launch eve): the Ken Burns floor is
-              // retired from cinematic renders — a 2D still between real
-              // camera moves was never shippable quality. Third attempt: a
-              // FULL cinematic prompt with pull_out motion — different camera
-              // path, genuinely different generation, not the same roll.
-              // If a scene produces hard artifacts (text/objects) on all
-              // three attempts, the render ABORTS and the credit refunds:
-              // quality or your money back, never a silent downgrade.
-              console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — third attempt: cinematic pull_out.`);
-              qcThirdTryCount++;
-              const thirdScene = { ...scene, cameraMotion: "pull_out" };
-              // v41: pullOutOverride makes the third path REAL (see
-              // CONSTRAINED_PROMPTS.pullOut) — previously this re-rolled the
-              // original planned prompt.
-              const third = await generateVeoSceneClip(thirdScene, manifest, tempDir, index, { constrained: false, pullOutOverride: true });
-              const verdict3 = await qcVeoClip({
-                clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
-                sceneIndex: index, roomType: scene.roomType, tempDir
-              });
+              // v46 (m50, LAUNCH DAY): the pull_out third attempt is RETIRED.
+              // Troy: "the camera should not be panning out." m50 scene 1
+              // (exterior) shipped a third-attempt pull-out that INVENTED a
+              // sidewalk and a brick street at the reveal edge — and QC
+              // passed it, because reveals manufacture plausible content the
+              // photo has no data to falsify (the exact v41.2 residual). The
+              // ladder was the one path that still violated the exteriors-
+              // push-in-only invariant.
+              //   Exteriors: no third roll at all — reveals are structurally
+              //   unverifiable there. Straight to the deterministic floor.
+              //   Interiors: third attempt = STRICT STATIC RE-ROLL. Veo is
+              //   stochastic, so a fresh seed on the most conservative
+              //   prompt still rescues scenes — it just can't pan out.
+              const room3 = String(scene.roomType || "").toLowerCase();
+              const isExterior3 = /exterior|backyard|outdoor|front|yard|patio|pool|garden|landscap|deck|amenity/.test(room3);
+              let third = null;
+              let verdict3 = { checked: true, pass: false, reasons: hardReasons };
+              if (isExterior3) {
+                console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — exterior: no reveal roll, PREMIUM PHOTO MOTION floor.`);
+              } else {
+                console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — third attempt: strict static re-roll.`);
+                qcThirdTryCount++;
+                third = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, strictConstrained: true });
+                verdict3 = await qcVeoClip({
+                  clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
+                  sceneIndex: index, roomType: scene.roomType, tempDir
+                });
+              }
               const hard3 = verdict3.checked ? verdict3.reasons.filter((r) => !r.startsWith("motion")) : [];
-              if (verdict3.checked && hard3.length > 0) {
+              if (!third || (verdict3.checked && hard3.length > 0)) {
                 // v36 PREMIUM PHOTO MOTION FLOOR (Troy: "what if our fallback
                 // was as good as Reel-E's actual product"). Three genuinely
                 // different generations all produced hard artifacts — this
@@ -469,7 +478,7 @@ export async function renderRunwayJob(body, options = {}) {
   if (isVeo && qcEnabled()) {
     console.info(
       `[qc] Verify-then-deliver summary — ${qcRetryCount} scene${qcRetryCount === 1 ? "" : "s"} regenerated constrained after QC fail, ` +
-      `${qcThirdTryCount} needed the third (pull_out) attempt, ${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
+      `${qcThirdTryCount} needed the third (static re-roll) attempt, ${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
       `${droppedCount} dropped (floor-of-the-floor). Detected artifacts shipped: 0 by construction.`
     );
     // v45.1 blackout telemetry (m32b: EVERY inspection 429'd and the render
@@ -942,18 +951,11 @@ const CONSTRAINED_PROMPTS = {
     "size, door count, handles, controls, and finish; countertop and backsplash patterns " +
     "stay identical; cabinet fronts stay rigid with the same hardware; nothing reflective " +
     "changes; no new objects appear. Nothing in the scene moves — only the camera.",
-  // v41 (pipeline audit): the QC ladder's third attempt claimed "cinematic
-  // pull_out" since v34, but generateVeoSceneClip reads scene.veoPrompt
-  // verbatim — the cameraMotion swap changed a field nothing consumed, so
-  // attempt 3 was a same-prompt re-roll. This prompt makes the different
-  // camera path real: a conservative reveal, with the revealed edge area
-  // explicitly owned (the edge-invention lesson from v34.9).
-  pullOut:
-    "Completely smooth, stable camera easing slowly straight backward, ending about 10% " +
-    "wider, with gentle easing — no panning, no tilting, no drift. The newly revealed " +
-    "area at the frame edges continues the same walls, floor, ceiling, and surfaces " +
-    "exactly as photographed — no new objects, furniture, or vegetation may appear " +
-    "there. Nothing in the scene moves — only the camera.",
+  // v46 (m50, launch day): CONSTRAINED_PROMPTS.pullOut DELETED. The v41
+  // "conservative reveal with edge ownership" still invented a sidewalk and
+  // brick street on m50 scene 1 — edge-ownership prose can't beat the fact
+  // that the photo has no data at the reveal edge. No prompt in this table
+  // may move the camera backward.
   pool:
     "Completely static, locked-off camera. Extremely slow forward push of about 4% only, " +
     "with no other movement and no drift. " +
@@ -996,16 +998,14 @@ const VEO_FIDELITY_SUFFIX =
 // Per-scene Veo generation, mapped to the same clipResults shape that
 // generateClip / generateKenBurnsFallback return so the stitch pipeline
 // downstream is untouched.
-export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false, pullOutOverride = false } = {}) {
+export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false } = {}) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   const imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Scene ${sceneIndex + 1} (${scene.photoId}) missing durable image URL.`);
 
   // Prompt priority: explicit veoPrompt from a v26 edit plan → legacy
   // runwayPrompt (older plans; plain text, works on Veo) → constrained.
-  const basePrompt = pullOutOverride
-    ? CONSTRAINED_PROMPTS.pullOut
-    : constrained
+  const basePrompt = constrained
     ? buildConstrainedVeoPrompt(scene, { strict: strictConstrained })
     : (scene.veoPrompt || scene.veo_prompt || scene.runwayPrompt || scene.runway_prompt || buildConstrainedVeoPrompt(scene));
   // v28: exteriors are where Veo morphs worst — it "animates" foliage under any
@@ -1279,8 +1279,10 @@ function buildZoompanExpr(motion, totalFrames, dim, opts = {}) {
     `${PRE},zoompan=z='${zoom}':d=${N}:s=${sOut}:fps=${fps}:x='${x}':y='${y}',${POST}`;
 
   if (motion === "pull_out") {
-    // 1.18 → 1.0, slight drift toward the biased center.
-    return wrap(`1.18-0.18*${smoothT}`, cx, `${cyB}+ih*0.01*${smoothT}`);
+    // v46: pull-out RETIRED everywhere (m50 — "the camera should not be
+    // panning out"). Legacy plans / audit-row regens may still carry the
+    // motion tag; render it as the push-in ramp instead.
+    return wrap(`1.0+0.18*${smoothT}`, cx, `${cyB}+ih*0.01*${smoothT}`);
   }
   if (motion === "lateral_pan") {
     // Gimbal-track sweep, ±9% of width, direction alternates per scene.
