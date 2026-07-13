@@ -27,8 +27,9 @@ Ranked for a cold real-estate-agent audience on Reels:
 
 **Day-1 structure ($150/day):** UGC ad set $100/day (ugc-car + ugc-secret +
 ugc-9pm — 3 creatives, auction picks) · Hero ad set $50/day (hero +
-static-dusk) · Statics ad set stays PAUSED. Bench: techy + veteran (Diane,
-when generated) — rotate in at frequency >2 or CTR −20%. 2 ad sets, never
+static-dusk) · Statics ad set stays PAUSED. Bench: techy + veteran (Diane — BUILT Jul 13,
+vistalia-ad-ugc-veteran-18s.mp4, 'Experience wins again', luxury captions,
+claim-clean) — rotate in at frequency >2 or CTR −20%. 2 ad sets, never
 more, at this budget: learning lives at the ad-set level.
 Prediction (prior, not forecast): car > secret > 9pm on CTR; hero lowest CTR
 but highest-intent clicks — judge it on signup rate, not CTR.
