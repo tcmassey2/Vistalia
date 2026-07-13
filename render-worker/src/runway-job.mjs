@@ -187,9 +187,31 @@ export async function renderRunwayJob(body, options = {}) {
   // ffmpeg locally. The render completes with mixed Cinematic AI and
   // Ken-Burns scenes rather than dying with one bad apple. Daily-cap
   // errors still propagate up — those need user action, not a fallback.
-  const rawClipResults = await pMap(
+  // v45.14 watchdog: backstop for anything the per-attempt deadline can't
+  // see. If the generation phase makes zero scene progress for WATCHDOG_MS,
+  // the process is wedged in an await no guard covers — exit loudly. Render
+  // restarts the service in ~1-2 min and the pull-queue re-claims the job:
+  // a 25-minute heartbeat-expiry stall becomes ~3 minutes, automatically.
+  const WATCHDOG_MS = Number(process.env.JOB_WATCHDOG_MS) || 12 * 60 * 1000;
+  let lastSceneEventAt = Date.now();
+  const touchWatchdog = () => { lastSceneEventAt = Date.now(); };
+  const generationWatchdog = setInterval(() => {
+    const silentMs = Date.now() - lastSceneEventAt;
+    if (silentMs > WATCHDOG_MS) {
+      console.error(
+        `[watchdog] zero scene progress for ${Math.round(silentMs / 1000)}s — ` +
+        `process presumed wedged in an unguarded await; exiting for pull-queue requeue.`
+      );
+      process.exit(1);
+    }
+  }, 60000);
+
+  let rawClipResults;
+  try {
+  rawClipResults = await pMap(
     photoScenes,
     async (scene, index) => {
+      touchWatchdog();
       let result;
       // The Hallucination Guard decision is logged with reasoning so we can
       // tune thresholds based on real-world data.
@@ -214,15 +236,19 @@ export async function renderRunwayJob(body, options = {}) {
         let usedConstrained = constrained;
         try {
           result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained });
+          touchWatchdog();
         } catch (error) {
+          touchWatchdog();
           // Auto-retry ONCE, always constrained (a failed cinematic attempt
           // most often means the motion asked too much of the source photo).
           console.warn(`[veo] scene ${index + 1} failed (${error.message}). Retrying once, constrained.`);
           try {
             result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
+            touchWatchdog();
             usedConstrained = true;
             fallbackCount++; // counted as "retried", surfaces in phase text
           } catch (retryError) {
+            touchWatchdog();
             // v36: two straight generation failures (fal rejection, hostile
             // photo, outage) → premium photo-motion floor. Deterministic, so
             // it works even when fal is DOWN — an entire render can complete
@@ -257,6 +283,7 @@ export async function renderRunwayJob(body, options = {}) {
             clipPath: result.clipPath, sourceImageUrl: qcSrcUrl,
             sceneIndex: index, roomType: scene.roomType, tempDir
           });
+          touchWatchdog();
           // v43.2: track whether the clip that SHIPS carried a completed
           // verdict. Fail-open (429) scenes are the defect carriers — m28,
           // m29 scene 2, m30 scene 7: three renders, the hallucination was
@@ -394,6 +421,9 @@ export async function renderRunwayJob(body, options = {}) {
     },
     { concurrency }
   );
+  } finally {
+    clearInterval(generationWatchdog);
+  }
 
   // v34.6 drop floor: a couple of drops = hostile photos, curate them out
   // and ship. More than that = something systemic (fal outage, bad photo
@@ -1040,16 +1070,34 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
     : 8;
 
   const { generateVeoClip } = await import("./veo-job.mjs");
-  const result = await generateVeoClip({
-    imageUrl,
-    prompt,
-    aspectRatio: ratio,
-    duration: `${bucketSec}s`,
-    resolution,
-    sceneIndex,
-    photoId: scene.photoId,
-    tempDir
-  });
+  // v45.14 ("freeze at 15%" — third strike): a hard wall-clock ceiling on the
+  // ENTIRE generate+download primitive. The inner guards (6-min subscribe,
+  // 2-min download) each cover one await, but the 03:25 MLS job proved a
+  // path can still hang without tripping any of them. A hung attempt now
+  // BECOMES a thrown error after 8.5 min → the caller's existing
+  // retry-once-then-floor ladder handles it with visible log lines. The
+  // orphaned background attempt is abandoned; its temp file is never read.
+  const ATTEMPT_DEADLINE_MS = Number(process.env.VEO_ATTEMPT_DEADLINE_MS) || 510000;
+  let attemptDeadline;
+  const result = await Promise.race([
+    generateVeoClip({
+      imageUrl,
+      prompt,
+      aspectRatio: ratio,
+      duration: `${bucketSec}s`,
+      resolution,
+      sceneIndex,
+      photoId: scene.photoId,
+      tempDir
+    }),
+    new Promise((_, reject) => {
+      attemptDeadline = setTimeout(() => {
+        const e = new Error(`scene ${sceneIndex + 1} generation exceeded ${Math.round(ATTEMPT_DEADLINE_MS / 1000)}s hard deadline`);
+        e.code = "ATTEMPT_DEADLINE";
+        reject(e);
+      }, ATTEMPT_DEADLINE_MS);
+    })
+  ]).finally(() => clearTimeout(attemptDeadline));
 
   return {
     sceneIndex,
