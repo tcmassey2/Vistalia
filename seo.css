@@ -126,3 +126,12 @@ footer{border-top:1px solid var(--edge);padding:40px 0 48px;margin-top:30px}
 .foot a:hover{color:var(--ink)}
 .foot-bottom{display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-top:34px;padding-top:20px;border-top:1px solid var(--edge);font-size:12.5px;color:var(--ink-dim)}
 .disclaim{max-width:var(--maxw);margin:0 auto;padding:24px;font-size:11.5px;color:var(--ink-dim);line-height:1.6;text-align:center}
+
+/* mobile-560 refinement (launch) */
+@media (max-width:560px){
+  .nav-actions a.signin{display:none}
+  .nav-actions{gap:10px}
+  .btn{padding:13px 20px;font-size:14.5px}
+  .btn-lg{padding:15px 28px;font-size:15.5px}
+  .hero .meta{gap:12px;font-size:11px}
+}
