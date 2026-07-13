@@ -1590,6 +1590,36 @@ function normalizeEditPlan(plan, photos, context) {
   // grow its window until it can hold a sentence, then start the next.
   // A 2.5s grid now narrates every other scene (~5s windows); a 4s grid
   // narrates every scene — same behavior as before on slow grids.
+  // v45.12 (m43/m46 "voiceover cut off" — the ending): the beat grid hands
+  // the FINAL scene whatever remainder is left (~2s on 9-photo renders),
+  // the CTA needs ~2.5s of speech, and the mixer's last-line grace spills
+  // the difference onto the outro card — audible as a cutoff under music.
+  // Guarantee the CTA a stage: the final scene gets at least
+  // MIN_LAST_SCENE_SEC, funded proportionally by earlier scenes (each
+  // floored at 2.2s). Total duration is unchanged; the small off-grid
+  // shift on donors is the price of an ending that lands.
+  const MIN_LAST_SCENE_SEC = 3.4;
+  {
+    const n = snappedDurations.length;
+    if (n >= 2 && snappedDurations[n - 1] < MIN_LAST_SCENE_SEC) {
+      const before = snappedDurations[n - 1];
+      const need = MIN_LAST_SCENE_SEC - before;
+      const donorTotal = snappedDurations.slice(0, -1).reduce((a, b) => a + b, 0);
+      let funded = 0;
+      for (let i = 0; i < n - 1; i++) {
+        const share = Math.min(need * (snappedDurations[i] / donorTotal), Math.max(0, snappedDurations[i] - 2.2));
+        if (share > 0) {
+          snappedDurations[i] = Math.round((snappedDurations[i] - share) * 1000) / 1000;
+          funded += share;
+        }
+      }
+      snappedDurations[n - 1] = Math.round((snappedDurations[n - 1] + funded) * 1000) / 1000;
+      if (funded > 0.05) {
+        console.info(`[plan] final scene stretched ${before.toFixed(2)}s → ${snappedDurations[n - 1].toFixed(2)}s so the CTA fits inside the video.`);
+      }
+    }
+  }
+
   const MIN_WINDOW_SEC = 3.2;
   const isNarrated = new Array(snappedDurations.length).fill(false);
   {
