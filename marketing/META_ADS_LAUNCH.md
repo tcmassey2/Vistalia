@@ -4,10 +4,11 @@
 
 Ranked for a cold real-estate-agent audience on Reels:
 
-1. **ugc-car** (17.8s) — lead creative. Car-selfie is the most native format
-   on Reels; hook names the enemy ("So the videographer…") → "Watch this
-   instead." → gold **$39** pop (true one-off price; copy carries the $8
-   anchor). Pair with Primary B, headline "$850 videographer → ~$8 a listing".
+1. **ugc-car** (17.0s, rebuilt from raw Jul 13) — lead creative. Car-selfie
+   is the most native format on Reels; hook names the enemy ("So the
+   videographer wanted $850…") → "Watch this instead." → b-roll product
+   proof. Signature luxury captions; no price claims in-video (copy carries
+   the $8 anchor). Pair with Primary B, headline "$850 videographer → ~$8 a listing".
 2. **hero-15s** — the only creative that shows the product (photo snaps into
    motion → second room → branded end card). Runs as the demo anchor. Pair
    with Primary A, headline "Listing video in minutes", desc 1.
@@ -63,8 +64,8 @@ Primary text (E, objection — for ugc-techy):
 > Say "about $8" or "~$8" (never "starting at $8" flat — actual is $8.17;
 > repricing Pro annual to $480 would make $8.00 exact if we want the clean
 > claim). $39 one-off may appear as the secondary no-subscription option.
-> Note: ugc-car's burned-in "$39" pop stays — it's the true one-off price;
-> the surrounding copy carries the $8 anchor.
+> Note: ugc-car was rebuilt from the raw (Jul 13) — no $39 or minutes claims
+> remain in any creative; copy alone carries the $8 anchor.
 
 ## Campaign 1 — "Still photos are costing you listings" (hero video)
 
