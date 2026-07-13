@@ -24,7 +24,7 @@ Ranked for a cold real-estate-agent audience on Reels:
 6. **static-living** — clearer message ("Photos in. Video tour out.") but
    weaker thumb-stop; swap for dusk after ~$75 spend if dusk CTR is soft.
 
-**Day-1 structure ($100/day):** UGC ad set $50 (ugc-car + ugc-9pm) ·
+**Day-1 structure ($100/day):** UGC ad set $50 (ugc-car + ugc-secret) ·
 Hero ad set $50 (hero + static-dusk) · Statics ad set stays PAUSED (fold
 statics into Hero instead — 2 ad sets = faster signal at this budget).
 Kill rule unchanged: CTR <0.8% after ~3 days / $150.
