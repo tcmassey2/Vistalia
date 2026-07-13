@@ -127,6 +127,14 @@ export default function AuthScreen() {
           // returns a live session and store.init's onAuthChange routes
           // straight to the dashboard. No "check your email" detour —
           // the fastest path from ad click to first render.
+          //
+          // With confirmations off, Supabase sends NO email at signup —
+          // fire the branded welcome email ourselves. Fire-and-forget:
+          // signup UX never waits on (or surfaces) email delivery.
+          fetch("/api/welcome-email", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${signUpData.session.access_token}` }
+          }).catch(() => {});
           setToast("Welcome to Vistalia");
           return;
         }

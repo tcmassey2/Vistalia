@@ -143,10 +143,29 @@ export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobI
     html: shell({
       eyebrow: "Render complete",
       headline: "Your video is ready.",
-      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. Open it in Vistalia to download every format (9:16, 1:1, 16:9) and the social shorts.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
+      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. Open it in Vistalia to watch it and download every format you selected.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
       ctaLabel: "Open the bundle",
       ctaUrl: `${APP_URL}/app/`,
       footer: `Sent to ${escape(email)} because a render you started just finished. You can disable these in Settings.`
+    })
+  };
+}
+
+/* ============================================================
+   Welcome (signup) — v46: email confirmation no longer gates signin,
+   so Supabase sends nothing at signup. This is the first-touch email,
+   sent by /api/welcome-email right after account creation.
+   ============================================================ */
+export function welcomeEmail({ email }) {
+  return {
+    subject: "Welcome to Vistalia — your first listing video is on us",
+    html: shell({
+      eyebrow: "Welcome",
+      headline: "Your first video is on us.",
+      body: `<p>You're in. Upload the listing photos you already have, pick a style, and Vistalia turns them into a cinematic vertical tour — AI camera motion, on-beat music, professional narration, every scene verified against your photos.</p><p style="margin-top:14px;">Your first video is free. No credit card.</p>`,
+      ctaLabel: "Make your first video",
+      ctaUrl: `${APP_URL}/app/`,
+      footer: `Sent to ${escape(email)} because this address just created a Vistalia account. If that wasn't you, reply and we'll remove it.`
     })
   };
 }
