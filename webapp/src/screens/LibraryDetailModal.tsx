@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LibraryEntry, LibrarySceneEntry, Photo } from "../lib/types";
 import { useStore } from "../lib/store";
 import {
@@ -429,6 +429,12 @@ function ScenesRegenGrid({
   // same master would race each other's audit-row writes — by design.
   const [active, setActive] = useState<RegenJobState | null>(null);
 
+  // Click-to-play: the scene being previewed in the lightbox. Each scene's
+  // normalized clip (scene-NNN.mp4) is persisted at a durable URL, so the
+  // user can watch any scene in isolation and see exactly which one
+  // struggled before deciding to fix it.
+  const [preview, setPreview] = useState<LibrarySceneEntry | null>(null);
+
   // Pull the agent's CURRENT branding from the store. The regen flow re-stitches
   // the video end-to-end so it picks up the latest brand kit — exactly what you
   // want if you've updated your headshot / logo / license since the original render.
@@ -566,13 +572,131 @@ function ScenesRegenGrid({
               activeJob={active?.sceneIndex === scene.sceneIndex ? active : null}
               disabled={Boolean(active) && active?.sceneIndex !== scene.sceneIndex}
               onRegen={handleRegen}
+              onPreview={setPreview}
             />
           ))}
       </div>
       <div className="text-[11px] text-ink-dim leading-relaxed">
-        Redo with AI re-creates a scene with fresh cinematic motion and re-stitches your
-        video (60–180 seconds). Photo Motion swaps in a clean, artifact-free camera move —
-        instant peace of mind for compliance-sensitive listings.
+        Tap any scene to play it on its own. Redo with AI re-creates a scene with fresh
+        cinematic motion and re-stitches your video (60–180 seconds). Photo Motion swaps
+        in a clean, artifact-free camera move — instant peace of mind for
+        compliance-sensitive listings.
+      </div>
+      {preview && (
+        <ScenePreviewLightbox
+          scene={preview}
+          busy={Boolean(active)}
+          onClose={() => setPreview(null)}
+          onRegen={(sceneIndex, mode) => {
+            setPreview(null);
+            handleRegen(sceneIndex, mode);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Full-size playback of one scene clip. The grid thumbnails are 16:9 crops
+// of a 9:16 clip — far too small to judge motion artifacts. This lightbox
+// plays the actual vertical clip at real size with the fix actions right
+// there, so watch → decide → click is one motion.
+function ScenePreviewLightbox({
+  scene,
+  busy,
+  onClose,
+  onRegen
+}: {
+  scene: LibrarySceneEntry;
+  busy: boolean;
+  onClose: () => void;
+  onRegen: (sceneIndex: number, mode: RegenerateMode) => void;
+}) {
+  // ESC closes the preview (and stops propagating so the outer modal stays).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  const sceneLabel = `Scene ${scene.sceneIndex + 1}`;
+  const roomLabel = scene.roomType ? formatRoomLabel(scene.roomType) : "";
+
+  // Regen overwrites scene-NNN.mp4 at the SAME storage URL, and Supabase
+  // serves it with a long max-age — without a buster, previewing a scene
+  // right after redoing it can play the stale cached clip. One buster per
+  // lightbox open (useMemo) so replay/loop doesn't refetch.
+  const bustedClipUrl = useMemo(() => {
+    if (!scene.clipUrl) return "";
+    const sep = scene.clipUrl.includes("?") ? "&" : "?";
+    return `${scene.clipUrl}${sep}v=${Date.now()}`;
+  }, [scene.clipUrl]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-paper/95 backdrop-blur-sm grid place-items-center p-4 fade-up-in"
+      onClick={(e) => {
+        // Contain the click — without this it bubbles into the outer
+        // library modal's backdrop handling and closes EVERYTHING.
+        e.stopPropagation();
+        onClose();
+      }}
+    >
+      <div
+        className="w-full max-w-[340px] sm:max-w-[380px]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm">
+            <span className="text-ink font-semibold">{sceneLabel}</span>
+            {roomLabel && <span className="text-ink-muted"> · {roomLabel}</span>}
+            {scene.wasFallback && <span className="text-ink-dim"> · Photo Motion</span>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close scene preview"
+            className="w-8 h-8 grid place-items-center rounded-full bg-surface-raised hover:bg-surface-input text-ink-muted hover:text-ink border border-edge transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="rounded-xl overflow-hidden border border-edge bg-black">
+          <video
+            key={bustedClipUrl}
+            src={bustedClipUrl}
+            controls
+            autoPlay
+            loop
+            playsInline
+            preload="metadata"
+            poster={scene.photoUrl || undefined}
+            className="w-full max-h-[70vh] object-contain bg-black"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2 mt-3">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onRegen(scene.sceneIndex, "ai")}
+            className="px-3 py-2 text-[11px] uppercase tracking-wider font-semibold bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 hover:border-gold rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            Redo with AI
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onRegen(scene.sceneIndex, "kenburns")}
+            className="px-3 py-2 text-[11px] uppercase tracking-wider font-semibold bg-surface-raised hover:bg-surface-input text-ink-muted hover:text-ink border border-edge hover:border-ink-muted rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            Photo Motion
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -582,16 +706,22 @@ function SceneCell({
   scene,
   activeJob,
   disabled,
-  onRegen
+  onRegen,
+  onPreview
 }: {
   scene: LibrarySceneEntry;
   activeJob: RegenJobState | null;
   disabled: boolean;
   onRegen: (sceneIndex: number, mode: RegenerateMode) => void;
+  onPreview: (scene: LibrarySceneEntry) => void;
 }) {
   const sceneLabel = `Scene ${scene.sceneIndex + 1}`;
   const roomLabel = scene.roomType ? formatRoomLabel(scene.roomType) : "";
   const isActive = Boolean(activeJob);
+  // Preview stays available even while ANOTHER scene regenerates — watching
+  // is read-only. Only the cell mid-regen locks its own preview (the
+  // progress overlay owns that space, and the clip is about to change).
+  const canPreview = Boolean(scene.clipUrl) && !isActive;
 
   return (
     <div
@@ -599,7 +729,24 @@ function SceneCell({
         isActive ? "border-gold" : "border-edge"
       } bg-surface-input`}
     >
-      <div className="aspect-video bg-black relative">
+      <div
+        className={`aspect-video bg-black relative group ${canPreview ? "cursor-pointer" : ""}`}
+        role={canPreview ? "button" : undefined}
+        tabIndex={canPreview ? 0 : undefined}
+        aria-label={canPreview ? `Play ${sceneLabel}` : undefined}
+        title={canPreview ? "Play this scene on its own" : undefined}
+        onClick={canPreview ? () => onPreview(scene) : undefined}
+        onKeyDown={
+          canPreview
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onPreview(scene);
+                }
+              }
+            : undefined
+        }
+      >
         {scene.photoUrl ? (
           <img
             src={scene.photoUrl}
@@ -617,6 +764,11 @@ function SceneCell({
         {scene.wasFallback && (
           <div className="absolute top-1.5 right-1.5 bg-paper/85 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-ink-muted">
             Photo Motion
+          </div>
+        )}
+        {canPreview && (
+          <div className="absolute bottom-1.5 right-1.5 w-6 h-6 grid place-items-center rounded-full bg-paper/85 backdrop-blur-sm border border-edge text-gold text-[10px] transition-transform group-hover:scale-110 group-hover:border-gold pointer-events-none">
+            ▶
           </div>
         )}
         {isActive && (
