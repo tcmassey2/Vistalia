@@ -435,6 +435,18 @@ function ScenesRegenGrid({
   const branding = useStore((s) => s.branding);
   const profileUserId = useStore((s) => s.profile?.user_id || s.session?.user?.id || "");
 
+  // A failed regen used to leave `active` set forever — the error overlay
+  // stuck to the card and every OTHER scene's buttons stayed disabled until
+  // the modal was reopened. Show the reason for a few seconds, then release
+  // the grid so "just click it again" works.
+  const releaseAfterFailure = (sceneIndex: number) => {
+    setTimeout(() => {
+      setActive((cur) =>
+        cur && cur.status === "failed" && cur.sceneIndex === sceneIndex ? null : cur
+      );
+    }, 7000);
+  };
+
   const handleRegen = async (sceneIndex: number, mode: RegenerateMode) => {
     if (active) return;
     const targetScene = entry.scenes.find((s) => s.sceneIndex === sceneIndex);
@@ -466,6 +478,7 @@ function ScenesRegenGrid({
           progress: 100,
           error: result.error || "Regenerate submission failed."
         });
+        releaseAfterFailure(sceneIndex);
         return;
       }
 
@@ -482,9 +495,24 @@ function ScenesRegenGrid({
       };
       setActive(lastStatus);
 
+      // Poll with tolerance: a single failed poll (worker mid-deploy, network
+      // blip) must NOT kill a regen that's still running server-side — the
+      // job now lives in the render_jobs queue and survives worker restarts.
+      // Only surface an error after ~5 straight failures (~12s dark), and cap
+      // the whole wait at 12 minutes (worker hard-caps regen at 10).
+      const startedAt = Date.now();
+      let consecutivePollErrors = 0;
       while (true) {
         await new Promise((r) => setTimeout(r, 2500));
-        const status = await pollRender(progressKey);
+        let status;
+        try {
+          status = await pollRender(progressKey);
+          consecutivePollErrors = 0;
+        } catch (pollErr) {
+          consecutivePollErrors++;
+          if (consecutivePollErrors < 5) continue;
+          throw pollErr;
+        }
         lastStatus = {
           sceneIndex,
           mode,
@@ -496,6 +524,9 @@ function ScenesRegenGrid({
         };
         setActive(lastStatus);
         if (status.status === "completed" || status.status === "failed") break;
+        if (Date.now() - startedAt > 12 * 60 * 1000) {
+          throw new Error("This is taking longer than it should. Reopen this listing in a couple of minutes — if the scene hasn't updated, run the fix again.");
+        }
       }
 
       if (lastStatus.status === "completed") {
@@ -505,6 +536,9 @@ function ScenesRegenGrid({
           setActive(null);
           onUpdated?.();
         }, 1500);
+      } else {
+        // Worker reported failed — show the reason, then free the grid.
+        releaseAfterFailure(sceneIndex);
       }
     } catch (err) {
       setActive({
@@ -515,6 +549,7 @@ function ScenesRegenGrid({
         progress: 100,
         error: err instanceof Error ? err.message : "Regenerate failed."
       });
+      releaseAfterFailure(sceneIndex);
     }
   };
 

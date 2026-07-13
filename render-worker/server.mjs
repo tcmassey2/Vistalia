@@ -201,6 +201,38 @@ const server = http.createServer(async (request, response) => {
       // Use a derived progress key so the original render's job entry stays
       // intact for status polling. Format: <jobId>:regen:<sceneIndex>.
       const progressKey = `${targetJobId}:regen:${body?.sceneIndex ?? "?"}`;
+
+      // Resume-don't-duplicate: if this exact scene regen is already in
+      // flight (queued/rendering with a fresh heartbeat), hand back its
+      // current state instead of starting a second run. Double-clicks and
+      // re-opened modals resume polling the same job — no double fal spend,
+      // no racing audit-row writes. A STALE in-flight row (worker died,
+      // heartbeat >3 min old) falls through to a fresh enqueue, so "click
+      // again" is also the user's instant recovery path.
+      if (QUEUE_ENABLED) {
+        const existing = await fetchQueueRow(progressKey);
+        const beat = Date.parse(existing?.heartbeat_at || existing?.claimed_at || existing?.created_at || "") || 0;
+        const fresh = Date.now() - beat < 3 * 60 * 1000;
+        if (existing && (existing.status === "queued" || existing.status === "rendering") && fresh) {
+          sendJson(response, 202, {
+            status: existing.status,
+            phase: existing.phase || "Working",
+            progress: existing.progress ?? 5,
+            jobId: progressKey,
+            originalJobId: targetJobId,
+            sceneIndex: body?.sceneIndex,
+            mode: body?.mode || "ai",
+            mp4Url: "",
+            thumbnailUrl: "",
+            error: "",
+            createdAt: existing.created_at || now,
+            updatedAt: now,
+            resumed: true
+          });
+          return;
+        }
+      }
+
       const job = {
         status: "queued",
         phase: "Preparing scene regenerate",
@@ -216,6 +248,23 @@ const server = http.createServer(async (request, response) => {
         updatedAt: now
       };
       jobs.set(progressKey, job);
+
+      // Launch fix (Jul 13): regen jobs used to live ONLY in this instance's
+      // memory — persistJobStatus PATCHes matched no render_jobs row, so any
+      // worker restart (every repo push auto-deploys) wiped all trace and
+      // status polls died with "worker has no record of job". Route regen
+      // through the same pull queue as full renders: the row makes status
+      // survive restarts (api/render.js DB fallback), heartbeats flow, and
+      // the stuck-job reaper re-queues a regen orphaned mid-flight.
+      if (QUEUE_ENABLED) {
+        try {
+          await enqueueRenderJob(progressKey, { ...body, __regen: true });
+          sendJson(response, 202, job);
+          return; // pollAndProcess (this or any instance) claims it within ~2.5s
+        } catch (e) {
+          console.warn(`[queue] regen enqueue failed, running inline: ${e?.message}`);
+        }
+      }
       sendJson(response, 202, job);
       runRegenerateJob(progressKey, body);
       return;
@@ -323,15 +372,33 @@ async function sbRpc(fn, payload) {
   return res.json().catch(() => null);
 }
 
-// Enqueue a render job (idempotent on job_id).
+// Enqueue a render job (idempotent on job_id). Re-enqueueing an existing
+// job_id (e.g. a second regen of the same scene) resets attempts so the
+// stuck-job reaper's 3-strike counter starts fresh for the new run.
 async function enqueueRenderJob(jobId, body) {
-  const userId = body?.userId || body?.manifest?.userId || null;
+  const userId = body?.userId || body?.manifest?.userId || body?.manifest?.project?.userId || null;
   const res = await fetch(`${SUPABASE_URL}/rest/v1/render_jobs`, {
     method: "POST",
     headers: { ...sbHeaders, Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ job_id: jobId, user_id: userId, status: "queued", phase: "Queued", progress: 3, manifest: body })
+    body: JSON.stringify({ job_id: jobId, user_id: userId, status: "queued", phase: "Queued", progress: 3, manifest: body, attempts: 0, error: null })
   });
   if (!res.ok) throw new Error(`enqueue ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+}
+
+// Read one queue row (dedupe check for regen resume). Best-effort — a null
+// return just means "no usable row", and the caller enqueues fresh.
+async function fetchQueueRow(jobId) {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(jobId)}&select=status,phase,progress,heartbeat_at,claimed_at,created_at&limit=1`,
+      { headers: sbHeaders }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json().catch(() => []);
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch {
+    return null;
+  }
 }
 
 // Mirror an in-memory job's state to render_jobs (best-effort). PATCH by job_id
@@ -380,14 +447,22 @@ async function pollAndProcess() {
     while (activeRenders < RENDER_CONCURRENCY) {
       const claimed = await sbRpc("claim_render_job", { p_worker_id: WORKER_ID });
       if (!claimed || !claimed.job_id) break;
+      // Regen jobs ride the same queue (job_id = <jobId>:regen:<n>, manifest
+      // is the regen request body flagged __regen). Branch to the regen
+      // runner — runRenderJob would dispatch a full render AND refund a
+      // credit on failure that regen never charged.
+      const isRegen = Boolean(claimed.manifest?.__regen);
       activeRenders++;
       jobs.set(claimed.job_id, {
-        status: "rendering", phase: "Claimed", progress: 5, jobId: claimed.job_id,
+        status: "rendering", phase: isRegen ? "Starting scene redo" : "Claimed", progress: 5, jobId: claimed.job_id,
         mp4Url: "", thumbnailUrl: "", error: "",
         createdAt: claimed.created_at || new Date().toISOString(), updatedAt: new Date().toISOString()
       });
-      runRenderJob(claimed.job_id, claimed.manifest)
-        .catch((e) => console.error(`[queue] render ${claimed.job_id} crashed: ${e?.message}`))
+      const run = isRegen
+        ? runRegenerateJob(claimed.job_id, claimed.manifest)
+        : runRenderJob(claimed.job_id, claimed.manifest);
+      run
+        .catch((e) => console.error(`[queue] ${isRegen ? "regen" : "render"} ${claimed.job_id} crashed: ${e?.message}`))
         .finally(() => { activeRenders--; });
     }
   } catch (e) {
