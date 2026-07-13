@@ -92,20 +92,30 @@ export default async function handler(request, response) {
   let voiceId = "";
   try {
     // 1. Ephemeral clone.
+    // Mirror the proven in-app builder (clone-voice.js) exactly: File with
+    // name+type, plus the labels field.
+    const fileName = contentType.includes("webm") ? "demo.webm" : contentType.includes("mp4") ? "demo.m4a" : "demo.mp3";
+    const audioPart = new Uint8Array(audio);
+    const audioBlob = typeof File !== "undefined"
+      ? new File([audioPart], fileName, { type: contentType })
+      : new Blob([audioPart], { type: contentType });
     const form = new FormData();
     form.append("name", `landing-demo-${Date.now()}`);
     form.append("description", "Vistalia landing demo — ephemeral, deleted immediately after one line.");
-    form.append(
-      "files",
-      new Blob([new Uint8Array(audio)], { type: contentType }),
-      contentType.includes("webm") ? "demo.webm" : "demo.audio"
-    );
+    form.append("labels", JSON.stringify({ source: "vistalia-landing-demo", ephemeral: "true" }));
+    form.append("files", audioBlob, fileName);
     const cloneRes = await fetchWithTimeout(`${ELEVENLABS_BASE}/voices/add`, { method: "POST", headers, body: form }, 25000);
     if (!cloneRes.ok) {
       const detail = await cloneRes.text().catch(() => "");
-      console.warn("[voice-demo] clone failed", cloneRes.status, detail.slice(0, 200));
+      console.warn("[voice-demo] clone failed", cloneRes.status, detail.slice(0, 300));
       await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
-      return response.status(502).json({ error: "Cloning hiccuped — give it one more try. (That attempt didn't count.)" });
+      // Customer copy stays generic; the ops signal is in the status.
+      const tierProblem = cloneRes.status === 401 || cloneRes.status === 403;
+      return response.status(502).json({
+        error: tierProblem
+          ? "The live demo is temporarily offline — sign up and your first video is free."
+          : "Cloning hiccuped — give it one more try. (That attempt didn't count.)"
+      });
     }
     voiceId = String((await cloneRes.json())?.voice_id || "");
     if (!voiceId) {
