@@ -11,7 +11,7 @@ Ranked for a cold real-estate-agent audience on Reels:
 2. **hero-15s** — the only creative that shows the product (photo snaps into
    motion → second room → branded end card). Runs as the demo anchor. Pair
    with Primary A, headline "Listing video in minutes", desc 1.
-3. **ugc-secret** (15.4s, NEW Jul 13) — exclusivity angle ("don't tell the
+3. **ugc-secret** (18.6s, regenerated Jul 13 — no cut) — exclusivity angle ("don't tell the
    other agents in my market… keep this one to yourself"), golden-hour car
    take, signature luxury captions (pipeline-generated, word-synced gild).
    Pair with Primary F below, headline "Your photos. Cinematic. Narrated."
