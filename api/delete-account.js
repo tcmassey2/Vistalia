@@ -31,7 +31,7 @@ export default async function handler(request, response) {
   const anonKey = process.env.SUPABASE_ANON_KEY || "";
   if (!supabaseUrl || !serviceKey || !anonKey) {
     return response.status(503).json({
-      error: "Account deletion is not configured. Contact support@estatemotion.ai."
+      error: "Account deletion is not configured. Contact support@vistalia.ai."
     });
   }
 
@@ -66,6 +66,35 @@ export default async function handler(request, response) {
 
   const errors = [];
   const deleted = {};
+
+  // 2b. Delete the user's ElevenLabs voice clone BEFORE the brand_kits row
+  // disappears (the row holds the only reference to the clone). Best-effort:
+  // a failure is recorded as a warning but never blocks account deletion.
+  // Privacy policy §4.1/§6 promises the clone is deleted with the account.
+  try {
+    const kitRes = await fetch(
+      `${supabaseUrl}/rest/v1/brand_kits?user_id=eq.${encodeURIComponent(userId)}&select=cloned_voice_id`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
+    );
+    const kits = kitRes.ok ? await kitRes.json() : [];
+    const clonedVoiceId = kits?.[0]?.cloned_voice_id;
+    const xiKey = process.env.ELEVENLABS_API_KEY || "";
+    if (clonedVoiceId && xiKey) {
+      const delRes = await fetch(
+        `https://api.elevenlabs.io/v1/voices/${encodeURIComponent(clonedVoiceId)}`,
+        { method: "DELETE", headers: { "xi-api-key": xiKey } }
+      );
+      if (delRes.ok || delRes.status === 404) {
+        deleted.elevenlabs_voice_clone = true;
+      } else {
+        errors.push(`elevenlabs voice ${clonedVoiceId}: HTTP ${delRes.status}`);
+      }
+    } else if (clonedVoiceId && !xiKey) {
+      errors.push("elevenlabs voice: ELEVENLABS_API_KEY not set; clone not deleted upstream");
+    }
+  } catch (err) {
+    errors.push(`elevenlabs voice: ${err?.message || err}`);
+  }
 
   // 3. Cascade through every table.
   const tables = [
@@ -116,7 +145,7 @@ export default async function handler(request, response) {
   if (!adminDeleteRes.ok) {
     const detail = await adminDeleteRes.text().catch(() => "");
     return response.status(500).json({
-      error: "Auth-user deletion failed. Your data was removed but the account record remains. Contact support@estatemotion.ai for cleanup.",
+      error: "Auth-user deletion failed. Your data was removed but the account record remains. Contact support@vistalia.ai for cleanup.",
       detail: detail.slice(0, 240),
       partialDeleted: deleted,
       errors
