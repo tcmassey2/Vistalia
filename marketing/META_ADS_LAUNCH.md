@@ -11,9 +11,11 @@ Ranked for a cold real-estate-agent audience on Reels:
 2. **hero-15s** — the only creative that shows the product (photo snaps into
    motion → second room → branded end card). Runs as the demo anchor. Pair
    with Primary A, headline "Listing video in 3 minutes", desc 1.
-3. **ugc-9pm** (17.7s) — time-pain angle ("IT'S 9PM… would be editing"),
-   moody desk scene, distinct from car's cost angle. Pair with Primary D
-   below, headline "Your photos. Cinematic. Narrated."
+3. **ugc-secret** (17.8s, NEW Jul 13) — exclusivity angle ("don't tell the
+   other agents in my market… keep this one to yourself"), golden-hour car
+   take, signature luxury captions (pipeline-generated, word-synced gild).
+   Pair with Primary F below, headline "Your photos. Cinematic. Narrated."
+   Replaces ugc-9pm in slot 3; 9pm moves to the rotation bench with techy.
 4. **ugc-techy** (16.7s) — objection handler ("to every agent who says…
    so you can't even mess it up"). HOLD day 1; rotate in when a lead UGC
    fatigues (frequency >2 or CTR −20%). Pair with Primary E below.
@@ -27,7 +29,13 @@ Hero ad set $50 (hero + static-dusk) · Statics ad set stays PAUSED (fold
 statics into Hero instead — 2 ad sets = faster signal at this budget).
 Kill rule unchanged: CTR <0.8% after ~3 days / $150.
 
-Primary text (D, time anchor — for ugc-9pm):
+Primary text (F, exclusivity — for ugc-secret):
+> The agents winning listings right now aren't telling you how. Every
+> listing goes up as a narrated, cinematic tour the same day it hits the
+> MLS — about $8 a listing on an annual plan. Takes 3 minutes. First one
+> free. Keep it to yourself.
+
+Primary text (D, time anchor — for ugc-9pm, rotation bench):
 > It's 9pm and half the agents you know are still editing listing video.
 > Vistalia turns the photos you already have into a narrated, cinematic
 > Reel in about 3 minutes — about $8 a listing on an annual plan. Post it
