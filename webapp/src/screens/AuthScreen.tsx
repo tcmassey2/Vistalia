@@ -118,10 +118,20 @@ export default function AuthScreen() {
       if (mode === "signup") {
         const token = captchaRequired ? await ensureFreshCaptcha() : undefined;
         track(events.signupStarted);
-        await signUp(email, password, token);
+        const signUpData = await signUp(email, password, token);
         track(events.signupCompleted);
         trackLead(); // Meta pixel Lead — the ad account optimizes on this
         resetCaptcha(); // single-use token; force re-challenge on retry
+        if (signUpData?.session) {
+          // Email confirmation is OFF (launch decision, Jul 13): signUp
+          // returns a live session and store.init's onAuthChange routes
+          // straight to the dashboard. No "check your email" detour —
+          // the fastest path from ad click to first render.
+          setToast("Welcome to Vistalia");
+          return;
+        }
+        // Confirmation-required path (kept in case the Supabase toggle is
+        // ever re-enabled): user exists but can't sign in until confirmed.
         setPendingConfirmEmail(email);
         setInfo("Check your email to confirm. We've sent the link to " + email + ".");
         setMode("signin");
