@@ -18,7 +18,12 @@
 //   - fixed demo line only: the response can never say anything we didn't
 //     write ourselves
 
-import { rateLimit } from "./_lib/rate-limit.js";
+import { rateLimit, refundRateLimit } from "./_lib/rate-limit.js";
+
+// Env-tunable while testing (Troy burned the 3/day cap in minutes on launch
+// eve); default stays tight for the public.
+const DEMO_MAX = Number(process.env.VOICE_DEMO_MAX) || 3;
+const DEMO_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 const MAX_SAMPLE_BYTES = 4 * 1024 * 1024;
@@ -44,13 +49,9 @@ export default async function handler(request, response) {
     return response.status(403).json({ error: "The demo only runs on vistalia.ai." });
   }
 
-  const limited = await rateLimit(request, response, {
-    bucket: "voice-demo",
-    max: 3,
-    windowMs: 24 * 60 * 60 * 1000
-  });
-  if (limited) return;
-
+  // Validate EVERYTHING before touching the rate limit — a too-short
+  // recording or missing consent must not burn one of the caller's three
+  // daily tokens (Troy locked himself out testing exactly this way).
   const body = typeof request.body === "string" ? safeJson(request.body) : request.body || {};
 
   // Bot trap — silently succeed.
@@ -80,6 +81,13 @@ export default async function handler(request, response) {
     return response.status(413).json({ error: "That recording is too large — keep it under fifteen seconds." });
   }
 
+  const limited = await rateLimit(request, response, {
+    bucket: "voice-demo",
+    max: DEMO_MAX,
+    windowMs: DEMO_WINDOW_MS
+  });
+  if (limited) return;
+
   const headers = { "xi-api-key": process.env.ELEVENLABS_API_KEY };
   let voiceId = "";
   try {
@@ -96,10 +104,14 @@ export default async function handler(request, response) {
     if (!cloneRes.ok) {
       const detail = await cloneRes.text().catch(() => "");
       console.warn("[voice-demo] clone failed", cloneRes.status, detail.slice(0, 200));
-      return response.status(502).json({ error: "Cloning hiccuped — give it one more try." });
+      await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
+      return response.status(502).json({ error: "Cloning hiccuped — give it one more try. (That attempt didn't count.)" });
     }
     voiceId = String((await cloneRes.json())?.voice_id || "");
-    if (!voiceId) return response.status(502).json({ error: "Cloning hiccuped — give it one more try." });
+    if (!voiceId) {
+      await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
+      return response.status(502).json({ error: "Cloning hiccuped — give it one more try. (That attempt didn't count.)" });
+    }
 
     // 2. One fixed line, spoken in their voice.
     const ttsRes = await fetchWithTimeout(
@@ -118,13 +130,15 @@ export default async function handler(request, response) {
     if (!ttsRes.ok) {
       const detail = await ttsRes.text().catch(() => "");
       console.warn("[voice-demo] tts failed", ttsRes.status, detail.slice(0, 200));
-      return response.status(502).json({ error: "The narration step hiccuped — try once more." });
+      await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
+      return response.status(502).json({ error: "The narration step hiccuped — try once more. (That attempt didn't count.)" });
     }
     const mp3 = Buffer.from(await ttsRes.arrayBuffer());
     return response.status(200).json({ status: "ok", audioBase64: mp3.toString("base64"), mime: "audio/mpeg" });
   } catch (err) {
     console.warn("[voice-demo] error", err?.message || err);
-    return response.status(502).json({ error: "Something hiccuped — give it one more try." });
+    await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
+    return response.status(502).json({ error: "Something hiccuped — give it one more try. (That attempt didn't count.)" });
   } finally {
     // 3. The clone never survives the request.
     if (voiceId) {

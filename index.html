@@ -688,8 +688,9 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     status.textContent = 'Your browser doesn’t support in-page recording — try Chrome or Safari.';
     return;
   }
-  var rec = null, chunks = [], timer = null, busy = false;
+  var rec = null, chunks = [], timer = null, busy = false, locked = false;
   consent.addEventListener('change', function () {
+    if (locked) return;
     btn.disabled = !consent.checked || busy;
     status.textContent = consent.checked ? 'Ready — about ten seconds of natural speech works best.' : 'Check the consent box to enable the mic.';
   });
@@ -715,9 +716,15 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
           fetch('/api/voice-demo', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ audioBase64: b64, contentType: blob.type, consent: true, website: hp ? hp.value : '' })
-          }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, code: r.status, j: j }; }); })
             .then(function (res) {
-              busy = false; btn.disabled = !consent.checked;
+              busy = false;
+              if (res.code === 429) {
+                locked = true; btn.disabled = true;
+                status.textContent = (res.j && res.j.error) || 'You’ve used today’s demos — come back tomorrow.';
+                return;
+              }
+              btn.disabled = !consent.checked;
               if (!res.ok || !res.j.audioBase64) { status.textContent = (res.j && res.j.error) || 'That hiccuped — try once more.'; return; }
               player.src = 'data:' + (res.j.mime || 'audio/mpeg') + ';base64,' + res.j.audioBase64;
               player.style.display = 'block'; cta.style.display = 'inline-flex';

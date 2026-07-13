@@ -91,6 +91,21 @@ function pruneStaleBuckets(now, windowMs) {
   }
 }
 
+// Refund one token — for endpoints where a counted attempt failed on OUR
+// side (upstream 5xx), not the caller's. Without this, three provider
+// hiccups lock a well-behaved visitor out for a day (voice-demo, launch
+// eve). No-op if the bucket doesn't exist.
+export async function refundRateLimit(request, options) {
+  const { bucket, max } = options;
+  try {
+    const callerId = await identifyCaller(request);
+    const entry = buckets.get(`${bucket}:${callerId}`);
+    if (entry) entry.tokens = Math.min(Number(max) || 1, entry.tokens + 1);
+  } catch {
+    /* refunds are best-effort */
+  }
+}
+
 // Caller identity. Prefer the authed user id (more accurate than IP, since
 // many corporate networks share a NAT IP). Fall back to IP for unauth calls.
 async function identifyCaller(request) {
@@ -145,6 +160,12 @@ function friendlyMessage(bucket, retryAfterSec) {
       return `Per-scene regenerate is rate-limited. Try again in ${wait}.`;
     case "auth":
       return `Too many auth attempts. Try again in ${wait}.`;
+    case "voice-demo":
+      // Raw "try again in 478 min" read as broken (Troy). Long waits on a
+      // daily demo cap just mean "tomorrow".
+      return retryAfterSec > 3600
+        ? "You've used today's voice demos — come back tomorrow, or sign up and clone your voice for real."
+        : `One more demo unlocks in ${wait}.`;
     default:
       return `Too many requests. Try again in ${wait}.`;
   }
