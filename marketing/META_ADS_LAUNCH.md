@@ -2,6 +2,10 @@
 
 ## LAUNCH SELECTION — July 13 (reviewed frame-by-frame)
 
+**Uploaded to ad account 4268601153226305 (Jul 13, API-verified) — video IDs:**
+car 1957870524873101 · hero 1754834832497368 · secret 1357557403006889 ·
+9pm 27288169807478341 · techy 1556605616122499 · veteran 2136639513614283
+
 Ranked for a cold real-estate-agent audience on Reels:
 
 1. **ugc-car** (17.0s, rebuilt from raw Jul 13) — lead creative. Car-selfie
