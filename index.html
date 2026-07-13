@@ -149,7 +149,7 @@ section.block{padding:88px 0}
 
 /* Style cards — hover-to-play */
 .styles{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
-.scard{position:relative;aspect-ratio:9/14;border-radius:20px;overflow:hidden;border:1px solid var(--edge);
+.scard{position:relative;aspect-ratio:9/16;border-radius:20px;overflow:hidden;border:1px solid var(--edge);
   background:linear-gradient(155deg,var(--c1,#1a1a20),#0e0e12);display:flex;flex-direction:column;justify-content:flex-end;
   transition:transform .35s var(--ease),border-color .35s var(--ease);cursor:pointer}
 .scard:hover{transform:translateY(-6px);border-color:var(--gold)}
@@ -158,9 +158,9 @@ section.block{padding:88px 0}
 /* Style cards autoplay lightweight loops — always visible, no hover needed
    (Troy, launch eve: hover-to-play read as unfinished empty boxes). */
 .scard video.preview{opacity:1;transition:none}
-.scard .tag{position:absolute;top:16px;left:16px;z-index:2;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
-.scard .pace{position:absolute;top:16px;right:16px;z-index:2;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-muted);background:rgba(11,11,13,.5);padding:4px 8px;border-radius:6px;border:1px solid var(--edge)}
-.scard .info{position:relative;z-index:2;padding:22px;background:linear-gradient(0deg,rgba(11,11,13,.85),transparent)}
+.scard .tag{position:absolute;top:14px;left:14px;z-index:2;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-light);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid rgba(199,167,108,.35);backdrop-filter:blur(4px)}
+.scard .pace{position:absolute;top:14px;right:14px;z-index:2;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid var(--edge-strong);backdrop-filter:blur(4px)}
+.scard .info{position:relative;z-index:2;padding:44px 22px 22px;background:linear-gradient(0deg,rgba(11,11,13,.96) 30%,rgba(11,11,13,.72) 65%,transparent)}
 .scard .info h3{font-family:var(--font-display);font-size:21px;font-weight:600;letter-spacing:-.01em}
 .scard .info .best{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-light);margin:6px 0 8px}
 .scard .info p{font-size:13px;color:var(--ink-soft);line-height:1.45}
@@ -221,6 +221,26 @@ footer{border-top:1px solid var(--edge);padding:40px 0 48px}
 .foot .col a{display:block;font-size:14px;color:var(--ink-soft);padding:4px 0}
 .foot .col a:hover{color:var(--gold-light)}
 .foot-bottom{margin-top:32px;padding-top:20px;border-top:1px solid var(--edge);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-dim)}
+
+/* Voice-clone live demo */
+.vdemo{margin-top:56px;display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center;background:linear-gradient(135deg,rgba(199,167,108,.07),rgba(16,16,20,.6));border:1px solid var(--edge-strong);border-radius:22px;padding:38px}
+.vdemo h3{font-size:clamp(22px,2.4vw,30px);margin:10px 0 12px;line-height:1.15}
+.vdemo p{color:var(--ink-soft);font-size:14.5px;max-width:46ch}
+.vdemo-consent{display:flex;gap:10px;align-items:flex-start;margin-top:18px;font-size:12.5px;color:var(--ink-muted);cursor:pointer;max-width:46ch}
+.vdemo-consent input{margin-top:3px;accent-color:var(--gold)}
+.vdemo-stage{text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.vdemo-stage .btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
+.vdemo-status{margin-top:12px;font-family:var(--font-mono);font-size:11.5px;letter-spacing:.06em;color:var(--ink-muted);min-height:18px}
+.vdemo-stage .btn.recording{background:linear-gradient(135deg,#e46a6a,#9c3b3b);color:#fff;box-shadow:0 10px 34px rgba(228,106,106,.3)}
+@media(max-width:880px){.vdemo{grid-template-columns:1fr;padding:28px}}
+
+/* Full-res lightbox (click any style/example card) */
+.lightbox{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;background:rgba(5,5,7,.88);backdrop-filter:blur(10px);padding:28px}
+.lightbox.open{display:flex}
+.lightbox video{height:min(86vh,960px);max-width:min(92vw,540px);aspect-ratio:9/16;border-radius:18px;border:1px solid var(--edge-strong);box-shadow:0 40px 120px rgba(0,0,0,.7);background:#000}
+.lb-close{position:absolute;top:22px;right:26px;width:44px;height:44px;border-radius:50%;background:rgba(16,16,20,.8);border:1px solid var(--edge-strong);color:var(--ink);font-size:19px;cursor:pointer;display:grid;place-items:center;z-index:81}
+.lb-close:hover{border-color:var(--gold);color:var(--gold-light)}
+.lb-label{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);font-family:var(--font-mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-soft)}
 
 /* Motion layer */
 .scrollbar{position:fixed;top:0;left:0;height:2px;width:100%;transform:scaleX(0);transform-origin:0 50%;background:linear-gradient(90deg,var(--gold-deep),var(--gold-light));z-index:60;will-change:transform}
@@ -352,26 +372,26 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
   <div class="head reveal">
     <div class="eyebrow">Styles</div>
     <h2>Four directions. <em>Built for how you sell.</em></h2>
-    <p>Live previews, straight out of Vistalia — each a distinctly different cinematographic feel.</p>
+    <p>Live previews, straight out of Vistalia — click any style to watch the full film.</p>
   </div>
   <!-- Autoplaying lightweight loops (8s, ~1MB each); full videos live in #examples. -->
   <div class="styles" id="styles-grid">
-    <div class="scard" style="--c1:#1d1a14">
+    <div class="scard" style="--c1:#1d1a14" data-full="/showcase/example-luxury.mp4" data-poster="/showcase/example-luxury.jpg">
       <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-luxury.jpg" src="/showcase/style-luxury.mp4" onerror="this.remove()"></video>
       <span class="tag">VS-L1</span><span class="pace">Slow &amp; editorial</span>
       <div class="info"><h3 class="serif">Cinematic Luxury</h3><div class="best">Premium · $1M+</div><p>Slow moves, editorial tone, premium feel.</p></div>
     </div>
-    <div class="scard" style="--c1:#13181c">
+    <div class="scard" style="--c1:#13181c" data-full="/showcase/example-social.mp4" data-poster="/showcase/example-social.jpg">
       <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-social.jpg" src="/showcase/style-social.mp4" onerror="this.remove()"></video>
       <span class="tag">VS-S2</span><span class="pace">Fast &amp; punchy</span>
       <div class="info"><h3 class="serif">Modern Social</h3><div class="best">Reels · TikTok</div><p>Punchy pacing built for scroll-stop.</p></div>
     </div>
-    <div class="scard" style="--c1:#15140f">
+    <div class="scard" style="--c1:#15140f" data-full="/showcase/example-mls.mp4" data-poster="/showcase/example-mls.jpg">
       <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-mls.jpg" src="/showcase/style-mls.mp4" onerror="this.remove()"></video>
       <span class="tag">VS-M3</span><span class="pace">Clean &amp; factual</span>
       <div class="info"><h3 class="serif">MLS Clean</h3><div class="best">Standard listings</div><p>Neutral, factual, broker-compliant.</p></div>
     </div>
-    <div class="scard" style="--c1:#161616">
+    <div class="scard" style="--c1:#161616" data-full="/showcase/example-investor.mp4" data-poster="/showcase/example-investor.jpg">
       <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-investor.jpg" src="/showcase/style-investor.mp4" onerror="this.remove()"></video>
       <span class="tag">VS-I4</span><span class="pace">Direct &amp; clear</span>
       <div class="info"><h3 class="serif">Investor Tour</h3><div class="best">Wholesale · deals</div><p>Direct walkthroughs for deal-flow agents.</p></div>
@@ -391,6 +411,24 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     <div class="step reveal"><div class="num">Word-synced captions</div><h3>Captions that sell on mute</h3><p>Most buyers scroll with sound off. Vistalia burns in elegant, word-synced captions — luxury serif for premium listings, bold pop for social — timed to every syllable of the narration.</p></div>
     <div class="step reveal"><div class="num">True cinema, every scene</div><h3>Not three AI shots on a slideshow</h3><p>Some tools meter "AI activations" — a few generative scenes stacked on pan-and-zoom filler. Every Vistalia scene is directed, generative cinematography. No filler tier.</p></div>
     <div class="step reveal"><div class="num">Verified before you see it</div><h3>Every scene inspected against your photo</h3><p>A vision model compares each scene to your original photo before it reaches you. Anything off gets re-rendered automatically. You approve the final cut — nothing ships without your eyes on it.</p></div>
+  </div>
+
+  <!-- Live voice-clone demo: mic-only, consent-gated, voice deleted server-side
+       immediately after one fixed line. -->
+  <div class="vdemo reveal" id="vdemo">
+    <div class="vdemo-copy">
+      <div class="eyebrow">Hear it — in your voice</div>
+      <h3 class="serif">Record ten seconds. Hear yourself narrate a listing.</h3>
+      <p>Read anything out loud — this page, your last listing description, whatever. We'll clone your voice, speak one listing line back in it, and delete the clone immediately. Nothing is stored.</p>
+      <label class="vdemo-consent"><input type="checkbox" id="vd-consent"> <span>This is my own voice, and I consent to a one-time clone for this demo. The clone is deleted right after.</span></label>
+      <input type="text" id="vd-website" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">
+    </div>
+    <div class="vdemo-stage">
+      <button class="btn btn-primary" id="vd-btn" disabled>Record my voice</button>
+      <div class="vdemo-status" id="vd-status">Check the consent box to enable the mic.</div>
+      <audio id="vd-player" controls style="display:none;width:100%;margin-top:14px"></audio>
+      <a class="btn btn-ghost" id="vd-cta" href="/app/" style="display:none;margin-top:14px">Put it on a real listing — first video free →</a>
+    </div>
   </div>
 </section>
 
@@ -626,6 +664,105 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
       var r = btn.getBoundingClientRect(), d = Math.max(r.width, r.height)*1.4, s = document.createElement('span');
       s.className = 'ripple'; s.style.width = s.style.height = d+'px'; s.style.left = (e.clientX-r.left)+'px'; s.style.top = (e.clientY-r.top)+'px';
       btn.appendChild(s); setTimeout(function(){ s.remove(); }, 600);
+    });
+  });
+})();
+</script>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Video preview">
+  <button class="lb-close" id="lb-close" aria-label="Close">✕</button>
+  <video id="lb-video" controls playsinline preload="metadata"></video>
+  <div class="lb-label" id="lb-label"></div>
+</div>
+
+<script>
+// Voice-clone live demo: mic-only recording -> /api/voice-demo -> playback.
+// Consent gates the mic; recording caps at 15s; the server deletes the clone
+// before it even responds.
+(function () {
+  var btn = document.getElementById('vd-btn'), status = document.getElementById('vd-status'),
+      consent = document.getElementById('vd-consent'), player = document.getElementById('vd-player'),
+      cta = document.getElementById('vd-cta'), hp = document.getElementById('vd-website');
+  if (!btn) return;
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    status.textContent = 'Your browser doesn’t support in-page recording — try Chrome or Safari.';
+    return;
+  }
+  var rec = null, chunks = [], timer = null, busy = false;
+  consent.addEventListener('change', function () {
+    btn.disabled = !consent.checked || busy;
+    status.textContent = consent.checked ? 'Ready — about ten seconds of natural speech works best.' : 'Check the consent box to enable the mic.';
+  });
+  btn.addEventListener('click', function () {
+    if (rec && rec.state === 'recording') { rec.stop(); return; }
+    if (busy) return;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      chunks = [];
+      var mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+               : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+      rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = function () {
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        clearInterval(timer);
+        btn.classList.remove('recording'); btn.textContent = 'Record my voice'; btn.disabled = true; busy = true;
+        status.textContent = 'Cloning your voice… about fifteen seconds.';
+        var blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        if (blob.size < 20000) { busy = false; btn.disabled = !consent.checked; status.textContent = 'That was a little short — aim for ten seconds.'; return; }
+        var fr = new FileReader();
+        fr.onload = function () {
+          var b64 = String(fr.result).split(',')[1] || '';
+          fetch('/api/voice-demo', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audioBase64: b64, contentType: blob.type, consent: true, website: hp ? hp.value : '' })
+          }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+              busy = false; btn.disabled = !consent.checked;
+              if (!res.ok || !res.j.audioBase64) { status.textContent = (res.j && res.j.error) || 'That hiccuped — try once more.'; return; }
+              player.src = 'data:' + (res.j.mime || 'audio/mpeg') + ';base64,' + res.j.audioBase64;
+              player.style.display = 'block'; cta.style.display = 'inline-flex';
+              status.textContent = 'That’s you. Press play.';
+              var p = player.play(); if (p && p.catch) p.catch(function () {});
+            })
+            .catch(function () { busy = false; btn.disabled = !consent.checked; status.textContent = 'Network hiccup — try once more.'; });
+        };
+        fr.readAsDataURL(blob);
+      };
+      rec.start();
+      btn.classList.add('recording'); btn.textContent = 'Stop recording';
+      var left = 15;
+      status.textContent = 'Recording — read anything for ~10s. Auto-stops in ' + left + 's.';
+      timer = setInterval(function () {
+        left -= 1;
+        if (left <= 0) { clearInterval(timer); if (rec.state === 'recording') rec.stop(); }
+        else status.textContent = 'Recording — read anything. Auto-stops in ' + left + 's.';
+      }, 1000);
+    }).catch(function () { status.textContent = 'Mic blocked — allow microphone access and try again.'; });
+  });
+})();
+
+// Full-res lightbox: click any style/example card for the 1080p master with sound.
+(function () {
+  var lb = document.getElementById('lightbox'), v = document.getElementById('lb-video'),
+      x = document.getElementById('lb-close'), lab = document.getElementById('lb-label');
+  if (!lb || !v) return;
+  function open(src, poster, label) {
+    if (poster) v.poster = poster; v.src = src; lab.textContent = label || '';
+    lb.classList.add('open'); document.body.style.overflow = 'hidden';
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+  }
+  function close() {
+    lb.classList.remove('open'); v.pause(); v.removeAttribute('src'); v.load();
+    document.body.style.overflow = '';
+  }
+  x.addEventListener('click', close);
+  lb.addEventListener('click', function (e) { if (e.target === lb) close(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && lb.classList.contains('open')) close(); });
+  document.querySelectorAll('#styles-grid .scard, #examples-grid .scard').forEach(function (card) {
+    var full = card.getAttribute('data-full') || card.getAttribute('data-src');
+    if (!full) return;
+    card.addEventListener('click', function () {
+      open(full, card.getAttribute('data-poster'), (card.querySelector('h3') || {}).textContent);
     });
   });
 })();
