@@ -158,8 +158,11 @@ section.block{padding:88px 0}
 /* Style cards autoplay lightweight loops — always visible, no hover needed
    (Troy, launch eve: hover-to-play read as unfinished empty boxes). */
 .scard video.preview{opacity:1;transition:none}
-.scard .tag{position:absolute;top:14px;left:14px;z-index:2;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-light);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid rgba(199,167,108,.35);backdrop-filter:blur(4px)}
-.scard .pace{position:absolute;top:14px;left:50%;transform:translateX(-50%);right:auto;white-space:nowrap;z-index:2;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid var(--edge-strong);backdrop-filter:blur(4px)}
+/* Chip row: flex with fixed gap so tag/pace spacing is identical on all four cards
+   (centered .pace collided with .tag on wide labels — Cinematic, MLS). */
+.scard .chips{position:absolute;top:14px;left:14px;right:52px;z-index:2;display:flex;align-items:center;gap:8px}
+.scard .tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-light);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid rgba(199,167,108,.35);backdrop-filter:blur(4px)}
+.scard .pace{white-space:nowrap;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid var(--edge-strong);backdrop-filter:blur(4px)}
 .scard .info{position:relative;z-index:2;padding:44px 22px 22px;background:linear-gradient(0deg,rgba(11,11,13,.96) 30%,rgba(11,11,13,.72) 65%,transparent)}
 .scard .info h3{font-family:var(--font-display);font-size:21px;font-weight:600;letter-spacing:-.01em}
 .scard .info .best{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-light);margin:6px 0 8px}
@@ -386,22 +389,22 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
   <div class="styles" id="styles-grid">
     <div class="scard" style="--c1:#1d1a14" data-full="/showcase/example-luxury.mp4" data-poster="/showcase/example-luxury.jpg">
       <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-luxury.jpg" src="/showcase/style-luxury.mp4" onerror="this.remove()"></video>
-      <span class="tag">VS-L1</span><span class="pace">Slow &amp; editorial</span>
+      <div class="chips"><span class="tag">VS-L1</span><span class="pace">Slow &amp; editorial</span></div>
       <div class="info"><h3 class="serif">Cinematic Luxury</h3><div class="best">Premium · $1M+</div><p>Slow moves, editorial tone, premium feel.</p></div>
     </div>
     <div class="scard" style="--c1:#13181c" data-full="/showcase/example-social.mp4" data-poster="/showcase/example-social.jpg">
       <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-social.jpg" src="/showcase/style-social.mp4" onerror="this.remove()"></video>
-      <span class="tag">VS-S2</span><span class="pace">Fast &amp; punchy</span>
+      <div class="chips"><span class="tag">VS-S2</span><span class="pace">Fast &amp; punchy</span></div>
       <div class="info"><h3 class="serif">Modern Social</h3><div class="best">Reels · TikTok</div><p>Punchy pacing built for scroll-stop.</p></div>
     </div>
     <div class="scard" style="--c1:#15140f" data-full="/showcase/example-mls.mp4" data-poster="/showcase/example-mls.jpg">
       <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-mls.jpg" src="/showcase/style-mls.mp4" onerror="this.remove()"></video>
-      <span class="tag">VS-M3</span><span class="pace">Clean &amp; factual</span>
+      <div class="chips"><span class="tag">VS-M3</span><span class="pace">Clean &amp; factual</span></div>
       <div class="info"><h3 class="serif">MLS Clean</h3><div class="best">Standard listings</div><p>Neutral, factual, broker-compliant.</p></div>
     </div>
     <div class="scard" style="--c1:#161616" data-full="/showcase/example-investor.mp4" data-poster="/showcase/example-investor.jpg">
       <video class="preview" autoplay muted loop playsinline preload="metadata" poster="/showcase/example-investor.jpg" src="/showcase/style-investor.mp4" onerror="this.remove()"></video>
-      <span class="tag">VS-I4</span><span class="pace">Direct &amp; clear</span>
+      <div class="chips"><span class="tag">VS-I4</span><span class="pace">Direct &amp; clear</span></div>
       <div class="info"><h3 class="serif">Investor Tour</h3><div class="best">Wholesale · deals</div><p>Direct walkthroughs for deal-flow agents.</p></div>
     </div>
   </div>
@@ -426,8 +429,8 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
   <div class="vdemo reveal" id="vdemo">
     <div class="vdemo-copy">
       <div class="eyebrow">Hear it — in your voice</div>
-      <h3 class="serif">Record ten seconds. Hear yourself narrate a listing.</h3>
-      <p>Read anything out loud — this page, your last listing description, whatever. We'll clone your voice, speak one listing line back in it, and delete the clone immediately. Nothing is stored.</p>
+      <h3 class="serif">Read three sentences. Hear yourself narrate a listing.</h3>
+      <p><strong>For the best clone, speak about three full sentences — clearly, at your natural pace.</strong> Your last listing description works great. We'll clone your voice, speak one listing line back in it, and delete the clone immediately. Nothing is stored.</p>
       <label class="vdemo-consent"><input type="checkbox" id="vd-consent"> <span>This is my own voice, and I consent to a one-time clone for this demo. The clone is deleted right after.</span></label>
       <input type="text" id="vd-website" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">
     </div>
@@ -743,11 +746,11 @@ function setLandingBill(mode) {
       rec.start();
       btn.classList.add('recording'); btn.textContent = 'Stop recording';
       var left = 15;
-      status.textContent = 'Recording — read anything for ~10s. Auto-stops in ' + left + 's.';
+      status.textContent = 'Recording — read ~3 sentences, clearly. Auto-stops in ' + left + 's.';
       timer = setInterval(function () {
         left -= 1;
         if (left <= 0) { clearInterval(timer); if (rec.state === 'recording') rec.stop(); }
-        else status.textContent = 'Recording — read anything. Auto-stops in ' + left + 's.';
+        else status.textContent = 'Recording — read ~3 sentences, clearly. Auto-stops in ' + left + 's.';
       }, 1000);
     }).catch(function () { status.textContent = 'Mic blocked — allow microphone access and try again.'; });
   });
