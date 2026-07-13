@@ -1,5 +1,44 @@
 # Meta launch ads — copy pack (q7 pricing)
 
+## LAUNCH SELECTION — July 13 (reviewed frame-by-frame)
+
+Ranked for a cold real-estate-agent audience on Reels:
+
+1. **ugc-car** (17.8s) — lead creative. Car-selfie is the most native format
+   on Reels; hook names the enemy ("So the videographer…") → "Watch this
+   instead." → gold **$39** pop. Cost anchor + direct eye contact. Pair with
+   Primary B, headline "$850 videographer → $39".
+2. **hero-15s** — the only creative that shows the product (photo snaps into
+   motion → second room → branded end card). Runs as the demo anchor. Pair
+   with Primary A, headline "Listing video in 3 minutes", desc 1.
+3. **ugc-9pm** (17.7s) — time-pain angle ("IT'S 9PM… would be editing"),
+   moody desk scene, distinct from car's cost angle. Pair with Primary D
+   below, headline "Your photos. Cinematic. Narrated."
+4. **ugc-techy** (16.7s) — objection handler ("to every agent who says…
+   so you can't even mess it up"). HOLD day 1; rotate in when a lead UGC
+   fatigues (frequency >2 or CTR −20%). Pair with Primary E below.
+5. **static-dusk** — twilight glow stops scroll in Feed; runs as second
+   creative inside the Hero ad set for placement diversity. Primary A.
+6. **static-living** — clearer message ("Photos in. Video tour out.") but
+   weaker thumb-stop; swap for dusk after ~$75 spend if dusk CTR is soft.
+
+**Day-1 structure ($100/day):** UGC ad set $50 (ugc-car + ugc-9pm) ·
+Hero ad set $50 (hero + static-dusk) · Statics ad set stays PAUSED (fold
+statics into Hero instead — 2 ad sets = faster signal at this budget).
+Kill rule unchanged: CTR <0.8% after ~3 days / $150.
+
+Primary text (D, time anchor — for ugc-9pm):
+> It's 9pm and half the agents you know are still editing listing video.
+> Vistalia turns the photos you already have into a narrated, cinematic
+> Reel in about 3 minutes. Post it and go to bed. First video free.
+
+Primary text (E, objection — for ugc-techy):
+> "I'm not a video person." You don't have to be. Upload your listing
+> photos, pick a style, done — Vistalia handles the camera moves, music,
+> and narration. You can't mess it up. First video free.
+
+---
+
 > Creative rules (standing): faceless, no founder face/voice. Kling for motion,
 > never Marketing Studio. All prices q7: first video free · $39/video · plans
 > from $69/mo ($41/mo annual). Product claims must stay true: ~3 minutes,
