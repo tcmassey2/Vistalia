@@ -159,7 +159,7 @@ section.block{padding:88px 0}
    (Troy, launch eve: hover-to-play read as unfinished empty boxes). */
 .scard video.preview{opacity:1;transition:none}
 .scard .tag{position:absolute;top:14px;left:14px;z-index:2;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-light);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid rgba(199,167,108,.35);backdrop-filter:blur(4px)}
-.scard .pace{position:absolute;top:64px;right:14px;z-index:2;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid var(--edge-strong);backdrop-filter:blur(4px)}
+.scard .pace{position:absolute;top:14px;left:50%;transform:translateX(-50%);right:auto;white-space:nowrap;z-index:2;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);background:rgba(11,11,13,.78);padding:4px 9px;border-radius:6px;border:1px solid var(--edge-strong);backdrop-filter:blur(4px)}
 .scard .info{position:relative;z-index:2;padding:44px 22px 22px;background:linear-gradient(0deg,rgba(11,11,13,.96) 30%,rgba(11,11,13,.72) 65%,transparent)}
 .scard .info h3{font-family:var(--font-display);font-size:21px;font-weight:600;letter-spacing:-.01em}
 .scard .info .best{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-light);margin:6px 0 8px}
@@ -235,6 +235,7 @@ footer{border-top:1px solid var(--edge);padding:40px 0 48px}
 @media(max-width:880px){.vdemo{grid-template-columns:1fr;padding:28px}}
 
 /* Billing tabs (landing pricing) — annual first, annual default */
+.pcard .amt .was{font-size:22px;font-weight:500;color:var(--ink-dim);text-decoration:line-through;margin-right:9px;vertical-align:6px}
 .bill-tabs{display:flex;justify-content:center;margin-bottom:34px}
 .bill-tabs .tabs{display:inline-flex;border:1px solid var(--edge-strong);border-radius:12px;overflow:hidden;font-size:14px}
 .bill-tabs button{padding:10px 22px;border:none;cursor:pointer;background:transparent;color:var(--ink-soft);font-weight:600;font-family:var(--font-body)}
@@ -488,14 +489,14 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     <div class="pcard featured reveal">
       <div class="badge">Most popular</div>
       <div class="name">Pro</div>
-      <div class="amt" data-m="$69" data-a="$41"><span class="v">$41</span><small> / month</small></div>
+      <div class="amt" data-m="$69" data-a="$41"><s class="was" data-was="$69">$69</s><span class="v">$41</span><small> / month</small></div>
       <div class="save" data-m="$13.80 per video" data-a="$8.17 per video — billed $490/yr">$8.17 per video — billed $490/yr</div>
       <ul><li>5 cinematic videos every month</li><li>Your own cloned voice on every one</li><li>Word-synced captions, styled per listing</li><li>60-second tours + all formats</li><li>Priority rendering</li></ul>
       <a href="/app" class="btn btn-primary">Start free trial →</a>
     </div>
     <div class="pcard reveal">
       <div class="name">Studio</div>
-      <div class="amt" data-m="$149" data-a="$83"><span class="v">$83</span><small> / month</small></div>
+      <div class="amt" data-m="$149" data-a="$83"><s class="was" data-was="$149">$149</s><span class="v">$83</span><small> / month</small></div>
       <div class="save" data-m="$14.90 per video" data-a="$8.25 per video — billed $990/yr">$8.25 per video — billed $990/yr</div>
       <ul><li>10 cinematic videos every month</li><li>Everything in Pro</li><li>Front-of-queue rendering</li><li>Priority support</li></ul>
       <a href="/app" class="btn btn-ghost">Start free trial →</a>
@@ -672,6 +673,7 @@ function setLandingBill(mode) {
   bm.classList.toggle('on', m); ba.classList.toggle('on', !m);
   document.querySelectorAll('#pricing .amt[data-m]').forEach(function (el) {
     var v = el.querySelector('.v'); if (v) v.textContent = m ? el.getAttribute('data-m') : el.getAttribute('data-a');
+    var w = el.querySelector('.was'); if (w) w.style.display = m ? 'none' : 'inline';
   });
   document.querySelectorAll('#pricing .save[data-m]').forEach(function (el) {
     el.textContent = m ? el.getAttribute('data-m') : el.getAttribute('data-a');

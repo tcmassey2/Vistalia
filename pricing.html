@@ -286,14 +286,14 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     <div class="pcard featured reveal">
       <div class="badge">Most popular</div>
       <div class="name">Pro</div>
-      <div class="amt" data-m="$69" data-a="$41"><span class="v">$69</span><small> / month</small></div>
+      <div class="amt" data-m="$69" data-a="$41"><s class="was" data-was="$69" style="font-size:22px;font-weight:500;color:var(--ink-dim);text-decoration:line-through;margin-right:9px;vertical-align:6px">$69</s><span class="v">$69</span><small> / month</small></div>
       <div class="save" data-m="$13.80 per video" data-a="$8.17 per video — billed $490/yr">$13.80 per video</div>
       <ul><li>5 cinematic videos every month</li><li>Your own cloned voice on every one</li><li>Word-synced captions, styled per listing</li><li>60-second tours + all formats</li><li>Priority rendering</li><li>$12 per extra video</li></ul>
       <a href="/app" class="btn btn-primary">Start free trial →</a>
     </div>
     <div class="pcard reveal">
       <div class="name">Studio</div>
-      <div class="amt" data-m="$149" data-a="$83"><span class="v">$149</span><small> / month</small></div>
+      <div class="amt" data-m="$149" data-a="$83"><s class="was" data-was="$149" style="font-size:22px;font-weight:500;color:var(--ink-dim);text-decoration:line-through;margin-right:9px;vertical-align:6px">$149</s><span class="v">$149</span><small> / month</small></div>
       <div class="save" data-m="$14.90 per video" data-a="$8.25 per video — billed $990/yr">$14.90 per video</div>
       <ul><li>10 cinematic videos every month</li><li>Everything in Pro</li><li>Front-of-queue rendering</li><li>Priority support</li><li>$12 per extra video</li></ul>
       <a href="/app" class="btn btn-ghost">Start free trial →</a>
@@ -307,7 +307,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
     document.getElementById('bill-monthly').style.color = m?'#0B0B0D':'var(--ink-soft)';
     document.getElementById('bill-annual').style.background = m?'transparent':'var(--gold)';
     document.getElementById('bill-annual').style.color = m?'var(--ink-soft)':'#0B0B0D';
-    document.querySelectorAll('.amt[data-m]').forEach(function(el){ el.querySelector('.v').textContent = m?el.getAttribute('data-m'):el.getAttribute('data-a'); });
+    document.querySelectorAll('.amt[data-m]').forEach(function(el){ el.querySelector('.v').textContent = m?el.getAttribute('data-m'):el.getAttribute('data-a'); var w=el.querySelector('.was'); if(w) w.style.display = m?'none':'inline'; });
     document.querySelectorAll('.save[data-m]').forEach(function(el){ el.textContent = m?el.getAttribute('data-m'):el.getAttribute('data-a'); });
   }
   setBill('annual'); // annual-first: the $8.17/video story leads
