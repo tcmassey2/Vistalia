@@ -56,7 +56,17 @@ export default function LibraryDetailModal({
   // now — the audit log only stores master_mp4_url + thumbnail_url. So
   // we infer the variant + short URLs from the master URL pattern,
   // since the worker uploads them with deterministic filenames.
-  const masterUrl = entry.mp4Url;
+  //
+  // v46 (Troy's smoke test): scene regen OVERWRITES the master at the SAME
+  // storage URL, and Supabase serves it with a long max-age. After a redo,
+  // the browser's cached copy (or a cached first range + new file length)
+  // made the master unplayable until a hard refresh. One cache-buster per
+  // modal open — same medicine the scene previews got. (Stable per-regen
+  // versioning needs an updated_at column on the audit row: post-launch.)
+  const cacheStamp = useMemo(() => Date.now(), []);
+  const bust = (u: string) =>
+    u ? `${u}${u.includes("?") ? "&" : "?"}v=${cacheStamp}` : u;
+  const masterUrl = bust(entry.mp4Url);
   const inferredUrls = inferDeliverableUrls(masterUrl, entry);
   const heading = entry.listingAddress || entry.projectTitle || "Untitled listing";
   const date = new Date(entry.createdAt);
@@ -150,7 +160,7 @@ export default function LibraryDetailModal({
               src={masterUrl}
               controls
               playsInline
-              poster={entry.thumbnailUrl}
+              poster={bust(entry.thumbnailUrl)}
               className="block w-auto h-auto max-w-full max-h-[65vh] object-contain"
             />
           </div>
@@ -302,10 +312,12 @@ function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
   const cfg = entry.renderConfig || {};
 
   const styleLabel = cfg.selectedStyle || engineLabel(entry.engine);
+  // v46 (Troy's smoke test): trust the server's classification. The old
+  // shape-test ("kebab = preset") mislabeled EVERY narrated render as
+  // "Your cloned voice" — the worker resolves preset slugs to raw
+  // ElevenLabs IDs before the audit write, so no shipped ID is kebab.
   const narrationValue = entry.narrationApplied
-    ? (entry.narrationVoiceId && !/^[a-z]+-[a-z]+$/.test(entry.narrationVoiceId)
-        ? "Your cloned voice"
-        : "Studio voice")
+    ? (entry.narrationVoiceKind === "cloned" ? "Your cloned voice" : "Studio voice")
     : "Off";
   // Prefer what actually shipped (captionsApplied) over what was asked for
   // (captionsEnabled); older rows have neither and default sensibly.

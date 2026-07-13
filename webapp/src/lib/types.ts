@@ -281,6 +281,10 @@ export interface LibraryEntry {
   formatsCount: number;
   narrationApplied: boolean;
   narrationVoiceId?: string | null;
+  // v46: server-side classification (api/library.js) — the ID's shape can't
+  // distinguish presets from clones because the worker stores the RESOLVED
+  // ElevenLabs ID for both.
+  narrationVoiceKind?: "preset" | "cloned" | null;
   // Per-scene metadata (one entry per scene in the rendered video). Populated
   // for renders made with worker v16+ where each scene was persisted to
   // Supabase Storage. Empty for older renders — UI shows a "re-render once

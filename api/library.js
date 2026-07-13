@@ -131,6 +131,12 @@ export default async function handler(request, response) {
         formatsCount: Number(row.formats_count || 1),
         narrationApplied: Boolean(row.narration_applied),
         narrationVoiceId: row.narration_voice_id || null,
+        // v46 (Troy's smoke test): the client used to GUESS clone-vs-preset
+        // from the ID's shape (kebab = preset) — but the worker resolves
+        // preset slugs to RAW ElevenLabs IDs before the audit write, so
+        // every narrated render read as "Your cloned voice". Classify
+        // server-side against the premade catalog instead.
+        narrationVoiceKind: classifyNarrationVoice(row.narration_voice_id),
         // Per-scene metadata for the LibraryDetailModal's regen UI. Older
         // renders predating the v16 migration won't have this — UI shows a
         // "regen requires re-render once" hint in that case.
@@ -319,4 +325,30 @@ async function handleDelete(response, userId, jobId) {
     deleted: { jobId, auditRowId: row.id },
     storageWarnings: storageWarnings.length ? storageWarnings : undefined
   });
+}
+
+/* ============================================================
+   v46 — narration voice classification.
+   Mirrors render-worker/src/voices.mjs VOICE_SLUG_TO_ID (same env
+   overrides, same defaults — the two-copy convention api/voices.js
+   documents). The worker stores the RESOLVED ElevenLabs ID in
+   narration_voice_id, so "is it a preset?" must be answered against
+   this list, never against the ID's shape.
+   ============================================================ */
+const PREMADE_VOICE_IDS = new Set([
+  process.env.EVOICE_LUXURY_WARM     || "EXAVITQu4vr4xnSDxMaL", // Sarah
+  process.env.EVOICE_LUXURY_MALE     || "pNInz6obpgDQGcFmaJgB", // Adam
+  process.env.EVOICE_LUXURY_BRITISH  || "XB0fDUnXU5powFXDhCwa", // Charlotte
+  process.env.EVOICE_VIRAL_ENERGETIC || "XrExE9yKIg1WjnnlVkGX", // Matilda
+  process.env.EVOICE_VIRAL_CONFIDENT || "AZnzlk1XvdvUeBnXmlld", // Domi
+  process.env.EVOICE_INVESTOR_DEEP   || "29vD33N1CtxCmqQRPOHJ", // Drew
+  process.env.EVOICE_MLS_NEUTRAL     || "21m00Tcm4TlvDq8ikWAM"  // Rachel
+]);
+
+function classifyNarrationVoice(voiceId) {
+  const id = String(voiceId || "").trim();
+  if (!id) return null;
+  // Premade catalog ID, or a legacy row that stored the slug itself.
+  if (PREMADE_VOICE_IDS.has(id) || /^[a-z]+-[a-z]+$/.test(id)) return "preset";
+  return "cloned";
 }
