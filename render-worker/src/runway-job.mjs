@@ -1514,6 +1514,11 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       "-y",
       "-threads", "1",
       "-i", stitched,
+      // v45.11b (m41): tracks SHORTER than the video ended the bed early —
+      // amix duration=first + -shortest then truncated the ENTIRE audio
+      // stream (m41 shipped 4.2s of dead silence over its final scenes).
+      // Loop the bed; -shortest still caps output at the video's length.
+      "-stream_loop", "-1",
       "-i", musicUrl,
       "-filter_complex", `[1:a]volume=${musicBedLevel.toFixed(3)}${fade}[mus]`,
       "-c:v", "copy",
