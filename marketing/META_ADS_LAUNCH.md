@@ -6,6 +6,15 @@
 car 1957870524873101 · hero 1754834832497368 · secret 1357557403006889 ·
 9pm 27288169807478341 · techy 1556605616122499 · veteran 2136639513614283
 
+**BUILT Jul 13 — 5 PAUSED ads live in account (campaign OFF). True Graph
+page_id = 1250774388114584 (61591862521888 is the New-Pages profile alias).**
+UGC ad set 120249725557130776: Car 120250003483180776 ·
+Secret 120250003487530776 · 9pm 120250003491450776
+Hero ad set 120249725534580776: Hero 120250003495050776 ·
+Static-dusk 120250003502860776
+All: SIGN_UP CTA → vistalia.ai, AI disclosure OPT_IN, endcard.png thumbs.
+To launch: set ad-set budgets ($100 UGC / $50 Hero), flip campaign ON.
+
 Ranked for a cold real-estate-agent audience on Reels:
 
 1. **ugc-car** (17.0s, rebuilt from raw Jul 13) — lead creative. Car-selfie
