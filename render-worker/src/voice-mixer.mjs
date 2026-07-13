@@ -93,10 +93,20 @@ async function computeStemGains(masterMp4, narrationTrackPath) {
 }
 
 // The shared final-mix audio chain: normalized bed → duck under lines →
-// normalized voice → deterministic sum → static makeup → true-peak guard.
-function buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb) {
+// end fade → normalized voice → deterministic sum → static makeup →
+// true-peak guard.
+// v45.11 (m46, Troy "how are we still having cut off problems"): the bed had
+// NO end fade in any mix path — every music render hard-cut the track at the
+// master's last frame. Beat-snapped endings and quiet beds masked it until
+// the investor track SWELLED (−22→−15dB) into EOF. Bed-only fade over the
+// final BED_FADE_SEC; the voice is untouched (CTA ends well before it).
+const BED_FADE_SEC = Number(process.env.MUSIC_END_FADE_SEC ?? 1.8);
+function buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb, totalDurSec) {
+  const fade = Number.isFinite(totalDurSec) && totalDurSec > BED_FADE_SEC
+    ? `,afade=t=out:st=${(totalDurSec - BED_FADE_SEC).toFixed(2)}:d=${BED_FADE_SEC.toFixed(2)}`
+    : "";
   return (
-    `[0:a:0]volume=${bedGainDb.toFixed(1)}dB,volume=eval=frame:volume='${volumeExpr}'[ducked];` +
+    `[0:a:0]volume=${bedGainDb.toFixed(1)}dB,volume=eval=frame:volume='${volumeExpr}'${fade}[ducked];` +
     `[1:a]volume=${voiceGainDb.toFixed(1)}dB[vo];` +
     `[ducked][vo]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,` +
     `volume=${MIX_MAKEUP_DB}dB,alimiter=limit=0.841:level=false[aout]`
@@ -464,13 +474,14 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
 
   if (masterHasAudio) {
     const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
+    const masterDurSec = await probeAudioDuration(masterMp4);
     await runFFmpeg([
       "-y",
       "-threads", "1",
       "-i", masterMp4,
       "-i", narrationTrackPath,
       "-filter_complex",
-      buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb),
+      buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb, masterDurSec),
       "-map", "0:v:0",
       "-map", "[aout]",
       "-c:v", "copy",
@@ -703,11 +714,12 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
       ? [`[0:v:0]subtitles='${subtitlesFilterPath(captionsAssPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'[vout];`, "[vout]", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19"]]
       : ["", "0:v:0", ["-c:v", "copy"]];
     const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
+    const masterDurSec = await probeAudioDuration(masterMp4);
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex",
-      vf[0] + buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb),
+      vf[0] + buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb, masterDurSec),
       "-map", vf[1], "-map", "[aout]",
       ...vf[2], "-c:a", "aac", "-b:a", "192k",
       "-shortest", mixedMp4
@@ -845,12 +857,13 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
 
   if (masterHasAudio) {
     const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
+    const masterDurSec = await probeAudioDuration(masterMp4);
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", masterMp4,
       "-i", narrationTrackPath,
       "-filter_complex",
-      buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb),
+      buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb, masterDurSec),
       "-map", "0:v:0", "-map", "[aout]",
       "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
       "-shortest",
@@ -930,7 +943,7 @@ async function synthesizeToFile({ text, voiceId, outPath, previousText = "", nex
 // to duck music or to use narration as the sole audio source.
 // v31.3: real duration of a synthesized narration MP3 (0 on failure —
 // callers treat 0 as "unknown, use legacy behavior").
-async function probeAudioDuration(filePath) {
+export async function probeAudioDuration(filePath) {
   return new Promise((resolve) => {
     const proc = spawn("ffprobe", [
       "-v", "error",

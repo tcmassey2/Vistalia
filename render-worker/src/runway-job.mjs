@@ -19,7 +19,7 @@ import { createClient } from "@supabase/supabase-js";
 // v35: deriveAspectVariants retired — square is recomposed from source clips
 // (see the variants block below); wide is retired until per-aspect generation
 // ships. aspect-variants.mjs stays in tree for the future Formats pack.
-import { applyVoiceNarration } from "./voice-mixer.mjs";
+import { applyVoiceNarration, probeAudioDuration } from "./voice-mixer.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
 import { renderHomographyDrift } from "./homography-drift.mjs";
 import { CAPTIONS_FONTS_DIR } from "./captions.mjs";
@@ -1505,12 +1505,17 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // master ships with only voice (or silence).
   const musicUrl = manifest?.skipMusic ? null : pickMusicUrl(manifest);
   if (musicUrl) {
+    // v45.11: end fade on the bed here too — this attach is the FINAL audio
+    // for no-narration music renders (voiced renders re-fade in voice-mixer).
+    const stitchedDur = await probeAudioDuration(stitched).catch(() => 0);
+    const fadeSec = Number(process.env.MUSIC_END_FADE_SEC ?? 1.8);
+    const fade = stitchedDur > fadeSec ? `,afade=t=out:st=${(stitchedDur - fadeSec).toFixed(2)}:d=${fadeSec.toFixed(2)}` : "";
     await runFFmpeg([
       "-y",
       "-threads", "1",
       "-i", stitched,
       "-i", musicUrl,
-      "-filter_complex", `[1:a]volume=${musicBedLevel.toFixed(3)}[mus]`,
+      "-filter_complex", `[1:a]volume=${musicBedLevel.toFixed(3)}${fade}[mus]`,
       "-c:v", "copy",
       "-c:a", "aac",
       "-b:a", "192k",
