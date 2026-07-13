@@ -123,7 +123,7 @@ Use Primary text A/B above.
   broker where available.
 - Placements: Reels (IG+FB) only at launch — creative is 9:16-native.
   Advantage+ off until the pixel has signal.
-- $100/day → 2 ad sets ($50 ea): hero video vs statics. Kill anything CPM-fine
+- $150/day → 2 ad sets ($100 UGC · $50 Hero). Kill anything CPM-fine
   but CTR <0.8% after ~3 days / $150 spend.
 - Pixel events: Lead = signup, Purchase = checkout success (values $39/69/149).
 
