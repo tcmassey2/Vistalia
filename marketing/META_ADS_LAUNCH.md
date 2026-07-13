@@ -6,8 +6,8 @@ Ranked for a cold real-estate-agent audience on Reels:
 
 1. **ugc-car** (17.8s) — lead creative. Car-selfie is the most native format
    on Reels; hook names the enemy ("So the videographer…") → "Watch this
-   instead." → gold **$39** pop. Cost anchor + direct eye contact. Pair with
-   Primary B, headline "$850 videographer → $39".
+   instead." → gold **$39** pop (true one-off price; copy carries the $8
+   anchor). Pair with Primary B, headline "$850 videographer → ~$8 a listing".
 2. **hero-15s** — the only creative that shows the product (photo snaps into
    motion → second room → branded end card). Runs as the demo anchor. Pair
    with Primary A, headline "Listing video in 3 minutes", desc 1.
@@ -30,12 +30,14 @@ Kill rule unchanged: CTR <0.8% after ~3 days / $150.
 Primary text (D, time anchor — for ugc-9pm):
 > It's 9pm and half the agents you know are still editing listing video.
 > Vistalia turns the photos you already have into a narrated, cinematic
-> Reel in about 3 minutes. Post it and go to bed. First video free.
+> Reel in about 3 minutes — about $8 a listing on an annual plan. Post it
+> and go to bed. First video free.
 
 Primary text (E, objection — for ugc-techy):
 > "I'm not a video person." You don't have to be. Upload your listing
 > photos, pick a style, done — Vistalia handles the camera moves, music,
-> and narration. You can't mess it up. First video free.
+> and narration. You can't mess it up. About $8 a listing on an annual
+> plan, and your first video is free.
 
 ---
 
@@ -43,6 +45,14 @@ Primary text (E, objection — for ugc-techy):
 > never Marketing Studio. All prices q7: first video free · $39/video · plans
 > from $69/mo ($41/mo annual). Product claims must stay true: ~3 minutes,
 > AI camera motion, on-beat music, narration incl. your own cloned voice.
+>
+> **Price anchor (Troy, Jul 13): promote "about $8 a listing," not $39.**
+> Basis: Pro annual $490/yr ÷ 60 videos = $8.17; Studio annual = $8.25.
+> Say "about $8" or "~$8" (never "starting at $8" flat — actual is $8.17;
+> repricing Pro annual to $480 would make $8.00 exact if we want the clean
+> claim). $39 one-off may appear as the secondary no-subscription option.
+> Note: ugc-car's burned-in "$39" pop stays — it's the true one-off price;
+> the surrounding copy carries the $8 anchor.
 
 ## Campaign 1 — "Still photos are costing you listings" (hero video)
 
@@ -56,9 +66,9 @@ Primary text (A, short):
 > First video free. No card.
 
 Primary text (B, cost anchor):
-> A videographer charges $850 per listing. Vistalia turns the photos you
-> already have into a narrated, cinematic Reel for $39 — or from $69/mo if
-> you list every month. Your first one is free.
+> A videographer charges $850 per listing. On a Vistalia annual plan, a
+> narrated cinematic Reel works out to about $8 a listing — from the photos
+> you already have. No shoot, no editing. Your first one is free.
 
 Primary text (C, social proof of behavior):
 > The listings getting DMs right now aren't the ones with the best photos —
@@ -69,8 +79,9 @@ Headlines (40 chars):
 1. Listing video in 3 minutes
 2. Your photos. Cinematic. Narrated.
 3. First listing video free
-4. $850 videographer → $39
+4. $850 videographer → ~$8 a listing
 5. Turn MLS photos into Reels
+6. Listing videos from about $8 each
 
 Descriptions (30 chars):
 1. No shoot. No editing. No card.
