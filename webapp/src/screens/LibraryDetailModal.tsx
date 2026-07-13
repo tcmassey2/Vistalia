@@ -531,12 +531,22 @@ function ScenesRegenGrid({
           if (consecutivePollErrors < 5) continue;
           throw pollErr;
         }
+        // v46 (Troy's smoke test): MONOTONIC progress. Status can arrive from
+        // two sources — the worker's live memory and the render_jobs row via
+        // the API's fallback — and a transiently stale source made the bar
+        // flip real→3%→real. Progress only moves forward; when a regressed
+        // snapshot arrives, keep the previous phase text too. Terminal states
+        // always win.
+        const terminal = status.status === "completed" || status.status === "failed";
+        const incoming = status.progress ?? lastStatus.progress;
+        const progress = terminal ? 100 : Math.max(lastStatus.progress, incoming);
+        const regressed = !terminal && incoming < lastStatus.progress;
         lastStatus = {
           sceneIndex,
           mode,
           status: status.status,
-          phase: status.phase || lastStatus.phase,
-          progress: status.progress ?? lastStatus.progress,
+          phase: regressed ? lastStatus.phase : (status.phase || lastStatus.phase),
+          progress,
           jobId: progressKey,
           error: status.error
         };

@@ -25,6 +25,9 @@ export default async function handler(request, response) {
 
   if (request.method === "GET") {
     try {
+      // v46: status responses must NEVER be cached — a cached snapshot made
+      // the regen progress bar flip between live and stale values.
+      response.setHeader("Cache-Control", "no-store");
       const jobId = new URL(request.url || "", "http://localhost").searchParams.get("jobId");
       if (!jobId) {
         response.status(400).json({ status: "failed", error: "Render status requires jobId." });

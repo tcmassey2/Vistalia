@@ -421,22 +421,47 @@ function persistJobStatus(jobId, job) {
   if (job.status === "completed") patch.result = job;
   if (Object.keys(patch).length === 0) return;
   const url = `${SUPABASE_URL}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(jobId)}`;
-  fetch(url, {
-    method: "PATCH", headers: { ...sbHeaders, Prefer: "return=minimal" }, body: JSON.stringify(patch)
-  }).then((res) => {
+  // v46 (Troy's smoke test): a regen finished in memory but its final
+  // status=completed patch was lost (single fire-and-forget attempt) — the
+  // row froze at status=rendering/progress=100 and the 20-min stuck reaper
+  // would have RE-RUN the whole completed job. Terminal transitions
+  // (completed/failed) now retry with backoff and log loudly on final
+  // failure; progress ticks stay single-shot fire-and-forget (the next
+  // tick supersedes them anyway).
+  const terminal = patch.status === "completed" || patch.status === "failed";
+  const attemptPatch = async (body) => {
+    const res = await fetch(url, {
+      method: "PATCH", headers: { ...sbHeaders, Prefer: "return=minimal" }, body: JSON.stringify(body)
+    });
     // Deploy-order resilience: if migration 25 (heartbeat_at column) hasn't
     // been applied yet, PostgREST rejects the whole patch — retry once
     // without the heartbeat so status/result persistence NEVER silently
-    // stops (a completed job that fails to persist would be requeued and
-    // re-rendered by the stuck-job reaper).
-    if (!res.ok && patch.heartbeat_at) {
-      const { heartbeat_at, ...rest } = patch;
-      if (Object.keys(rest).length === 0) return;
+    // stops.
+    if (!res.ok && body.heartbeat_at) {
+      const { heartbeat_at, ...rest } = body;
+      if (Object.keys(rest).length === 0) return res;
       return fetch(url, {
         method: "PATCH", headers: { ...sbHeaders, Prefer: "return=minimal" }, body: JSON.stringify(rest)
       });
     }
-  }).catch(() => {});
+    return res;
+  };
+  (async () => {
+    const attempts = terminal ? 3 : 1;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const res = await attemptPatch(patch);
+        if (res?.ok) return;
+        if (terminal) console.warn(`[queue] terminal patch for ${jobId} got ${res?.status} (attempt ${i + 1}/${attempts})`);
+      } catch (e) {
+        if (terminal) console.warn(`[queue] terminal patch for ${jobId} threw (attempt ${i + 1}/${attempts}): ${e?.message}`);
+      }
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
+    }
+    if (terminal) {
+      console.error(`[queue] ⚠️ FAILED to persist ${patch.status} for ${jobId} after ${attempts} attempts — the stuck reaper may requeue this finished job. Fix the row manually: update render_jobs set status='${patch.status}' where job_id='${jobId}'.`);
+    }
+  })().catch(() => {});
 }
 
 // Poll the queue and start jobs up to the concurrency cap. Each claim is atomic
