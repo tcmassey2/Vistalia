@@ -19,7 +19,7 @@ function shell({ eyebrow, headline, body, ctaLabel, ctaUrl, footer }) {
         <table role="presentation" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="padding-right:10px;">
-              <div style="display:inline-block;width:32px;height:32px;border-radius:6px;background:linear-gradient(135deg,#D4B96A,#A8843D);text-align:center;line-height:32px;font-style:italic;font-weight:700;color:#0E0E10;font-size:18px;">E</div>
+              <div style="display:inline-block;width:32px;height:32px;border-radius:8px;background:#0B0B0D;border:1.5px solid #C7A76C;text-align:center;line-height:29px;font-weight:600;color:#E6CE8E;font-size:18px;font-family:Georgia,serif;">V</div>
             </td>
             <td style="font-size:16px;font-weight:600;letter-spacing:-0.01em;color:#E8E2D6;">Vistalia</td>
           </tr>
@@ -43,7 +43,7 @@ function shell({ eyebrow, headline, body, ctaLabel, ctaUrl, footer }) {
     </table>
     <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;margin-top:20px;">
       <tr><td style="padding:0 40px;font-size:11px;color:#5B5448;line-height:1.6;text-align:center;">
-        Vistalia · Cinematic listing videos in three minutes.<br>
+        Vistalia · The listing video that speaks.<br>
         <a href="${APP_URL}/app/" style="color:#7A7164;text-decoration:underline;">Sign in</a>
         &nbsp;·&nbsp;
         <a href="${APP_URL}/help" style="color:#7A7164;text-decoration:underline;">Help</a>
@@ -149,4 +149,22 @@ export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobI
       footer: `Sent to ${escape(email)} because a render you started just finished. You can disable these in Settings.`
     })
   };
+}
+
+// Contact-form notification to support@ — same shell as everything else,
+// so the support inbox looks like the brand from day one.
+export function contactNotification({ name, email, subject, message }) {
+  const safeMsg = escape(message).replace(/\n/g, "<br>");
+  const html = shell({
+    eyebrow: "Contact form",
+    headline: subject || "New message",
+    body:
+      `<p style="margin:0 0 14px 0;"><strong style="color:#E8E2D6;">${escape(name || "Someone")}</strong> ` +
+      `&lt;<a href="mailto:${escape(email)}" style="color:#C7A76C;text-decoration:none;">${escape(email)}</a>&gt; wrote:</p>` +
+      `<div style="padding:16px 18px;background:#101014;border:1px solid #26262C;border-radius:10px;color:#C2C2BC;line-height:1.6;">${safeMsg}</div>`,
+    ctaLabel: "Reply",
+    ctaUrl: `mailto:${email}`,
+    footer: "Sent from the vistalia.ai contact form. Reply-to is set to the sender."
+  });
+  return { subject: `[Contact] ${subject || "New message"}`, html };
 }

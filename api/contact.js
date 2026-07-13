@@ -4,6 +4,7 @@
 // Public endpoint (no auth) but rate-limited to prevent spam.
 
 import { sendTransactionalEmail } from "./_lib/email.js";
+import { contactNotification } from "./_lib/email-templates.js";
 import { rateLimit } from "./_lib/rate-limit.js";
 
 export default async function handler(request, response) {
@@ -41,25 +42,14 @@ export default async function handler(request, response) {
   }
 
   const supportTo = process.env.SUPPORT_INBOX || "support@vistalia.ai";
-  const safeName = escape(name || "(unnamed)");
-  const safeEmail = escape(email);
-  const safeSubject = escape(subject);
-  const safeMessage = escape(message).replace(/\n/g, "<br>");
-
-  const html = `
-    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#111;background:#fff;padding:24px;">
-      <h2 style="margin:0 0 12px;font-size:18px;">New Vistalia contact form</h2>
-      <p style="margin:4px 0;"><strong>From:</strong> ${safeName} &lt;${safeEmail}&gt;</p>
-      <p style="margin:4px 0;"><strong>Subject:</strong> ${safeSubject}</p>
-      <hr style="border:none;border-top:1px solid #ddd;margin:14px 0;">
-      <div style="font-size:14px;line-height:1.6;">${safeMessage}</div>
-    </div>
-  `;
+  // v45.13: route through the branded shell (email-templates.js) — the old
+  // inline white-card HTML predated the template system.
+  const tpl = contactNotification({ name, email, subject, message });
 
   const result = await sendTransactionalEmail({
     to: supportTo,
-    subject: `[Contact] ${subject}`,
-    html,
+    subject: tpl.subject,
+    html: tpl.html,
     replyTo: email,
     tags: ["contact-form"]
   });
