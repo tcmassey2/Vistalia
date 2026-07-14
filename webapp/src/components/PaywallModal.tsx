@@ -47,6 +47,7 @@ const PLANS: Plan[] = [
     annual: { perMo: 41, yearly: 490, savePct: 41, tier: "pro_annual" },
     features: [
       "5 cinematic listing videos / month",
+      "No watermark — your brand only",
       "Narrated in your own cloned voice",
       "60-second tours + all formats",
       "Extra videos $12 each",
@@ -60,6 +61,7 @@ const PLANS: Plan[] = [
     annual: { perMo: 83, yearly: 990, savePct: 45, tier: "studio_annual" },
     features: [
       "10 cinematic listing videos / month",
+      "No watermark — your brand only",
       "Everything in Pro",
       "Extra videos $12 each",
       "Front-of-queue rendering",
@@ -254,7 +256,7 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
         <div className="mx-6 sm:mx-8 mb-2 rounded-xl border border-edge bg-surface-input px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
           <div>
             <div className="text-sm font-semibold text-ink">Just one listing?</div>
-            <div className="text-xs text-ink-muted mt-0.5">Pay as you go — one cinematic video, no subscription.</div>
+            <div className="text-xs text-ink-muted mt-0.5">Pay as you go — one cinematic video, no watermark, no subscription.</div>
           </div>
           <button
             type="button"

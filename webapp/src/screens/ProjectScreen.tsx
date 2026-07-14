@@ -4,7 +4,7 @@ import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHe
 import { createEditPlan, submitRender, pollRender, lookupProperty, fetchLibrary, fetchUsage, authHeaders, RenderJobMissingError, type RenderManifest } from "../lib/api";
 import VoiceSection from "../components/VoiceSection";
 import { events, track } from "../lib/analytics";
-import type { Photo, RenderEngine, StyleId } from "../lib/types";
+import type { AgentBranding, Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
 import { downloadVideo, deliverableFilename } from "../lib/download";
 import { resolveTrack } from "../lib/music-catalog";
@@ -800,165 +800,248 @@ function BrandKitArea({ userId }: { userId: string }) {
   };
 
   return (
-    <div className="bg-surface border border-edge rounded-xl p-5 sm:p-6 flex flex-col gap-5">
-      <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-5 items-start">
-        {/* Headshot uploader */}
-        <div className="flex flex-col items-center gap-2">
-          <label
-            className={cn(
-              "card-press relative w-28 h-28 rounded-full overflow-hidden border-2 border-dashed cursor-pointer grid place-items-center bg-surface-input transition-colors",
-              uploading
-                ? "border-gold"
-                : branding.headshotUrl
-                ? "border-edge-strong hover:border-gold"
-                : "border-edge-strong hover:border-gold hover:bg-gold/5"
-            )}
-          >
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => handleHeadshot(e.target.files)}
-              disabled={uploading}
-            />
-            {branding.headshotUrl ? (
-              <img
-                src={branding.headshotUrl}
-                alt="Agent headshot"
-                className="w-full h-full object-cover"
-              />
-            ) : uploading ? (
-              <span className="spinner" />
-            ) : (
-              <div className="text-[10px] text-ink-muted text-center px-2 leading-tight">
-                Add<br />headshot
-              </div>
-            )}
-          </label>
-          {branding.headshotUrl && (
-            <button
-              type="button"
-              onClick={() => setBranding({ headshotUrl: "" })}
-              className="text-[11px] text-ink-muted hover:text-red-300 transition-colors"
-            >
-              Remove
-            </button>
-          )}
-        </div>
-
-        {/* Identity fields */}
-        <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input
-              label="Full name"
-              value={branding.fullName}
-              onChange={(v) => setBranding({ fullName: v })}
-              placeholder="Troy Massey"
-            />
-            <Input
-              label="Brokerage"
-              value={branding.brokerage}
-              onChange={(v) => setBranding({ brokerage: v })}
-              placeholder="Vistalia Realty"
-            />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input
-              label="Phone"
-              value={branding.phone}
-              onChange={(v) => setBranding({ phone: v })}
-              placeholder="(555) 555-1234"
-            />
-            <Input
-              label="Email"
-              value={branding.email}
-              onChange={(v) => setBranding({ email: v })}
-              placeholder="agent@example.com"
-              type="email"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Brokerage logo + license — both required for MLS-compliant
-          marketing in most states. These appear on the closing card and
-          drive the "MLS compliant" differentiator. */}
-      <div className="pt-5 border-t border-edge-soft">
-        <div className="flex items-baseline justify-between mb-3">
-          <div>
-            <h3 className="text-sm font-semibold tracking-tightish flex items-center gap-2">
-              Brokerage compliance
-              <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold/20 text-gold-light border border-gold/30">MLS-READY</span>
-            </h3>
-            <p className="text-xs text-ink-muted mt-0.5">
-              Logo + license number appear on the closing card and on every Equal Housing footer.
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-5 items-start">
-          {/* Logo uploader */}
-          <div className="flex flex-col items-center gap-2">
-            <label
-              className={cn(
-                "card-press relative w-32 h-20 rounded-lg overflow-hidden border-2 border-dashed cursor-pointer grid place-items-center bg-surface-input transition-colors",
-                uploadingLogo
-                  ? "border-gold"
-                  : branding.brokerageLogoUrl
-                  ? "border-edge-strong hover:border-gold"
-                  : "border-edge-strong hover:border-gold hover:bg-gold/5"
-              )}
-            >
-              <input
-                ref={logoInput}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => handleLogo(e.target.files)}
-                disabled={uploadingLogo}
-              />
-              {branding.brokerageLogoUrl ? (
-                <img
-                  src={branding.brokerageLogoUrl}
-                  alt="Brokerage logo"
-                  className="max-w-[90%] max-h-[80%] object-contain"
-                />
-              ) : uploadingLogo ? (
-                <span className="spinner" />
-              ) : (
-                <div className="text-[10px] text-ink-muted text-center px-2 leading-tight">
-                  Add<br />brokerage<br />logo
-                </div>
-              )}
-            </label>
-            {branding.brokerageLogoUrl && (
-              <button
-                type="button"
-                onClick={() => setBranding({ brokerageLogoUrl: "" })}
-                className="text-[11px] text-ink-muted hover:text-red-300 transition-colors"
+    <div className="bg-surface border border-edge rounded-xl overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_290px]">
+        {/* ==== Form column ==== */}
+        <div className="p-5 sm:p-6 flex flex-col gap-6 min-w-0">
+          <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-5 items-start">
+            {/* Headshot uploader */}
+            <div className="flex flex-col items-center gap-2">
+              <label
+                className={cn(
+                  "card-press group relative w-28 h-28 rounded-full overflow-hidden cursor-pointer grid place-items-center bg-surface-input transition-all",
+                  uploading
+                    ? "border-2 border-gold"
+                    : branding.headshotUrl
+                    ? "border-2 border-gold/60 ring-2 ring-gold/15 hover:ring-gold/30"
+                    : "border-2 border-dashed border-edge-strong hover:border-gold hover:bg-gold/5"
+                )}
               >
-                Remove
-              </button>
-            )}
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => handleHeadshot(e.target.files)}
+                  disabled={uploading}
+                />
+                {branding.headshotUrl ? (
+                  <>
+                    <img
+                      src={branding.headshotUrl}
+                      alt="Agent headshot"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute inset-0 grid place-items-center bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-semibold tracking-widest uppercase text-white">
+                      Replace
+                    </span>
+                  </>
+                ) : uploading ? (
+                  <span className="spinner" />
+                ) : (
+                  <div className="text-[10px] text-ink-muted text-center px-2 leading-tight">
+                    Add<br />headshot
+                  </div>
+                )}
+              </label>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-ink-dim">Headshot</span>
+              {branding.headshotUrl && (
+                <button
+                  type="button"
+                  onClick={() => setBranding({ headshotUrl: "" })}
+                  className="text-[11px] text-ink-muted hover:text-red-300 transition-colors -mt-1"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+
+            {/* Identity fields */}
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input
+                  label="Full name"
+                  value={branding.fullName}
+                  onChange={(v) => setBranding({ fullName: v })}
+                  placeholder="Troy Massey"
+                />
+                <Input
+                  label="Brokerage"
+                  value={branding.brokerage}
+                  onChange={(v) => setBranding({ brokerage: v })}
+                  placeholder="Vistalia Realty"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input
+                  label="Phone"
+                  value={branding.phone}
+                  onChange={(v) => setBranding({ phone: v })}
+                  placeholder="(555) 555-1234"
+                />
+                <Input
+                  label="Email"
+                  value={branding.email}
+                  onChange={(v) => setBranding({ email: v })}
+                  placeholder="agent@example.com"
+                  type="email"
+                />
+              </div>
+            </div>
           </div>
-          {/* License number */}
-          <div className="flex flex-col gap-3">
-            <Input
-              label="License number"
-              value={branding.licenseNumber || ""}
-              onChange={(v) => setBranding({ licenseNumber: v })}
-              placeholder="DRE# 01234567 · TREC# 0123456 · AZ SA-123456"
-            />
-            <p className="text-[11px] text-ink-muted leading-relaxed">
-              Stamped on every video for state advertising compliance. PNG with transparent background recommended for the logo.
-            </p>
+
+          {/* Brokerage logo + license — both required for MLS-compliant
+              marketing in most states. These appear on the closing card and
+              drive the "MLS compliant" differentiator. */}
+          <div className="pt-5 border-t border-edge-soft">
+            <div className="flex items-baseline justify-between mb-3">
+              <div>
+                <h3 className="text-sm font-semibold tracking-tightish flex items-center gap-2">
+                  Brokerage compliance
+                  <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded bg-gold/20 text-gold-light border border-gold/30">MLS-READY</span>
+                </h3>
+                <p className="text-xs text-ink-muted mt-0.5">
+                  Logo + license number appear on the closing card and on every Equal Housing footer.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-5 items-start">
+              {/* Logo uploader */}
+              <div className="flex flex-col items-center gap-2">
+                <label
+                  className={cn(
+                    "card-press group relative w-32 h-20 rounded-lg overflow-hidden cursor-pointer grid place-items-center bg-surface-input transition-all",
+                    uploadingLogo
+                      ? "border-2 border-gold"
+                      : branding.brokerageLogoUrl
+                      ? "border border-gold/50 ring-1 ring-gold/10 hover:ring-gold/25"
+                      : "border-2 border-dashed border-edge-strong hover:border-gold hover:bg-gold/5"
+                  )}
+                >
+                  <input
+                    ref={logoInput}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleLogo(e.target.files)}
+                    disabled={uploadingLogo}
+                  />
+                  {branding.brokerageLogoUrl ? (
+                    <>
+                      <img
+                        src={branding.brokerageLogoUrl}
+                        alt="Brokerage logo"
+                        className="max-w-[90%] max-h-[80%] object-contain"
+                      />
+                      <span className="absolute inset-0 grid place-items-center bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-semibold tracking-widest uppercase text-white">
+                        Replace
+                      </span>
+                    </>
+                  ) : uploadingLogo ? (
+                    <span className="spinner" />
+                  ) : (
+                    <div className="text-[10px] text-ink-muted text-center px-2 leading-tight">
+                      Add<br />brokerage<br />logo
+                    </div>
+                  )}
+                </label>
+                {branding.brokerageLogoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setBranding({ brokerageLogoUrl: "" })}
+                    className="text-[11px] text-ink-muted hover:text-red-300 transition-colors"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              {/* License number */}
+              <div className="flex flex-col gap-3">
+                <Input
+                  label="License number"
+                  value={branding.licenseNumber || ""}
+                  onChange={(v) => setBranding({ licenseNumber: v })}
+                  placeholder="DRE# 01234567 · TREC# 0123456 · AZ SA-123456"
+                />
+                <p className="text-[11px] text-ink-muted leading-relaxed">
+                  Stamped on every video for state advertising compliance. PNG with transparent background recommended for the logo.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* ==== Live closing-card preview ==== */}
+        <aside className="border-t lg:border-t-0 lg:border-l border-edge-soft bg-surface-input/40 p-5 sm:p-6 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-gold">Closing card</span>
+            <span className="text-[10px] text-ink-dim">Live preview</span>
+          </div>
+          <OutroCardPreview branding={branding} />
+          <p className="text-[11px] text-ink-muted leading-relaxed text-center">
+            Closes every video you render — your branding, no one else's.
+          </p>
+        </aside>
       </div>
 
       {/* v26.9: VoiceCloneCard moved to the Audio panel (under the narration
           toggle) where agents look for voiceover — it was buried here in the
           brand kit and went undiscovered. */}
+    </div>
+  );
+}
+
+/* Miniature of the ffmpeg brand outro (buildBrandOutroClip): vignette bg,
+   headshot circle + logo row, gold CTA eyebrow, name, brokerage, license,
+   contact, accent rule, Equal Housing footer. Purely cosmetic — the worker
+   remains the source of truth for the real card. */
+function OutroCardPreview({ branding }: { branding: AgentBranding }) {
+  const name = branding.fullName.trim() || "Your Name";
+  const brokerage = branding.brokerage.trim();
+  const license = (branding.licenseNumber || "").trim();
+  const contact = [branding.phone.trim(), branding.email.trim()].filter(Boolean).join("  ·  ");
+  const initial = (branding.fullName.trim() || "V").charAt(0).toUpperCase();
+  return (
+    <div className="relative w-full max-w-[230px] mx-auto aspect-[9/15] rounded-xl overflow-hidden border border-edge-strong bg-[#0B0B0D] shadow-2xl select-none">
+      {/* vignette */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(120% 90% at 50% 28%, rgba(199,167,108,.10), transparent 55%), radial-gradient(150% 110% at 50% 105%, rgba(0,0,0,.6), transparent 62%)"
+        }}
+      />
+      <div className="relative h-full flex flex-col items-center justify-center px-4 text-center">
+        <div className="flex items-center justify-center gap-3 mb-3">
+          {branding.headshotUrl ? (
+            <img
+              src={branding.headshotUrl}
+              alt=""
+              className="w-16 h-16 rounded-full object-cover border border-gold/40"
+            />
+          ) : (
+            <div className="w-16 h-16 rounded-full border border-gold/30 bg-white/[.04] grid place-items-center font-display text-xl text-gold/70">
+              {initial}
+            </div>
+          )}
+          {branding.brokerageLogoUrl && (
+            <img src={branding.brokerageLogoUrl} alt="" className="max-h-10 max-w-[64px] object-contain" />
+          )}
+        </div>
+        <div className="text-[7px] font-semibold tracking-[.3em] uppercase text-gold mb-1.5">
+          Schedule a private tour
+        </div>
+        <div className="font-display text-lg font-semibold tracking-tighter2 text-white leading-tight">
+          {name}
+        </div>
+        {brokerage && <div className="text-[10px] text-white/75 mt-1">{brokerage}</div>}
+        {license && <div className="text-[8px] tracking-wider text-gold/90 mt-1">{license}</div>}
+        {contact && <div className="text-[8px] text-white/80 mt-1.5 px-2 break-words leading-relaxed">{contact}</div>}
+        <div className="w-12 h-px bg-gold/70 mt-3" />
+      </div>
+      <div className="absolute bottom-2 inset-x-0 text-center text-[6.5px] text-white/45">
+        Equal Housing Opportunity&ensp;·&ensp;Made with Vistalia
+      </div>
     </div>
   );
 }

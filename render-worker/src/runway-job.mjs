@@ -1721,13 +1721,15 @@ function runwayDimensions(manifest) {
 // posted; subtle enough that posting it is still tempting. Static text
 // only — no user input reaches this filter.
 function buildFreeRenderWatermark(dimensions) {
-  const fontSize = Math.max(20, Math.round(dimensions.width / 36));
+  // v46.1 (Troy): ~20% larger than the launch size (/36 → /30). The mark is
+  // the upgrade nudge — Reel-E closed Troy himself on exactly this feeling.
+  const fontSize = Math.max(24, Math.round(dimensions.width / 30));
   return (
     `drawtext=fontfile='${FFMPEG_FONT}'` +
     `:text='vistalia.ai'` +
     `:fontcolor=white@0.92:fontsize=${fontSize}` +
     `:x=36:y=40` +
-    `:box=1:boxcolor=black@0.38:boxborderw=14`
+    `:box=1:boxcolor=black@0.40:boxborderw=16`
   );
 }
 

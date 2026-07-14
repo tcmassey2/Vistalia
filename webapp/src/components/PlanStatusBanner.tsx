@@ -104,7 +104,7 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
             You've used your free video — pick a plan to keep rendering.
           </div>
           <div className="text-xs text-ink-muted mt-0.5">
-            {usage.reason || "Plans from $69/mo ($41/mo billed annually), or $39 per one-off video. Credits never expire."}
+            {usage.reason || "Plans from $69/mo ($41/mo billed annually), or $39 per one-off video — all watermark-free. Credits never expire."}
           </div>
         </div>
         <UpgradeButton onUpgrade={onUpgrade} label="See plans" primary />
@@ -136,8 +136,8 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
           </div>
           <div className="text-xs text-ink-muted mt-1">
             {lowOnEither
-              ? "Add videos any time — $39 each, or subscribe from $69/mo ($41/mo annual)."
-              : "Your first video's on us. After that, plans start at $69/mo ($41/mo annual) — or $39 per one-off video."}
+              ? "Add videos any time — $39 each, or subscribe from $69/mo ($41/mo annual). Paid videos are watermark-free."
+              : "Your first video's on us — it carries a small vistalia.ai mark. Every paid video is watermark-free, plans from $69/mo ($41/mo annual) or $39 one-off."}
           </div>
         </div>
         <UpgradeButton onUpgrade={onUpgrade} label="See plans" primary={lowOnEither} />
