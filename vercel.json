@@ -81,6 +81,16 @@
       "source": "/start.html",
       "destination": "/",
       "permanent": true
+    },
+    {
+      "source": "/signup",
+      "destination": "/app/",
+      "permanent": false
+    },
+    {
+      "source": "/login",
+      "destination": "/app/",
+      "permanent": false
     }
   ]
 }
