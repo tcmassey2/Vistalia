@@ -133,6 +133,17 @@ export default async function handler(request, response) {
     if (tierGuard.state?.tier) {
       manifest.userTier = tierGuard.state.tier;
     }
+    // v46 (Troy, launch day): FREE renders carry a Vistalia watermark. A
+    // render is free exactly when it consumes the trial allowance — trial
+    // tier with no purchased credits. A purchased credit (PAYG) or any
+    // subscription renders unmarked, including for users still labeled
+    // 'trial' who bought a $39 credit.
+    if (
+      String(tierGuard.state?.tier || "") === "trial" &&
+      Number(tierGuard.state?.render_credits || 0) < 1
+    ) {
+      manifest.freeRenderWatermark = true;
+    }
     if (tierGuard.userId) {
       manifest.project = manifest.project || {};
       manifest.project.userId = manifest.project.userId || tierGuard.userId;

@@ -1358,6 +1358,12 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // tipped Render Standard's 2GB ceiling. Per-clip overlay is ~50MB peak
   // and runs serially, never accumulating.
   const watermarkFilter = buildWatermarkDrawtext(brand, dimensions);
+  // v46 (Troy): free/trial renders carry a persistent vistalia.ai mark.
+  // The flag is stamped server-side by api/render.js + api/regenerate-scene.js
+  // (trial tier, no purchased credits) — the worker just obeys the manifest.
+  const freeWatermarkFilter = manifest.freeRenderWatermark
+    ? buildFreeRenderWatermark(dimensions)
+    : "";
   const colorGrade = COLOR_GRADE;
   // Pre-render the small corner headshot ONCE. Reused as a 2nd input on
   // every normalize call below. Falls back to null if the user has no
@@ -1408,7 +1414,8 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
           })()
         : `crop=${dimensions.width}:${dimensions.height}`,
       colorGrade,
-      ...(watermarkFilter ? [watermarkFilter] : [])
+      ...(watermarkFilter ? [watermarkFilter] : []),
+      ...(freeWatermarkFilter ? [freeWatermarkFilter] : [])
     ].join(",");
 
     if (cornerHeadshotPath) {
@@ -1705,6 +1712,23 @@ function runwayDimensions(manifest) {
   if (ratio === "16:9" || ratio === "wide") return { width: 1920, height: 1080 };
   if (ratio === "1:1" || ratio === "square") return { width: 1080, height: 1080 };
   return { width: 1080, height: 1920 };
+}
+
+// v46 (Troy, launch day): FREE-render watermark — a small persistent
+// "vistalia.ai" pill, top-left (bottom-left holds the agent identity badge,
+// top-right the corner headshot, captions live at ~70% height). Visible
+// enough to nudge the upgrade and credit the brand if the video gets
+// posted; subtle enough that posting it is still tempting. Static text
+// only — no user input reaches this filter.
+function buildFreeRenderWatermark(dimensions) {
+  const fontSize = Math.max(20, Math.round(dimensions.width / 36));
+  return (
+    `drawtext=fontfile='${FFMPEG_FONT}'` +
+    `:text='vistalia.ai'` +
+    `:fontcolor=white@0.92:fontsize=${fontSize}` +
+    `:x=36:y=40` +
+    `:box=1:boxcolor=black@0.38:boxborderw=14`
+  );
 }
 
 // Lower-left tinted plate with name + brokerage. drawtext box is the closest

@@ -82,6 +82,18 @@ export default async function handler(request, response) {
       return;
     }
 
+    // v46: regens re-stitch the whole master, so the free-render watermark
+    // must be re-derived here or a trial user's redo would silently launder
+    // the mark off. Same rule as /api/render: trial tier + no purchased
+    // credits = free = watermarked. (A user who upgraded after their trial
+    // render gets an unmarked master on their next redo — upgrade perk.)
+    if (
+      String(tierGuard.state?.tier || "") === "trial" &&
+      Number(tierGuard.state?.render_credits || 0) < 1
+    ) {
+      manifest.freeRenderWatermark = true;
+    }
+
     // Launch fix: default to LIVE whenever a worker URL is configured (the old
     // hardcoded `true` fallback put production in mock mode when the stale
     // MOCK_RENDERING var was deleted). Explicit MOCK_RENDERING=true still wins.
