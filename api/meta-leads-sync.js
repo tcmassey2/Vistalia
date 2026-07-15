@@ -67,12 +67,24 @@ export default async function handler(request, response) {
   const summary = { forms: 0, seen: 0, new: 0, created: 0, existing: 0, emailed: 0, errors: [] };
 
   try {
+    // (#190) day-2 fix: the leadgen edges (leadgen_forms, /leads) reject
+    // system-user tokens outright — they demand a PAGE access token. The
+    // system user's token can mint one at runtime via /{page}?fields=
+    // access_token (it holds the page's ADVERTISE task + pages_show_list),
+    // so no new secret is needed in env.
+    const pageId = process.env.META_PAGE_ID || DEFAULT_PAGE_ID;
+    const exchRes = await fetch(`${GRAPH}/${pageId}?fields=access_token&access_token=${encodeURIComponent(pageToken)}`);
+    const exchBody = await exchRes.json().catch(() => ({}));
+    const pageAccessToken = exchBody?.access_token || "";
+    if (!exchRes.ok || !pageAccessToken) {
+      throw new Error(`page token exchange: ${exchBody?.error?.message || exchRes.status}`);
+    }
+
     // --- which forms ---
     let formIds = String(process.env.META_LEADGEN_FORM_IDS || "")
       .split(",").map((s) => s.trim()).filter(Boolean);
     if (!formIds.length) {
-      const pageId = process.env.META_PAGE_ID || DEFAULT_PAGE_ID;
-      const res = await fetch(`${GRAPH}/${pageId}/leadgen_forms?fields=id,name,status&limit=50&access_token=${encodeURIComponent(pageToken)}`);
+      const res = await fetch(`${GRAPH}/${pageId}/leadgen_forms?fields=id,name,status&limit=50&access_token=${encodeURIComponent(pageAccessToken)}`);
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(`leadgen_forms: ${body?.error?.message || res.status}`);
       formIds = (body.data || []).filter((f) => f.status !== "DELETED").map((f) => f.id);
@@ -83,7 +95,7 @@ export default async function handler(request, response) {
     let budget = MAX_NEW_PER_RUN;
     for (const formId of formIds) {
       if (budget <= 0) break;
-      let url = `${GRAPH}/${formId}/leads?fields=id,created_time,field_data&limit=100&access_token=${encodeURIComponent(pageToken)}`;
+      let url = `${GRAPH}/${formId}/leads?fields=id,created_time,field_data&limit=100&access_token=${encodeURIComponent(pageAccessToken)}`;
       for (let page = 0; page < MAX_PAGES_PER_FORM && url && budget > 0; page++) {
         const res = await fetch(url);
         const body = await res.json().catch(() => ({}));
@@ -98,9 +110,11 @@ export default async function handler(request, response) {
       }
     }
 
+    if (summary.errors.length) console.error("[meta-leads-sync]", JSON.stringify(summary.errors));
     return response.status(200).json({ status: "ok", ...summary });
   } catch (error) {
     summary.errors.push(error.message);
+    console.error("[meta-leads-sync] FAILED", JSON.stringify(summary.errors));
     return response.status(500).json({ status: "failed", ...summary });
   }
 }
