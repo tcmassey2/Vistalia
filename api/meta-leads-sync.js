@@ -28,12 +28,14 @@
 //   META_PAGE_ID             optional — defaults to the Vistalia Page.
 
 import { sendTransactionalEmail } from "./_lib/email.js";
-import { leadWelcomeEmail } from "./_lib/email-templates.js";
+import { leadWelcomeEmail, leadNudgeEmail } from "./_lib/email-templates.js";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 const DEFAULT_PAGE_ID = "1250774388114584"; // Vistalia (true Graph id)
 const MAX_NEW_PER_RUN = 25;   // cap runtime; the clock comes back around
 const MAX_PAGES_PER_FORM = 5; // 100/page — plenty until volume says otherwise
+const NUDGE_AFTER_MS = Math.max(60 * 60 * 1000, Number(process.env.LEAD_NUDGE_AFTER_MS || 20 * 60 * 60 * 1000));
+const NUDGE_BATCH = 15;       // per run; the 5-min clock drains any backlog
 
 export default async function handler(request, response) {
   if (request.method !== "POST" && request.method !== "GET") {
@@ -110,12 +112,98 @@ export default async function handler(request, response) {
       }
     }
 
+    // --- nudge pass: ~20h old, welcomed, never nudged, never rendered ---
+    await runNudgePass({ supabaseUrl, serviceKey, summary });
+
     if (summary.errors.length) console.error("[meta-leads-sync]", JSON.stringify(summary.errors));
     return response.status(200).json({ status: "ok", ...summary });
   } catch (error) {
     summary.errors.push(error.message);
     console.error("[meta-leads-sync] FAILED", JSON.stringify(summary.errors));
     return response.status(500).json({ status: "failed", ...summary });
+  }
+}
+
+/* ============================================================
+   Nudge pass — the one-shot "your video is still free" reminder.
+   Claim-first (PATCH nudged_at WHERE nudged_at IS NULL, returning) so
+   concurrent invocations can't double-send; a lead who already rendered
+   gets claimed-and-skipped, which also permanently retires them.
+   ============================================================ */
+async function runNudgePass({ supabaseUrl, serviceKey, summary }) {
+  summary.nudged = 0;
+  summary.nudge_skipped = 0;
+  const rest = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    "Content-Type": "application/json"
+  };
+  try {
+    const cutoff = new Date(Date.now() - NUDGE_AFTER_MS).toISOString();
+    const listRes = await fetch(
+      `${supabaseUrl}/rest/v1/meta_leads?select=lead_id,email,full_name,user_id` +
+      `&emailed_at=lt.${encodeURIComponent(cutoff)}&nudged_at=is.null&limit=${NUDGE_BATCH}`,
+      { headers: rest }
+    );
+    if (!listRes.ok) throw new Error(`nudge list: ${listRes.status}`);
+    const candidates = await listRes.json().catch(() => []);
+
+    for (const lead of Array.isArray(candidates) ? candidates : []) {
+      // Claim first — only the invocation that flips nudged_at proceeds.
+      const claimRes = await fetch(
+        `${supabaseUrl}/rest/v1/meta_leads?lead_id=eq.${encodeURIComponent(lead.lead_id)}&nudged_at=is.null`,
+        {
+          method: "PATCH",
+          headers: { ...rest, Prefer: "return=representation" },
+          body: JSON.stringify({ nudged_at: new Date().toISOString() })
+        }
+      );
+      const claimed = await claimRes.json().catch(() => []);
+      if (!claimRes.ok || !Array.isArray(claimed) || claimed.length === 0) continue;
+
+      // Already rendered? Then they activated — no reminder needed, and the
+      // claim above retires them for good.
+      if (lead.user_id) {
+        const renderRes = await fetch(
+          `${supabaseUrl}/rest/v1/render_audit_log?select=job_id&agent_user_id=eq.${encodeURIComponent(lead.user_id)}&limit=1`,
+          { headers: rest }
+        );
+        const renders = renderRes.ok ? await renderRes.json().catch(() => []) : [];
+        if (Array.isArray(renders) && renders.length > 0) {
+          summary.nudge_skipped++;
+          continue;
+        }
+      }
+
+      // Fresh magic link (the welcome's expired long ago).
+      let magicLink = "";
+      const linkRes = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+        method: "POST",
+        headers: rest,
+        body: JSON.stringify({
+          type: "magiclink",
+          email: lead.email,
+          options: { redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/` }
+        })
+      });
+      if (linkRes.ok) {
+        const link = await linkRes.json().catch(() => ({}));
+        magicLink = link?.action_link || link?.properties?.action_link || "";
+      }
+
+      const firstName = (lead.full_name || "").trim().split(/\s+/)[0] || "";
+      const tpl = leadNudgeEmail({ email: lead.email, firstName, magicLink });
+      const sent = await sendTransactionalEmail({
+        to: lead.email,
+        subject: tpl.subject,
+        html: tpl.html,
+        tags: ["lead-nudge"]
+      });
+      if (sent?.ok) summary.nudged++;
+      else summary.errors.push(`nudge send ${lead.email}: failed`);
+    }
+  } catch (error) {
+    summary.errors.push(`nudge pass: ${error.message}`);
   }
 }
 

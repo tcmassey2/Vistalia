@@ -192,6 +192,25 @@ export function leadWelcomeEmail({ email, firstName, magicLink }) {
   };
 }
 
+/* ============================================================
+   Lead nudge — ~20h after the welcome, only if they never rendered.
+   One send, ever. Fresh magic link because the welcome's expired.
+   ============================================================ */
+export function leadNudgeEmail({ email, firstName, magicLink }) {
+  const hi = firstName ? `${escape(firstName)} — your` : "Your";
+  return {
+    subject: "Your free listing video is still waiting",
+    html: shell({
+      eyebrow: "Still yours",
+      headline: `${hi} first video is still free.`,
+      body: `<p>Yesterday you asked about turning listing photos into video — your studio's been sitting ready since. Drop in the photos from any listing you already have and about ten minutes later you get a narrated, captioned, cinematic vertical tour. Every scene is checked against your photos, so nothing is invented.</p><p style="margin-top:14px;">No card, nothing to set up — the button below signs you in. Works best on a computer. <a href="${APP_URL}/examples" style="color:#C7A76C;">See a 30-second example first</a> if you'd rather look before you leap.</p>`,
+      ctaLabel: "Open your studio",
+      ctaUrl: magicLink || `${APP_URL}/app/`,
+      footer: `The sign-in button expires after a short while — if it's stale, open <a href="${APP_URL}/app/" style="color:#C7A76C;">vistalia.ai/app</a> and continue with Google or Facebook using this same email. This is the only reminder we'll send. Sent to ${escape(email)} from your Facebook/Instagram request.`
+    })
+  };
+}
+
 // Contact-form notification to support@ — same shell as everything else,
 // so the support inbox looks like the brand from day one.
 export function contactNotification({ name, email, subject, message }) {
