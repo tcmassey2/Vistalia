@@ -503,6 +503,35 @@ if (QUEUE_ENABLED) {
   console.info("[queue] pull-queue OFF (no Supabase env) — rendering inline.");
 }
 
+// --- Meta leads sync clock (v47) ------------------------------------------
+// Vercel Hobby crons are daily-only, so the always-on worker is the clock:
+// ping /api/meta-leads-sync every few minutes. All instances ping; the
+// endpoint's insert-first dedupe makes concurrent runs safe. Random start
+// jitter keeps the three instances from stampeding in the same second.
+const LEADS_SYNC_URL = process.env.LEADS_SYNC_URL || "";
+if (LEADS_SYNC_URL) {
+  const leadsSecret = process.env.RENDER_WEBHOOK_SECRET || process.env.RENDER_WORKER_SECRET || "";
+  const leadsEveryMs = Math.max(60_000, Number(process.env.LEADS_SYNC_INTERVAL_MS || 5 * 60 * 1000));
+  const pingLeadsSync = async () => {
+    try {
+      const res = await fetch(LEADS_SYNC_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${leadsSecret}` }
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) console.warn(`[leads] sync ${res.status}: ${body?.error || ""}`);
+      else if (body?.new > 0 || (body?.errors || []).length) console.log("[leads]", JSON.stringify(body));
+    } catch (e) {
+      console.warn(`[leads] sync ping failed: ${e?.message}`);
+    }
+  };
+  setTimeout(() => {
+    pingLeadsSync();
+    setInterval(pingLeadsSync, leadsEveryMs).unref();
+  }, Math.floor(Math.random() * 30_000)).unref();
+  console.info(`[leads] sync clock ON → every ${Math.round(leadsEveryMs / 60000)}m`);
+}
+
 async function runRenderJob(jobId, body) {
   const engine = String(body?.manifest?.engine || "remotion").toLowerCase();
   updateJob(jobId, { status: "rendering", phase: "Rendering scenes", progress: 12, engine });

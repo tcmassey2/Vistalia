@@ -170,6 +170,28 @@ export function welcomeEmail({ email }) {
   };
 }
 
+/* ============================================================
+   Meta Instant Form lead — account provisioned, magic-link entry.
+   The lead never saw our signup page: their account was created FOR
+   them from the form submission, so this email IS the product's front
+   door. The magic link signs them straight in; fallbacks are spelled
+   out because Supabase action links expire.
+   ============================================================ */
+export function leadWelcomeEmail({ email, firstName, magicLink }) {
+  const hi = firstName ? `${escape(firstName)}, your` : "Your";
+  return {
+    subject: "Your Vistalia studio is ready — first listing video free",
+    html: shell({
+      eyebrow: "Studio access",
+      headline: `${hi} studio is ready.`,
+      body: `<p>Thanks for raising your hand. We've set up your Vistalia account — one tap below signs you in, no password needed.</p><p style="margin-top:14px;">Best on a computer: drop in the listing photos you already have, pick a style, and your first cinematic, narrated tour renders free. Every scene is verified against your photos, so nothing is invented.</p>`,
+      ctaLabel: "Open your studio",
+      ctaUrl: magicLink || `${APP_URL}/app/`,
+      footer: `The button signs you in automatically and expires after a short while — if it's stale, open <a href="${APP_URL}/app/" style="color:#C7A76C;">vistalia.ai/app</a> and continue with Google or Facebook using this same email, or use &ldquo;Forgot password&rdquo;. Sent to ${escape(email)} because this address was submitted on our Facebook/Instagram form. Not you? Reply and we'll remove it.`
+    })
+  };
+}
+
 // Contact-form notification to support@ — same shell as everything else,
 // so the support inbox looks like the brand from day one.
 export function contactNotification({ name, email, subject, message }) {
