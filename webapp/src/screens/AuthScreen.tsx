@@ -4,6 +4,7 @@ import {
   signIn,
   signUp,
   requestPasswordReset,
+  requestMagicLink,
   updatePassword,
   resendConfirmationEmail,
   needsTotpChallenge,
@@ -15,7 +16,7 @@ import { trackLead } from "../lib/pixel";
 import Turnstile from "../components/Turnstile";
 import { env } from "../lib/env";
 
-type Mode = "signin" | "signup" | "forgot" | "reset" | "totp";
+type Mode = "signin" | "signup" | "forgot" | "reset" | "totp" | "magic";
 
 export default function AuthScreen() {
   const [mode, setMode] = useState<Mode>("signup");
@@ -101,6 +102,17 @@ export default function AuthScreen() {
       } catch {
         /* noop */
       }
+    } else if (hash.includes("error_code=otp_expired") || (hash.includes("error=access_denied") && hash.includes("otp"))) {
+      // v47: an expired magic link from the lead welcome/nudge emails lands
+      // here. These accounts have NO password — dumping them on a login form
+      // is a dead end. Flip straight to the fresh-link request instead.
+      setMode("magic");
+      setInfo("That sign-in link has expired — they only live for a little while. Enter your email and we'll send a fresh one.");
+      try {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      } catch {
+        /* noop */
+      }
     }
   }, []);
 
@@ -172,6 +184,21 @@ export default function AuthScreen() {
         setTotpFactorId("");
         // store.init's onAuthChange will route to dashboard now that
         // the session is at aal2.
+      } else if (mode === "magic") {
+        const token = captchaRequired ? await ensureFreshCaptcha() : undefined;
+        try {
+          await requestMagicLink(email, token);
+        } catch (err) {
+          // shouldCreateUser:false makes Supabase reject unknown emails with
+          // a signup-related error — swallow it into the same neutral copy so
+          // the form can't be used to probe which emails have accounts.
+          const msg = err instanceof Error ? err.message : "";
+          if (!/signup|user not found|not allowed/i.test(msg)) throw err;
+        }
+        resetCaptcha();
+        setInfo(
+          "If an account exists for " + email + ", a fresh sign-in link is on its way. It works for one tap — use it soon."
+        );
       } else if (mode === "forgot") {
         const token = captchaRequired ? await ensureFreshCaptcha() : undefined;
         await requestPasswordReset(email, token);
@@ -225,22 +252,25 @@ export default function AuthScreen() {
     mode === "signup" ? "Make your first listing video."
     : mode === "signin" ? "Welcome back."
     : mode === "forgot" ? "Reset your password."
+    : mode === "magic"  ? "Get a fresh sign-in link."
     : mode === "totp"   ? "Two-factor required."
     : "Set a new password.";
   const subhead =
     mode === "signup" ? "Your first video is free. No credit card."
     : mode === "signin" ? "Pick up where you left off."
     : mode === "forgot" ? "We'll email you a secure link to set a new one."
+    : mode === "magic"  ? "No password needed — we'll email you a one-tap link to your studio."
     : mode === "totp"   ? "Enter the 6-digit code from your authenticator app."
     : "Choose a strong password to finish resetting.";
   const submitLabel =
     mode === "signup" ? "Create account"
     : mode === "signin" ? "Sign in"
     : mode === "forgot" ? "Send reset link"
+    : mode === "magic"  ? "Email me a sign-in link"
     : mode === "totp"   ? "Verify code"
     : "Set new password";
   const showEmail = mode !== "reset" && mode !== "totp";
-  const showPassword = mode !== "forgot" && mode !== "totp";
+  const showPassword = mode !== "forgot" && mode !== "totp" && mode !== "magic";
 
   // v2.1 dynamic input feedback: green glow when a field is validly filled.
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -376,7 +406,7 @@ export default function AuthScreen() {
                   bot protection is enabled (signup, signin, password reset,
                   email-confirm resend). The widget remounts when mode changes,
                   which forces a fresh challenge each time. */}
-              {captchaRequired && (mode === "signup" || mode === "signin" || mode === "forgot") && (
+              {captchaRequired && (mode === "signup" || mode === "signin" || mode === "forgot" || mode === "magic") && (
                 <Turnstile
                   // Remount on mode switch OR after any failed/successful
                   // submit (captchaResetKey bumps). Forces a fresh iframe
@@ -452,6 +482,32 @@ export default function AuthScreen() {
                   className="text-xs text-ink-muted hover:text-ink transition-colors"
                 >
                   ← Back to sign in
+                </button>
+              </div>
+            )}
+
+            {mode === "magic" && (
+              <div className="mt-5 pt-5 border-t border-edge-soft text-center">
+                <button
+                  type="button"
+                  onClick={() => { setMode("signin"); setError(""); setInfo(""); }}
+                  className="text-xs text-ink-muted hover:text-ink transition-colors"
+                >
+                  ← Sign in with a password instead
+                </button>
+              </div>
+            )}
+
+            {/* Passwordless entry — the front door for lead-provisioned
+                accounts (they have no password until they set one). */}
+            {mode === "signin" && (
+              <div className="mt-4 text-center">
+                <button
+                  type="button"
+                  onClick={() => { setMode("magic"); setError(""); setInfo(""); setPassword(""); }}
+                  className="text-xs text-ink-muted hover:text-gold transition-colors"
+                >
+                  No password? Email me a sign-in link
                 </button>
               </div>
             )}

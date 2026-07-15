@@ -82,6 +82,24 @@ export async function requestPasswordReset(email: string, captchaToken?: string)
   if (error) throw error;
 }
 
+// Passwordless sign-in link. Lead-provisioned accounts have no password —
+// the magic link IS their front door, and this mints a fresh one when the
+// emailed link has expired. shouldCreateUser:false so strangers can't
+// conjure accounts from the login page.
+export async function requestMagicLink(email: string, captchaToken?: string) {
+  const redirectTo =
+    typeof window !== "undefined" ? `${window.location.origin}/app/` : undefined;
+  const { error } = await supabase().auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: false,
+      emailRedirectTo: redirectTo,
+      ...(captchaToken ? { captchaToken } : {})
+    }
+  });
+  if (error) throw error;
+}
+
 // Update the signed-in user's password (requires an active session, which
 // the recovery-email link establishes when the user clicks through).
 export async function updatePassword(newPassword: string) {
