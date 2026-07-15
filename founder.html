@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Vistalia — Founder</title>
+<style>
+  :root{--bg:#0E0E10;--surface:#15151A;--edge:#2A2A30;--edge-soft:#1F1F25;--ink:#E8E2D6;--ink-muted:#B5AC9A;--ink-dim:#7A7164;--gold:#C7A76C;--gold-light:#E6CE8E;--green:#4ADE80;--red:#F87171;}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;padding:28px 18px 60px}
+  .wrap{max-width:880px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:26px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:10px}
+  .mark{width:34px;height:34px;border-radius:9px;background:#0B0B0D;border:1.5px solid var(--gold);display:grid;place-items:center;font-family:Georgia,serif;font-weight:600;color:var(--gold-light);font-size:19px}
+  h1{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  h1 small{display:block;font-size:11px;color:var(--ink-dim);font-weight:400;letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+  .status{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-muted)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+  .dot.err{background:var(--red);animation:none}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .card{background:var(--surface);border:1px solid var(--edge);border-radius:14px;padding:18px 16px 15px}
+  .card .label{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:600;margin-bottom:10px}
+  .card .big{font-size:34px;font-weight:650;letter-spacing:-.03em;line-height:1}
+  .card .sub{font-size:12px;color:var(--ink-dim);margin-top:7px}
+  .card.hero{grid-column:span 2;background:linear-gradient(160deg,rgba(199,167,108,.10),var(--surface) 55%);border-color:rgba(199,167,108,.45)}
+  .card.hero .big{font-size:48px;color:var(--gold-light)}
+  section{margin-top:26px}
+  section h2{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-dim);font-weight:600;margin-bottom:10px}
+  .funnel{background:var(--surface);border:1px solid var(--edge);border-radius:14px;padding:16px;display:flex;align-items:center;gap:0;overflow-x:auto}
+  .step{flex:1;min-width:96px;text-align:center;position:relative;padding:6px 4px}
+  .step:not(:last-child)::after{content:"→";position:absolute;right:-7px;top:50%;transform:translateY(-50%);color:var(--ink-dim);font-size:14px}
+  .step .n{font-size:24px;font-weight:650;letter-spacing:-.02em}
+  .step .t{font-size:10.5px;color:var(--ink-muted);margin-top:3px}
+  .foot{margin-top:26px;font-size:11px;color:var(--ink-dim);text-align:center;line-height:1.7}
+  /* token gate */
+  #gate{position:fixed;inset:0;background:rgba(11,11,13,.94);display:grid;place-items:center;padding:20px;z-index:10}
+  #gate .box{background:var(--surface);border:1px solid var(--edge);border-radius:16px;padding:30px 28px;max-width:400px;width:100%}
+  #gate h3{font-size:16px;margin-bottom:6px}
+  #gate p{font-size:12.5px;color:var(--ink-muted);line-height:1.55;margin-bottom:16px}
+  #gate input{width:100%;background:#0B0B0D;border:1px solid var(--edge);border-radius:10px;padding:12px 14px;color:var(--ink);font-size:14px;margin-bottom:12px;outline:none}
+  #gate input:focus{border-color:var(--gold)}
+  #gate button{width:100%;background:var(--gold);color:#0E0E10;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="mark">V</div>
+      <h1>Founder Live<br><small id="daylabel">today</small></h1>
+    </div>
+    <div class="status"><span class="dot" id="dot"></span><span id="stamp">connecting…</span></div>
+  </header>
+
+  <div class="grid" id="cards">
+    <div class="card hero"><div class="label">Leads today</div><div class="big" id="m-leads-today">—</div><div class="sub"><span id="m-leads-total">—</span> all-time · from Instant Forms</div></div>
+    <div class="card"><div class="label">Renders today</div><div class="big" id="m-renders-today">—</div><div class="sub"><span id="m-renders-total">—</span> all-time</div></div>
+    <div class="card"><div class="label">Signups today</div><div class="big" id="m-users-today">—</div><div class="sub"><span id="m-users-total">—</span> accounts total</div></div>
+    <div class="card"><div class="label">Subscribers</div><div class="big" id="m-subs">—</div><div class="sub"><span id="m-credits">—</span> credit holders</div></div>
+  </div>
+
+  <section>
+    <h2>Lead pipeline</h2>
+    <div class="funnel">
+      <div class="step"><div class="n" id="f-leads">—</div><div class="t">Leads</div></div>
+      <div class="step"><div class="n" id="f-accounts">—</div><div class="t">Accounts made</div></div>
+      <div class="step"><div class="n" id="f-emailed">—</div><div class="t">Welcomed</div></div>
+      <div class="step"><div class="n" id="f-nudged">—</div><div class="t">Nudged</div></div>
+      <div class="step"><div class="n" id="f-renders">—</div><div class="t">Renders</div></div>
+      <div class="step"><div class="n" id="f-paying">—</div><div class="t">Paying</div></div>
+    </div>
+  </section>
+
+  <div class="foot">Refreshes every 60 seconds · counts since midnight Phoenix time · <a href="#" id="relock" style="color:var(--ink-dim)">change token</a></div>
+</div>
+
+<div id="gate" class="hidden">
+  <div class="box">
+    <h3>Founder access</h3>
+    <p>Paste your <b>METRICS_TOKEN</b> (the value you set in Vercel). It's stored only in this browser.</p>
+    <input id="tok" type="password" placeholder="metrics token" autocomplete="off">
+    <button id="go">Unlock</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var KEY='vistalia-metrics-token';
+  var gate=document.getElementById('gate'), tok=document.getElementById('tok'), dot=document.getElementById('dot'), stamp=document.getElementById('stamp');
+  function token(){ try{return localStorage.getItem(KEY)||''}catch(e){return ''} }
+  function showGate(){ gate.classList.remove('hidden'); tok.focus(); }
+  document.getElementById('go').onclick=function(){ var v=tok.value.trim(); if(!v)return; try{localStorage.setItem(KEY,v)}catch(e){} gate.classList.add('hidden'); load(); };
+  tok.addEventListener('keydown',function(e){ if(e.key==='Enter')document.getElementById('go').onclick(); });
+  document.getElementById('relock').onclick=function(e){ e.preventDefault(); try{localStorage.removeItem(KEY)}catch(err){} showGate(); };
+
+  function put(id,v){ document.getElementById(id).textContent=(v===null||v===undefined)?'—':Number(v).toLocaleString(); }
+
+  var failures=0;
+  function load(){
+    var t=token(); if(!t){ showGate(); return; }
+    fetch('/api/metrics',{headers:{Authorization:'Bearer '+t}})
+      .then(function(r){ if(r.status===401){ showGate(); throw new Error('unauthorized'); } if(!r.ok) throw new Error('http '+r.status); return r.json(); })
+      .then(function(j){
+        failures=0; dot.classList.remove('err');
+        var d=new Date(j.generated_at);
+        stamp.textContent='updated '+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit',second:'2-digit'});
+        document.getElementById('daylabel').textContent=new Date(j.day_started_at).toLocaleDateString([], {weekday:'long',month:'short',day:'numeric'});
+        put('m-leads-today', j.leads&&j.leads.today); put('m-leads-total', j.leads&&j.leads.total);
+        put('m-renders-today', j.renders&&j.renders.today); put('m-renders-total', j.renders&&j.renders.total);
+        put('m-users-today', j.users&&j.users.today); put('m-users-total', j.users&&j.users.total);
+        put('m-subs', j.paying&&j.paying.subscribers); put('m-credits', j.paying&&j.paying.credit_holders);
+        put('f-leads', j.leads&&j.leads.total); put('f-accounts', j.leads&&j.leads.accounts_created);
+        put('f-emailed', j.leads&&j.leads.emailed); put('f-nudged', j.leads&&j.leads.nudged);
+        put('f-renders', j.renders&&j.renders.total);
+        var pay=(j.paying&&j.paying.subscribers||0)+(j.paying&&j.paying.credit_holders||0);
+        put('f-paying', pay);
+      })
+      .catch(function(e){ failures++; if(failures>1){ dot.classList.add('err'); stamp.textContent='connection lost — retrying'; } });
+  }
+  load();
+  setInterval(load, 60000);
+})();
+</script>
+</body>
+</html>
