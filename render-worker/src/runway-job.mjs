@@ -1388,6 +1388,10 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // free, since this normalize pass already re-encodes. Guarded so a missing
     // duration can never produce an empty (-t 0) clip.
     const trimArgs = Number(clip.duration) > 0 ? ["-t", String(clip.duration)] : [];
+    // v48: address chip rides ONLY the opening scene (clipResults is sorted,
+    // so i===0 is the tour's first clip even if the original scene 1 was
+    // dropped). Empty string = filter chain identical to v47.
+    const addressIntroFilter = i === 0 ? buildAddressIntro(manifest, dimensions, clip.duration) : "";
     const baseFilters = [
       `fps=30`,
       // v31: denoise at the clip's NATIVE resolution (720p for Veo) before the
@@ -1415,7 +1419,8 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
         : `crop=${dimensions.width}:${dimensions.height}`,
       colorGrade,
       ...(watermarkFilter ? [watermarkFilter] : []),
-      ...(freeWatermarkFilter ? [freeWatermarkFilter] : [])
+      ...(freeWatermarkFilter ? [freeWatermarkFilter] : []),
+      ...(addressIntroFilter ? [addressIntroFilter] : [])
     ].join(",");
 
     if (cornerHeadshotPath) {
@@ -1698,12 +1703,19 @@ async function buildLogoAsset(logoUrl, maxHeightPx, tempDir) {
   }
 }
 
-// drawtext expects backslash-escaped colons, single quotes, and percent signs.
+// drawtext expects backslash-escaped colons and percent signs.
+// v48 dry-run finding: the old \' apostrophe escape TERMINATES ffmpeg's
+// '-quoted text value mid-string, and everything after it (e.g. a comma)
+// leaks into the filterchain parser — "O'Brien Ln, Gilbert" split the -vf
+// chain with "No such filter". The safe fix is substitution: a typographic
+// right single quote (U+2019) renders identically in LiberationSans and
+// has zero meaning to the parser. No behavior change for any string
+// without an apostrophe — which is every string this has ever processed.
 function ffEscape(value) {
   return String(value || "")
     .replace(/\\/g, "\\\\")
     .replace(/:/g, "\\:")
-    .replace(/'/g, "\\'")
+    .replace(/'/g, "’")
     .replace(/%/g, "\\%");
 }
 
@@ -1731,6 +1743,56 @@ function buildFreeRenderWatermark(dimensions) {
     `:x=36:y=40` +
     `:box=1:boxcolor=black@0.40:boxborderw=16`
   );
+}
+
+// v48: scene-one address chip — a listing video should say WHERE. Reads
+// manifest.project.address/.city, which every manifest has carried since
+// launch (the worker just never used them). FAIL-OPEN BY DESIGN: missing
+// address, a too-short opening clip, an oversized string, or any exception
+// returns "" and the filter chain is byte-identical to v47. Text passes
+// through ffEscape like every other user-adjacent drawtext string; the
+// chip fades in ~0.7s and is gone by ~5s, top-center, below the top-left
+// pill row and clear of the top-right headshot.
+function buildAddressIntro(manifest, dimensions, clipDuration) {
+  try {
+    // Whitelist sanitizer — addresses only ever need these characters, and
+    // nothing that survives it means anything to ffmpeg's chain parser.
+    // Apostrophes become typographic (see ffEscape note), commas become
+    // spaces ("Gilbert, AZ" → "Gilbert AZ").
+    const clean = (s) =>
+      String(s || "")
+        .replace(/'/g, "’")
+        .replace(/,/g, " ")
+        .replace(/[^A-Za-z0-9 #.·\-&’\/]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    const street = clean(manifest?.project?.address);
+    if (!street) return "";
+    const city = clean(manifest?.project?.city);
+    let text = city ? `${street}  ·  ${city}` : street;
+    if (text.length > 44) text = street;      // drop city before overflowing
+    if (text.length > 44) return "";           // pathological — skip, don't wrap
+    const dur = Number(clipDuration) > 0 ? Number(clipDuration) : 0;
+    if (dur < 2.5) return "";                  // no room to fade in and out politely
+    const end = Math.min(4.6, dur - 0.5);
+    const endS = end.toFixed(2);
+    const goneS = (end + 0.5).toFixed(2);
+    const fontSize = Math.max(22, Math.round(dimensions.width / 38));
+    const y = Math.round(dimensions.height * 0.062);
+    const alpha =
+      `if(lt(t,0.7),0,if(lt(t,1.3),(t-0.7)/0.6,` +
+      `if(lt(t,${endS}),1,if(lt(t,${goneS}),(${goneS}-t)/0.5,0))))`;
+    return (
+      `drawtext=fontfile='${FFMPEG_FONT}'` +
+      `:text='${ffEscape(text)}'` +
+      `:fontcolor=white@0.94:fontsize=${fontSize}` +
+      `:x=(w-text_w)/2:y=${y}` +
+      `:alpha='${alpha}'` +
+      `:box=1:boxcolor=black@0.35:boxborderw=12`
+    );
+  } catch {
+    return "";
+  }
 }
 
 // Lower-left tinted plate with name + brokerage. drawtext box is the closest
