@@ -56,7 +56,33 @@ export default async function handler(request, response) {
     return response.status(404).json({ error: "User email not found." });
   }
 
-  const tpl = renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId });
+  // One-tap sign-in for the CTA — same admin plumbing as the welcome/nudge
+  // emails (v49: a plain /app/ link dumped signed-out devices on the login
+  // wall at the moment of peak excitement). Top-level redirect_to — the
+  // REST admin API ignores the nested options shape. Best-effort: on any
+  // failure the template falls back to a plain /app/ link.
+  let magicLink = "";
+  try {
+    const linkRes = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        type: "magiclink",
+        email,
+        redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/`
+      })
+    });
+    if (linkRes.ok) {
+      const link = await linkRes.json().catch(() => ({}));
+      magicLink = link?.action_link || link?.properties?.action_link || "";
+    }
+  } catch { /* fall back to plain /app/ */ }
+
+  const tpl = renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId, magicLink });
   const result = await sendTransactionalEmail({
     to: email,
     subject: tpl.subject,

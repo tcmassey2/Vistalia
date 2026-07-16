@@ -131,11 +131,11 @@ export function paymentFailed({ email, planLabel }) {
 /* ============================================================
    Render complete
    ============================================================ */
-export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId }) {
+export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId, magicLink }) {
   const safeTitle = escape(listingTitle || "Your listing video");
   const previewBlock = thumbnailUrl
     ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 24px auto;border-radius:10px;overflow:hidden;">
-         <tr><td><a href="${escape(mp4Url)}"><img src="${escape(thumbnailUrl)}" alt="" width="280" style="display:block;max-width:280px;height:auto;border:1px solid #2A2A30;border-radius:10px;"></a></td></tr>
+         <tr><td><a href="${escape(magicLink || mp4Url)}"><img src="${escape(thumbnailUrl)}" alt="" width="280" style="display:block;max-width:280px;height:auto;border:1px solid #2A2A30;border-radius:10px;"></a></td></tr>
        </table>`
     : "";
   return {
@@ -143,10 +143,12 @@ export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobI
     html: shell({
       eyebrow: "Render complete",
       headline: "Your video is ready.",
-      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. Open it in Vistalia to watch it and download every format you selected.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
-      ctaLabel: "Open the bundle",
-      ctaUrl: `${APP_URL}/app/`,
-      footer: `Sent to ${escape(email)} because a render you started just finished. You can disable these in Settings.`
+      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. One tap below signs you in and opens your library — watch it and download every format you selected.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
+      ctaLabel: "Watch your video",
+      // One-tap magic link (24h). Plain /app/ fallback if link generation
+      // failed — signed-in devices sail through either way.
+      ctaUrl: magicLink || `${APP_URL}/app/`,
+      footer: `The button signs you in automatically and expires within a day — after that, open <a href="${APP_URL}/app/" style="color:#C7A76C;">vistalia.ai/app</a> and sign in as usual. Sent to ${escape(email)} because a render you started just finished.`
     })
   };
 }
