@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
 import { fetchUsage, openBillingPortal, deleteAccount } from "../lib/api";
-import { signOut, requestPasswordReset } from "../lib/supabase";
+import { signOut, updatePassword } from "../lib/supabase";
 import type { UserProfile } from "../lib/types";
 import TwoFactorSection from "../components/TwoFactorSection";
 import VoiceSection from "../components/VoiceSection";
 import PaywallModal from "../components/PaywallModal";
-import HCaptcha from "../components/HCaptcha";
-import { env } from "../lib/env";
 
 /**
  * SettingsScreen — account + subscription management.
@@ -29,13 +27,16 @@ export default function SettingsScreen() {
   const [usage, setUsage] = useState<UserProfile | null>(null);
   const [usageLoading, setUsageLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
-  const [resetLoading, setResetLoading] = useState(false);
   const [pricingOpen, setPricingOpen] = useState(false);
-  // v23 captcha-on-signed-in-reset: when Supabase has bot protection
-  // enabled, even authenticated users need a captcha token to request a
-  // password reset. We show the widget inline next to the reset button.
-  const captchaRequired = Boolean(env().HCAPTCHA_SITE_KEY);
-  const [resetCaptchaToken, setResetCaptchaToken] = useState("");
+  // Direct set-password (v49): lead accounts are provisioned passwordless
+  // (magic-link entry), and 'go use Forgot password' is a scavenger hunt.
+  // Signed-in users can just type one — auth.updateUser needs no old
+  // password and no captcha.
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pw1, setPw1] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState("");
 
   const email = session?.user?.email || "";
 
@@ -70,22 +71,30 @@ export default function SettingsScreen() {
     }
   };
 
-  const handlePasswordReset = async () => {
-    if (!email) return;
-    if (captchaRequired && !resetCaptchaToken) {
-      setError("Complete the CAPTCHA below before sending the reset email.");
+  const handleSetPassword = async () => {
+    if (pwSaving) return;
+    setPwError("");
+    if (pw1.length < 8) {
+      setPwError("Password must be at least 8 characters.");
       return;
     }
-    setResetLoading(true);
-    setError("");
+    if (pw1 !== pw2) {
+      setPwError("Passwords don't match.");
+      return;
+    }
+    setPwSaving(true);
     try {
-      await requestPasswordReset(email, resetCaptchaToken || undefined);
-      setResetCaptchaToken(""); // single-use; force re-challenge on retry
-      setToast(`Password reset email sent to ${email}.`);
+      await updatePassword(pw1);
+      setPw1("");
+      setPw2("");
+      setPwOpen(false);
+      setToast("Password set — you can sign in with it from now on.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't send reset email.");
+      const msg = err instanceof Error ? err.message : "Couldn't set the password.";
+      // Supabase rejects re-using the current password; say so plainly.
+      setPwError(/different from the old password/i.test(msg) ? "That's already your password." : msg);
     } finally {
-      setResetLoading(false);
+      setPwSaving(false);
     }
   };
 
@@ -177,27 +186,62 @@ export default function SettingsScreen() {
           </Field>
 
           <Field label="Password">
-            <div className="flex flex-col gap-3">
+            {!pwOpen ? (
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs text-ink-muted">
-                  We'll send a reset link to your email.
+                  Signed in with an email link? Set a password to sign in the classic way too.
                 </span>
                 <button
                   type="button"
-                  onClick={handlePasswordReset}
-                  disabled={resetLoading || !email || (captchaRequired && !resetCaptchaToken)}
-                  className="card-press h-8 px-3 rounded-md text-xs font-semibold bg-surface-input border border-edge hover:border-gold text-ink hover:text-gold transition-colors disabled:opacity-50"
+                  onClick={() => { setPwOpen(true); setPwError(""); }}
+                  className="card-press h-8 px-3 rounded-md text-xs font-semibold bg-surface-input border border-edge hover:border-gold text-ink hover:text-gold transition-colors whitespace-nowrap"
                 >
-                  {resetLoading ? "Sending…" : "Send reset link"}
+                  Set password
                 </button>
               </div>
-              {captchaRequired && (
-                <HCaptcha
-                  onVerify={(token) => setResetCaptchaToken(token)}
-                  onExpire={() => setResetCaptchaToken("")}
+            ) : (
+              <form
+                className="flex flex-col gap-3"
+                onSubmit={(e) => { e.preventDefault(); handleSetPassword(); }}
+              >
+                <input
+                  type="password"
+                  value={pw1}
+                  onChange={(e) => setPw1(e.target.value)}
+                  placeholder="New password (8+ characters)"
+                  minLength={8}
+                  autoComplete="new-password"
+                  className="h-10 px-3 rounded-lg bg-surface-input border border-edge focus:border-gold outline-none text-sm w-full"
+                  autoFocus
                 />
-              )}
-            </div>
+                <input
+                  type="password"
+                  value={pw2}
+                  onChange={(e) => setPw2(e.target.value)}
+                  placeholder="Repeat it"
+                  minLength={8}
+                  autoComplete="new-password"
+                  className="h-10 px-3 rounded-lg bg-surface-input border border-edge focus:border-gold outline-none text-sm w-full"
+                />
+                {pwError && <p className="text-xs text-red-300">{pwError}</p>}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={pwSaving || pw1.length < 8}
+                    className="card-press h-9 px-4 rounded-lg text-xs font-semibold bg-gold text-paper hover:bg-gold-light transition-colors disabled:opacity-50"
+                  >
+                    {pwSaving ? "Saving…" : "Save password"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setPwOpen(false); setPw1(""); setPw2(""); setPwError(""); }}
+                    className="h-9 px-3 rounded-lg text-xs text-ink-muted hover:text-ink transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
           </Field>
         </div>
       </Section>
