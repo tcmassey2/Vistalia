@@ -511,7 +511,9 @@ if (QUEUE_ENABLED) {
 const LEADS_SYNC_URL = process.env.LEADS_SYNC_URL || "";
 if (LEADS_SYNC_URL) {
   const leadsSecret = process.env.RENDER_WEBHOOK_SECRET || process.env.RENDER_WORKER_SECRET || "";
-  const leadsEveryMs = Math.max(60_000, Number(process.env.LEADS_SYNC_INTERVAL_MS || 5 * 60 * 1000));
+  // 60s default (was 5 min): Instant Form leads tap "View website" seconds
+  // after submitting — the welcome email should beat them to the inbox.
+  const leadsEveryMs = Math.max(60_000, Number(process.env.LEADS_SYNC_INTERVAL_MS || 60_000));
   const pingLeadsSync = async () => {
     try {
       const res = await fetch(LEADS_SYNC_URL, {

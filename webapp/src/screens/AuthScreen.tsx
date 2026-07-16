@@ -113,6 +113,15 @@ export default function AuthScreen() {
       } catch {
         /* noop */
       }
+    } else if (!hash.includes("access_token") && /FBAN|FBAV|FB_IAB|Instagram/i.test(navigator.userAgent)) {
+      // Instant Form arrival. The form's ending CTA ("View website") opens
+      // this page inside the Facebook/Instagram in-app browser seconds after
+      // the lead submits — before they've seen their welcome email, and with
+      // no password to type. A login form here reads as "it didn't work."
+      // Greet them as the person they are: account provisioned, link inbound,
+      // and a fresh-link box if they'd rather not wait.
+      setMode("magic");
+      setInfo("Requested your free listing video? Your studio is ready — a one-tap sign-in link is on its way to your email (usually under a minute). Or enter your email and we'll send a fresh one.");
     }
   }, []);
 
