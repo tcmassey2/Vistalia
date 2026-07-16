@@ -179,8 +179,42 @@ export default async function handler(request, response) {
       formats: r.formats_count ?? 1,
       narrated: Boolean(r.narration_applied),
       status: r.status || "completed",
-      created_at: r.created_at
+      created_at: r.created_at,
+      error: ""
     }));
+
+    // Failed jobs that never reached the audit write (early deaths — e.g.
+    // the content-policy job-killer) were invisible here: the audit row is
+    // written at the END of the pipeline, so the library had survivor bias.
+    // Pull recent failures from render_jobs and merge, skipping any job the
+    // audit log already covers (zombie deliveries) or that was later
+    // repaired to completed.
+    try {
+      const auditIds = new Set(recent_renders.map((r) => r.job_id));
+      const failed = await fetch(
+        `${supabaseUrl}/rest/v1/render_jobs?select=job_id,user_id,engine,status,error,created_at,addr:manifest->project->>address,ptitle:manifest->project->>title&status=eq.failed&order=created_at.desc&limit=10`,
+        { headers: restHeaders }
+      ).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+      for (const f of Array.isArray(failed) ? failed : []) {
+        if (auditIds.has(f.job_id)) continue;
+        recent_renders.push({
+          job_id: f.job_id,
+          email: emailById.get(f.user_id) || "",
+          engine: f.engine || "",
+          title: f.addr || f.ptitle || "Untitled listing",
+          city: "",
+          mp4_url: "",
+          thumbnail_url: "",
+          formats: 0,
+          narrated: false,
+          status: "failed",
+          created_at: f.created_at,
+          error: String(f.error || "").slice(0, 160)
+        });
+      }
+      recent_renders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      recent_renders = recent_renders.slice(0, 20);
+    } catch { /* failures never break the delivered list */ }
   } catch {
     recent_renders = [];
   }

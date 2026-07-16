@@ -180,14 +180,17 @@
       var thumb=r.thumbnail_url
         ? '<img src="'+r.thumbnail_url.replace(/"/g,'&quot;')+'" alt="" loading="lazy">'
         : '';
+      var lastLine=failed&&r.error
+        ? '<div class="rsub" style="color:var(--red)">'+esc(r.error.slice(0,80))+'</div>'
+        : '<div class="rsub">'+ago(r.created_at)+(r.narrated?' · narrated':'')+(r.engine?' · '+esc(r.engine):'')+'</div>';
       return '<div class="rcard" data-i="'+i+'">'+
-        '<div class="thumb">'+thumb+'<div class="play"><span>▶</span></div>'+
+        '<div class="thumb">'+thumb+(r.mp4_url?'<div class="play"><span>▶</span></div>':'')+
         (failed?'<span class="badge fail">'+esc(r.status)+'</span>':'')+
         '</div>'+
         '<div class="rmeta">'+
           '<div class="rtitle">'+esc(r.title)+'</div>'+
-          '<div class="rsub">'+esc(r.email||'unknown')+'</div>'+
-          '<div class="rsub">'+ago(r.created_at)+(r.narrated?' · narrated':'')+(r.engine?' · '+esc(r.engine):'')+'</div>'+
+          '<div class="rsub">'+esc(r.email||'unknown')+(failed?' · '+ago(r.created_at):'')+'</div>'+
+          lastLine+
         '</div>'+
       '</div>';
     }).join('');
