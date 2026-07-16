@@ -330,6 +330,22 @@ export interface LibraryResponse {
   error?: string;
 }
 
+/* ============================================================
+   /api/send-desktop-link — mobile → desktop handoff
+   Emails the signed-in user a fresh magic link so they can pick
+   up on the computer where their listing photos live. Server-side
+   because client OTP calls require a captcha.
+   ============================================================ */
+export async function sendDesktopLink(): Promise<{ ok: boolean; error?: string }> {
+  const headers = await authHeaders();
+  const res = await fetch("/api/send-desktop-link", { method: "POST", headers });
+  const payload = await res.json().catch(() => ({} as { status?: string; error?: string }));
+  if (!res.ok || payload.status === "failed") {
+    return { ok: false, error: payload.error || `Couldn't send the link (${res.status}).` };
+  }
+  return { ok: true };
+}
+
 export async function fetchLibrary(args: { limit?: number; offset?: number } = {}): Promise<LibraryResponse> {
   const headers = await authHeaders();
   const params = new URLSearchParams();

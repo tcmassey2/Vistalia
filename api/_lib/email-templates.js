@@ -203,10 +203,29 @@ export function leadNudgeEmail({ email, firstName, magicLink }) {
     html: shell({
       eyebrow: "Still yours",
       headline: `${hi} first video is still free.`,
-      body: `<p>Yesterday you asked about turning listing photos into video — your studio's been sitting ready since. Drop in the photos from any listing you already have and about ten minutes later you get a narrated, captioned, cinematic vertical tour. Every scene is checked against your photos, so nothing is invented.</p><p style="margin-top:14px;">No card, nothing to set up — the button below signs you in. Works best on a computer. <a href="${APP_URL}/examples" style="color:#C7A76C;">See a 30-second example first</a> if you'd rather look before you leap.</p>`,
+      body: `<p>Yesterday you asked about turning listing photos into video — your studio's been sitting ready since. Drop in the photos from any listing you already have and about ten minutes later you get a narrated, captioned, cinematic vertical tour. Every scene is checked against your photos, so nothing is invented.</p><p style="margin-top:14px;"><strong style="color:#E8E2D6;">Tip: open this on your computer.</strong> That's where your listing photos live — MLS downloads, your photographer's folder — and uploading them takes about a minute there.</p><p style="margin-top:14px;">No card, nothing to set up — the button below signs you in. <a href="${APP_URL}/examples" style="color:#C7A76C;">See a 30-second example first</a> if you'd rather look before you leap.</p>`,
       ctaLabel: "Open your studio",
       ctaUrl: magicLink || `${APP_URL}/app/`,
       footer: `The sign-in button expires after a short while — if it's stale, open <a href="${APP_URL}/app/" style="color:#C7A76C;">vistalia.ai/app</a> and continue with Google or Facebook using this same email. This is the only reminder we'll send. Sent to ${escape(email)} from your Facebook/Instagram request.`
+    })
+  };
+}
+
+/* ============================================================
+   Desktop handoff — user tapped "email me a link for my computer"
+   on their phone. Fresh magic link so the desktop session is one
+   click; requested by the signed-in user themselves seconds ago.
+   ============================================================ */
+export function desktopLinkEmail({ email, magicLink }) {
+  return {
+    subject: "Your Vistalia sign-in link — open on your computer",
+    html: shell({
+      eyebrow: "Desktop handoff",
+      headline: "Pick up where you left off — at your desk.",
+      body: `<p>You asked for a link to continue on your computer. One click below signs you in — no password.</p><p style="margin-top:14px;">Have your listing photos ready (MLS downloads or your photographer's folder), drop them in, and your first cinematic tour renders free.</p>`,
+      ctaLabel: "Open my studio",
+      ctaUrl: magicLink || `${APP_URL}/app/`,
+      footer: `You requested this link from inside Vistalia moments ago. It signs you in automatically and expires within a day. Sent to ${escape(email)}.`
     })
   };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../lib/store";
-import { fetchLibrary } from "../lib/api";
+import { fetchLibrary, sendDesktopLink } from "../lib/api";
 import { buildSamplePhotos, SAMPLE_LISTING, SAMPLE_PROJECT_TITLE } from "../lib/samples";
 import type { LibraryEntry } from "../lib/types";
 import { engineLabel } from "../lib/engine-labels";
@@ -184,6 +184,13 @@ export default function DashboardScreen() {
             </p>
           </div>
 
+          {/* Mobile → desktop handoff. Instant Form leads arrive on their
+              phones, but listing photos live on their computers — every
+              signed-in-no-render lead we've inspected stalled exactly here.
+              Small screens get a one-tap "email me a link for my desk" plus
+              an example video so the phone visit still pays off. */}
+          <DesktopHandoffBand email={session?.user?.email || ""} />
+
           {/* "How it works" strip — three illustrated micro-steps so the
               workflow doesn't feel like a black box. Subtle alternating
               background tints separate it from the CTA above. */}
@@ -239,6 +246,82 @@ export default function DashboardScreen() {
           onUpdated={reloadLibrary}
         />
       )}
+    </div>
+  );
+}
+
+/* Mobile-only band inside the empty state. Detects small screens via
+   matchMedia (SSR-safe: defaults false, resolves on mount) and offers a
+   one-tap handoff: POST /api/send-desktop-link mails the signed-in user a
+   fresh 24h magic link for their computer. States: idle → sending → sent
+   (terminal for the session) with a soft error path that allows retry. */
+function DesktopHandoffBand({ email }: { email: string }) {
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 820px)");
+    const update = () => setIsSmallScreen(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  if (!isSmallScreen) return null;
+
+  const send = async () => {
+    if (phase === "sending" || phase === "sent") return;
+    setPhase("sending");
+    setErrorMsg("");
+    const result = await sendDesktopLink();
+    if (result.ok) {
+      setPhase("sent");
+    } else {
+      setPhase("error");
+      setErrorMsg(result.error || "Couldn't send the link. Try again.");
+    }
+  };
+
+  return (
+    <div className="border-t border-gold/20 bg-gold/5 px-6 py-7 text-center">
+      <p className="text-[10px] uppercase tracking-widest text-gold mb-2 font-mono">
+        On your phone?
+      </p>
+      <p className="text-sm text-ink-muted leading-relaxed max-w-sm mx-auto mb-4">
+        Your listing photos probably live on your computer — MLS downloads,
+        your photographer&rsquo;s folder. Email yourself a one-tap sign-in link
+        and finish there in about a minute.
+      </p>
+      {phase === "sent" ? (
+        <div className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-gold/15 border border-gold/30 text-sm text-gold-light">
+          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.2">
+            <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Sent{email ? ` to ${email}` : ""} — open it at your desk
+        </div>
+      ) : (
+        <button
+          onClick={send}
+          disabled={phase === "sending"}
+          className="btn-secondary-em h-11 px-5 rounded-lg text-sm disabled:opacity-60"
+        >
+          {phase === "sending" ? "Sending…" : "Email me a link for my computer"}
+        </button>
+      )}
+      {phase === "error" && errorMsg && (
+        <p className="text-xs text-red-300 mt-2">{errorMsg}</p>
+      )}
+      <p className="text-xs mt-3">
+        <a
+          href="/examples"
+          target="_blank"
+          rel="noreferrer"
+          className="text-ink-muted underline decoration-gold/40 underline-offset-4 hover:text-gold-light"
+        >
+          Meanwhile — watch a 30-second example
+        </a>
+      </p>
     </div>
   );
 }
