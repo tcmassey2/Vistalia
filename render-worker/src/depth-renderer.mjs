@@ -153,6 +153,7 @@ export async function renderDepthClip({
   // the texture exactly matches the output framebuffer (no scaling in
   // the shader).
   const { data: photoRgba, info: photoInfo } = await sharp(photoPath)
+    .rotate() // v49: apply EXIF orientation — see homography-drift.mjs
     .resize(width, height, { fit: "cover" })
     .raw()
     .ensureAlpha()

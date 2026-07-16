@@ -177,6 +177,13 @@ export async function renderRunwayJob(body, options = {}) {
   let qcFloorCount = 0;      // v36: clips shipped on the premium photo-motion floor
   let qcFailOpenCount = 0;   // v45.1: clips that shipped with NO completed verdict (rate-limit blackout telemetry)
   let guardForcedCount = 0;
+  // v49 stall circuit breaker. 2026-07-16 fal outage: all 8 scenes stalled
+  // the full 360s TWICE each — ~23 min of dead waiting blew the job timeout
+  // with the video otherwise complete. 3+ stalls in one job = provider-wide
+  // outage; once open, remaining scenes skip Veo and go straight to the
+  // deterministic floor, so an outage render completes in ~10 min.
+  let falStallCount = 0;
+  const FAL_STALL_BREAKER = 3;
   // v34.6 DROP-SCENE TERMINAL: scenes that fail every attempt are dropped
   // from the render instead of killing it. Each entry: { sceneIndex,
   // photoId, reason }. The floor after the pMap aborts + refunds if drops
@@ -234,20 +241,46 @@ export async function renderRunwayJob(body, options = {}) {
           );
         }
         let usedConstrained = constrained;
+        // Circuit open → don't even ask fal; straight to the floor.
+        if (falStallCount >= FAL_STALL_BREAKER) {
+          try {
+            console.warn(`[veo] scene ${index + 1}: stall circuit OPEN (${falStallCount} fal stalls this job) — straight to PREMIUM PHOTO MOTION floor.`);
+            const floor = await generateKenBurnsFallback(scene, manifest, tempDir, index, {
+              durationSec: Number(scene.duration) > 0 ? Number(scene.duration) + 0.5 : undefined
+            });
+            qcFloorCount++;
+            scenesCompleted++;
+            touchWatchdog();
+            return { ...floor, usedPhotoMotionFloor: true };
+          } catch (floorErr) {
+            console.warn(`[veo] scene ${index + 1} floor failed under open circuit (${floorErr.message}) — DROPPING this scene.`);
+            droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: `stall circuit open; floor failed: ${floorErr.message}` });
+            return null;
+          }
+        }
         try {
           result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained });
           touchWatchdog();
         } catch (error) {
           touchWatchdog();
+          if (error?.code === "FAL_TIMEOUT") falStallCount++;
           // Auto-retry ONCE, always constrained (a failed cinematic attempt
           // most often means the motion asked too much of the source photo).
+          // Exception: if this stall just opened the circuit, the retry would
+          // stall another 6 minutes too — skip straight to the floor.
           console.warn(`[veo] scene ${index + 1} failed (${error.message}). Retrying once, constrained.`);
           try {
+            if (error?.code === "FAL_TIMEOUT" && falStallCount >= FAL_STALL_BREAKER) {
+              const skip = new Error(`stall circuit open (${falStallCount} fal stalls) — skipping Veo retry`);
+              skip.code = "FAL_CIRCUIT_OPEN";
+              throw skip;
+            }
             result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
             touchWatchdog();
             usedConstrained = true;
             fallbackCount++; // counted as "retried", surfaces in phase text
           } catch (retryError) {
+            if (retryError?.code === "FAL_TIMEOUT") falStallCount++;
             touchWatchdog();
             // v36: two straight generation failures (fal rejection, hostile
             // photo, outage) → premium photo-motion floor. Deterministic, so

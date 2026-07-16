@@ -172,7 +172,15 @@ export async function renderHomographyDrift({
   // faithfully rendered 2.5s of featureless gray (m-lux 14.4–16.4s).
   // sharp's attention strategy targets the highest-detail region instead;
   // for normally-composed listing photos it lands within pixels of center.
+  // v49: .rotate() (no-arg) applies EXIF orientation BEFORE the crop.
+  // sharp ignores EXIF unless asked — iPhone portrait photos carry
+  // orientation in metadata, so without this the floor warped sideways
+  // pixels. Veo/fal auto-orients, which hid the bug until the 2026-07-16
+  // fal outage sent an entire render (m55, first nudge-converted lead) to
+  // the floor and shipped sideways scenes. QC can't catch it: the video
+  // "matches" the photo because both are equally rotated.
   const photoPng = await sharp(photoPath)
+    .rotate()
     .resize(W, H, { fit: "cover", position: sharp.strategy.attention })
     .png().toBuffer();
   const rgb = await sharp(photoPng).raw().toBuffer();
