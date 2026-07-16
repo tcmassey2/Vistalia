@@ -144,6 +144,21 @@ export default async function handler(request, response) {
     ) {
       manifest.freeRenderWatermark = true;
     }
+    // v49 (first-customer-render finding): the FREE trial video is capped at
+    // 30 seconds. The free-allowance path never checked duration, so a trial
+    // account could burn a 60s video (2-credit class, ~2× COGS) as its
+    // freebie. Same predicate as the watermark: trial + no purchased
+    // credits. Paid paths are untouched — a trial user holding credits can
+    // still render 60s (it consumes 2 of them).
+    if (manifest.freeRenderWatermark && Number(manifest.targetDurationSec || 0) > 30) {
+      response.status(402).json({
+        status: "failed",
+        error: "Your free trial video is 30 seconds. Upgrade or grab a credit pack to unlock 60-second tours.",
+        upgradeRequired: true,
+        currentTier: "trial"
+      });
+      return;
+    }
     if (tierGuard.userId) {
       manifest.project = manifest.project || {};
       manifest.project.userId = manifest.project.userId || tierGuard.userId;

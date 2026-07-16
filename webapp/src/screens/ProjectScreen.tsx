@@ -2065,6 +2065,28 @@ function FormatsToggle() {
 }
 
 function LengthToggle({ value, onChange }: { value: 30 | 60; onChange: (v: 30 | 60) => void }) {
+  const setToast = useStore((s) => s.setToast);
+  // v49: the FREE trial video is capped at 30 seconds (server-enforced in
+  // /api/render — first customer render was a surprise 60s/2-credit-class
+  // freebie). Surface the cap on the picker so trial users aren't invited
+  // into a paywall bounce. Trial WITH purchased credits renders 60s
+  // normally (consumes 2).
+  const [freeSixtyLocked, setFreeSixtyLocked] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetchUsage()
+      .then((u) => {
+        if (!alive || !u) return;
+        const locked = u.tier === "trial" && Number(u.render_credits || 0) < 1;
+        setFreeSixtyLocked(locked);
+        if (locked) onChange(30); // persisted 60 from an earlier session → snap back
+      })
+      .catch(() => {}); // usage fetch failure → leave unlocked; server still enforces
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div>
       <div className="flex items-baseline justify-between mb-2.5">
@@ -2087,16 +2109,30 @@ function LengthToggle({ value, onChange }: { value: 30 | 60; onChange: (v: 30 | 
         </button>
         <button
           type="button"
-          onClick={() => onChange(60)}
+          onClick={() => {
+            if (freeSixtyLocked) {
+              setToast("Your free trial video is 30 seconds — upgrade or grab a credit pack for 60-second tours.");
+              return;
+            }
+            onChange(60);
+          }}
           className={cn(
-            "card-press text-left p-3 rounded-lg bg-surface border",
-            value === 60
+            "card-press text-left p-3 rounded-lg bg-surface border relative",
+            value === 60 && !freeSixtyLocked
               ? "border-gold bg-surface-raised card-selected"
-              : "border-edge hover:border-edge-strong"
+              : "border-edge hover:border-edge-strong",
+            freeSixtyLocked && "opacity-70"
           )}
         >
+          {freeSixtyLocked && (
+            <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-gold/15 border border-gold/40 text-gold text-[9px] font-bold tracking-widest uppercase">
+              Paid plans
+            </span>
+          )}
           <div className="text-sm font-semibold tracking-tightish mb-0.5">60 seconds</div>
-          <div className="text-xs text-ink-muted">Longer tour · Zillow · listing site</div>
+          <div className="text-xs text-ink-muted">
+            {freeSixtyLocked ? "Free trial video is 30s — upgrade to unlock" : "Longer tour · Zillow · listing site"}
+          </div>
         </button>
       </div>
     </div>
