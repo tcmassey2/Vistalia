@@ -183,7 +183,10 @@ async function runNudgePass({ supabaseUrl, serviceKey, summary }) {
         body: JSON.stringify({
           type: "magiclink",
           email: lead.email,
-          options: { redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/` }
+          // NOTE: top-level redirect_to. The REST admin API ignores the JS
+          // SDK's nested options.redirect_to shape — proven 2026-07-15 when
+          // every lead link fell back to the Site URL.
+          redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/`
         })
       });
       if (linkRes.ok) {
@@ -275,7 +278,8 @@ async function processLead({ lead, formId, supabaseUrl, serviceKey, summary }) {
     body: JSON.stringify({
       type: "magiclink",
       email,
-      options: { redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/` }
+      // Top-level redirect_to — the REST admin API ignores options.redirect_to.
+      redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/`
     })
   });
   if (linkRes.ok) {

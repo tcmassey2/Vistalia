@@ -72,7 +72,8 @@ export default async function handler(request, response) {
     body: JSON.stringify({
       type: "magiclink",
       email,
-      options: { redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/` }
+      // Top-level redirect_to — the REST admin API ignores options.redirect_to.
+      redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/`
     })
   });
   if (linkRes.ok) {

@@ -21,6 +21,20 @@
   <link rel="canonical" href="https://vistalia.ai/">
   <meta name="theme-color" content="#0B0B0D">
 
+  <!-- Auth-fragment rescue. If Supabase ever redirects a magic link / OAuth /
+       recovery flow to the site root (Site URL fallback when the redirect
+       allow-list misses), the tokens arrive in the hash on the marketing page,
+       where nothing consumes them. Forward them to the app, which does.
+       Runs before paint; no-op for every normal visitor. -->
+  <script>
+    (function () {
+      var h = window.location.hash || "";
+      if (/access_token=|refresh_token=|error_code=|type=(magiclink|recovery|signup|invite)/.test(h)) {
+        window.location.replace("/app/" + h);
+      }
+    })();
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
