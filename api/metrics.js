@@ -133,6 +133,58 @@ export default async function handler(request, response) {
     recent = [];
   }
 
+  // --- recent renders library (founder-only) ---
+  // Last 20 finished/failed renders straight from the audit log, joined to
+  // the agent's email so Troy never has to dig through Supabase to watch a
+  // customer video. master_mp4_url/thumbnail_url are public storage URLs.
+  let recent_renders = [];
+  try {
+    const restHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
+    const rows = await fetch(
+      `${supabaseUrl}/rest/v1/render_audit_log?select=job_id,agent_user_id,engine,listing_address,listing_city,project_title,master_mp4_url,thumbnail_url,formats_count,narration_applied,status,created_at&order=created_at.desc&limit=20`,
+      { headers: restHeaders }
+    ).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+
+    // Email map: reuse the roster fetch when possible, then fill gaps with
+    // per-id admin lookups (older accounts — e.g. Troy's own test user —
+    // fall outside the newest-50 roster window). Capped to keep it cheap.
+    const emailById = new Map();
+    try {
+      const usersRes = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=1&per_page=50`, {
+        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }
+      });
+      const usersBody = await usersRes.json().catch(() => ({}));
+      for (const u of Array.isArray(usersBody?.users) ? usersBody.users : []) {
+        if (u?.id && u?.email) emailById.set(u.id, String(u.email).toLowerCase());
+      }
+    } catch { /* roster gap → per-id fallback below */ }
+    const missing = [...new Set(rows.map((r) => r.agent_user_id).filter((id) => id && !emailById.has(id)))].slice(0, 5);
+    await Promise.all(missing.map(async (id) => {
+      try {
+        const u = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(id)}`, {
+          headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }
+        }).then((r) => (r.ok ? r.json() : null));
+        if (u?.email) emailById.set(id, String(u.email).toLowerCase());
+      } catch { /* leave unknown */ }
+    }));
+
+    recent_renders = rows.map((r) => ({
+      job_id: r.job_id,
+      email: emailById.get(r.agent_user_id) || "",
+      engine: r.engine || "",
+      title: r.listing_address || r.project_title || "Untitled listing",
+      city: r.listing_city || "",
+      mp4_url: r.master_mp4_url || "",
+      thumbnail_url: r.thumbnail_url || "",
+      formats: r.formats_count ?? 1,
+      narrated: Boolean(r.narration_applied),
+      status: r.status || "completed",
+      created_at: r.created_at
+    }));
+  } catch {
+    recent_renders = [];
+  }
+
   return response.status(200).json({
     generated_at: new Date().toISOString(),
     day_started_at: midnight,
@@ -146,6 +198,7 @@ export default async function handler(request, response) {
     renders: { total: rendersTotal, today: rendersToday },
     users: { total: usersTotal, today: usersToday },
     paying: { subscribers: payingSubs, credit_holders: creditHolders },
-    recent
+    recent,
+    recent_renders
   });
 }

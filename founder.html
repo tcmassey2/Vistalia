@@ -47,6 +47,23 @@
   .row .meta{font-size:11px;color:var(--ink-dim);text-align:right;flex-shrink:0;line-height:1.5}
   .row .renders-yes{color:var(--gold-light);font-weight:700}
   .foot{margin-top:26px;font-size:11px;color:var(--ink-dim);text-align:center;line-height:1.7}
+  /* render library */
+  .rlib{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px}
+  .rlib .empty{grid-column:1/-1;background:var(--surface);border:1px solid var(--edge);border-radius:14px;padding:18px;font-size:13px;color:var(--ink-dim);text-align:center}
+  .rcard{background:var(--surface);border:1px solid var(--edge);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .15s,transform .15s}
+  .rcard:hover{border-color:var(--gold);transform:translateY(-1px)}
+  .rcard .thumb{position:relative;aspect-ratio:9/16;background:#0B0B0D}
+  .rcard .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .rcard .thumb .play{position:absolute;inset:0;display:grid;place-items:center}
+  .rcard .thumb .play span{width:38px;height:38px;border-radius:50%;background:rgba(11,11,13,.62);border:1px solid rgba(230,206,142,.55);display:grid;place-items:center;color:var(--gold-light);font-size:14px;padding-left:3px}
+  .rcard .thumb .fail{position:absolute;top:6px;left:6px}
+  .badge.fail{background:rgba(248,113,113,.15);color:var(--red);border:1px solid rgba(248,113,113,.4)}
+  .rcard .rmeta{padding:8px 10px 10px}
+  .rcard .rtitle{font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rcard .rsub{font-size:10px;color:var(--ink-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #player{position:fixed;inset:0;background:rgba(11,11,13,.95);display:grid;place-items:center;z-index:20;padding:16px}
+  #player video{max-height:84vh;max-width:min(92vw,486px);border-radius:14px;border:1px solid var(--edge);background:#000;outline:none}
+  #player .pmeta{position:fixed;bottom:12px;left:0;right:0;text-align:center;font-size:12px;color:var(--ink-muted);padding:0 20px}
   /* token gate */
   #gate{position:fixed;inset:0;background:rgba(11,11,13,.94);display:grid;place-items:center;padding:20px;z-index:10}
   #gate .box{background:var(--surface);border:1px solid var(--edge);border-radius:16px;padding:30px 28px;max-width:400px;width:100%}
@@ -85,6 +102,11 @@
       <div class="step"><div class="n" id="f-renders">—</div><div class="t">Renders</div></div>
       <div class="step"><div class="n" id="f-paying">—</div><div class="t">Paying</div></div>
     </div>
+  </section>
+
+  <section>
+    <h2>Render library</h2>
+    <div id="renders" class="rlib"><div class="empty">—</div></div>
   </section>
 
   <section>
@@ -140,6 +162,43 @@
     }).join('');
   }
 
+  function openPlayer(url,title,sub){
+    var ov=document.createElement('div'); ov.id='player';
+    ov.innerHTML='<video controls autoplay playsinline src="'+url.replace(/"/g,'&quot;')+'"></video>'+
+      '<div class="pmeta">'+esc(title)+(sub?' · '+esc(sub):'')+' — click anywhere to close</div>';
+    function close(){ try{ov.querySelector('video').pause()}catch(e){} ov.remove(); document.removeEventListener('keydown',onKey); }
+    function onKey(e){ if(e.key==='Escape')close(); }
+    ov.addEventListener('click',function(e){ if(e.target.tagName!=='VIDEO')close(); });
+    document.addEventListener('keydown',onKey);
+    document.body.appendChild(ov);
+  }
+  function renderLibrary(list){
+    var el=document.getElementById('renders');
+    if(!list.length){ el.innerHTML='<div class="empty">No customer renders yet — the first one lands here automatically.</div>'; return; }
+    el.innerHTML=list.map(function(r,i){
+      var failed=r.status&&r.status!=='completed';
+      var thumb=r.thumbnail_url
+        ? '<img src="'+r.thumbnail_url.replace(/"/g,'&quot;')+'" alt="" loading="lazy">'
+        : '';
+      return '<div class="rcard" data-i="'+i+'">'+
+        '<div class="thumb">'+thumb+'<div class="play"><span>▶</span></div>'+
+        (failed?'<span class="badge fail">'+esc(r.status)+'</span>':'')+
+        '</div>'+
+        '<div class="rmeta">'+
+          '<div class="rtitle">'+esc(r.title)+'</div>'+
+          '<div class="rsub">'+esc(r.email||'unknown')+'</div>'+
+          '<div class="rsub">'+ago(r.created_at)+(r.narrated?' · narrated':'')+(r.engine?' · '+esc(r.engine):'')+'</div>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+    Array.prototype.forEach.call(el.querySelectorAll('.rcard'),function(card){
+      card.onclick=function(){
+        var r=list[Number(card.getAttribute('data-i'))];
+        if(r&&r.mp4_url) openPlayer(r.mp4_url, r.title, r.email);
+      };
+    });
+  }
+
   var failures=0;
   function load(){
     var t=token(); if(!t){ showGate(); return; }
@@ -160,6 +219,7 @@
         var pay=(j.paying&&j.paying.subscribers||0)+(j.paying&&j.paying.credit_holders||0);
         put('f-paying', pay);
         renderRoster(j.recent||[]);
+        renderLibrary(j.recent_renders||[]);
       })
       .catch(function(e){ failures++; if(failures>1){ dot.classList.add('err'); stamp.textContent='connection lost — retrying'; } });
   }
