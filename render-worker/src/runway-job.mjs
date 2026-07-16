@@ -184,6 +184,12 @@ export async function renderRunwayJob(body, options = {}) {
   // deterministic floor, so an outage render completes in ~10 min.
   let falStallCount = 0;
   const FAL_STALL_BREAKER = 3;
+  // v49: provider content-policy flags (Veo refuses image-to-video on photos
+  // with people — common in real estate: agents in kitchens, sellers,
+  // mirror reflections). Retrying the same photo can never pass the checker,
+  // so these skip all remaining Veo attempts and floor immediately.
+  const isContentPolicyError = (err) =>
+    /content_policy_violation|content checker|flagged by a content/i.test(String(err?.message || err || ""));
   // v34.6 DROP-SCENE TERMINAL: scenes that fail every attempt are dropped
   // from the render instead of killing it. Each entry: { sceneIndex,
   // photoId, reason }. The floor after the pMap aborts + refunds if drops
@@ -273,6 +279,11 @@ export async function renderRunwayJob(body, options = {}) {
             if (error?.code === "FAL_TIMEOUT" && falStallCount >= FAL_STALL_BREAKER) {
               const skip = new Error(`stall circuit open (${falStallCount} fal stalls) — skipping Veo retry`);
               skip.code = "FAL_CIRCUIT_OPEN";
+              throw skip;
+            }
+            if (isContentPolicyError(error)) {
+              const skip = new Error("provider content checker flagged this photo (person in frame?) — Veo retries can't pass, flooring");
+              skip.code = "FAL_CONTENT_POLICY";
               throw skip;
             }
             result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
@@ -380,11 +391,23 @@ export async function renderRunwayJob(body, options = {}) {
               } else {
                 console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — third attempt: strict static re-roll.`);
                 qcThirdTryCount++;
-                third = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, strictConstrained: true });
-                verdict3 = await qcVeoClip({
-                  clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
-                  sceneIndex: index, roomType: scene.roomType, tempDir
-                });
+                // v49: WRAPPED. This was the one unguarded generation call in
+                // the ladder — fal threw content_policy_violation here
+                // (customer photo with a person in it) and the naked throw
+                // killed the ENTIRE render at 6.7 min instead of flooring one
+                // scene. Any third-attempt throw now falls through to the
+                // floor block below (third stays null).
+                try {
+                  third = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, strictConstrained: true });
+                  verdict3 = await qcVeoClip({
+                    clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
+                    sceneIndex: index, roomType: scene.roomType, tempDir
+                  });
+                } catch (thirdErr) {
+                  console.warn(`[qc] scene ${index + 1} third attempt threw (${String(thirdErr.message || thirdErr).slice(0, 140)}) — PREMIUM PHOTO MOTION floor.`);
+                  third = null;
+                  verdict3 = { checked: true, pass: false, reasons: hardReasons };
+                }
               }
               const hard3 = verdict3.checked ? verdict3.reasons.filter((r) => !r.startsWith("motion")) : [];
               if (!third || (verdict3.checked && hard3.length > 0)) {
