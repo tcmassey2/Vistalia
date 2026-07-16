@@ -3090,6 +3090,20 @@ function ActiveRenderPanel() {
 
         {/* (Progress bar removed 7/8 per Troy — the animated percentage and
             phase title carry the status; the card stays clean.) */}
+
+        {/* v49: permission to leave. Watching a percentage for 10-25 minutes
+            is agony; a finished video arriving by email is magic. The worker
+            now fires /api/notify-render-complete on success, so this promise
+            is kept. */}
+        <div className="flex items-center gap-2.5 pt-3 border-t border-edge-soft">
+          <svg viewBox="0 0 24 24" className="w-4 h-4 text-gold flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="m3 7 9 6 9-6" />
+          </svg>
+          <span className="text-xs text-ink-muted leading-relaxed">
+            Safe to close this tab — your video keeps rendering and we'll email you the moment it's ready.
+          </span>
+        </div>
       </div>
     </div>
   );

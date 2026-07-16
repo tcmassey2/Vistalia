@@ -569,6 +569,35 @@ async function runRenderJob(jobId, body) {
       progress: 100,
       jobId
     });
+    // v49: "your video is ready" email. The Vercel endpoint + branded
+    // template have existed since f761c5d — but nothing ever CALLED it, so
+    // no customer has ever been told their render finished. Fire-and-forget
+    // with the shared worker secret; an email failure must never taint a
+    // completed render.
+    try {
+      const notifyBase = process.env.APP_URL || "https://vistalia.ai";
+      const userId = body?.manifest?.project?.userId || "";
+      const mp4Url = publishedResult?.mp4Url || publishedResult?.masterUrl || "";
+      if (userId && mp4Url) {
+        fetch(`${notifyBase}/api/notify-render-complete`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(workerSecret() ? { Authorization: `Bearer ${workerSecret()}` } : {})
+          },
+          body: JSON.stringify({
+            userId,
+            jobId,
+            mp4Url,
+            thumbnailUrl: publishedResult?.thumbnailUrl || "",
+            listingTitle: body?.manifest?.project?.address || body?.manifest?.project?.title || "Your listing video"
+          })
+        }).then((r) => {
+          if (!r.ok) console.warn(`[notify] render-complete email HTTP ${r.status} for ${jobId}`);
+          else console.info(`[notify] render-complete email sent for ${jobId}`);
+        }).catch((e) => console.warn(`[notify] render-complete email failed: ${e.message}`));
+      }
+    } catch { /* never block completion on email */ }
   } catch (error) {
     const elapsedMin = ((Date.now() - startedAt) / 1000 / 60).toFixed(1);
     console.error(`[server] job ${jobId} failed after ${elapsedMin} min: ${error.message}`);
