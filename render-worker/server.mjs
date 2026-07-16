@@ -538,12 +538,19 @@ async function runRenderJob(jobId, body) {
   const engine = String(body?.manifest?.engine || "remotion").toLowerCase();
   updateJob(jobId, { status: "rendering", phase: "Rendering scenes", progress: 12, engine });
   // Overall hard cap — if anything below this races slower than this, we
-  // kill the job rather than let it hang forever. v31 audit: raised 18→25
-  // minutes — 60s plans now run up to 17 Veo scenes (5 fal waves at
-  // concurrency 4, plus fal 429-backoff retries), so a legitimate worst case
-  // brushes ~20 minutes. The heartbeat-based stuck reaper (migration 25)
-  // handles dead workers; this cap only needs to catch true hangs.
-  const OVERALL_TIMEOUT_MS = 25 * 60 * 1000;
+  // kill the job rather than let it hang forever. The heartbeat-based stuck
+  // reaper (migration 25) handles dead workers; this cap only needs to catch
+  // true hangs.
+  //
+  // v49 (2026-07-15, first customer render): the flat 25-minute cap killed a
+  // 16-scene 60s render TEN SECONDS before completion — 9 QC regens, 4 floor
+  // renders, 3 CPU stitches and a square variant are all legitimate work, and
+  // Promise.race doesn't cancel the loser, so the "failed" job finished
+  // uploading as a zombie anyway. Scale the cap with plan size instead:
+  // 25 min covers ≤10 scenes; +2.5 min per extra scene; ceiling 55 min.
+  const sceneCount = Array.isArray(body?.manifest?.scenes) ? body.manifest.scenes.length : 10;
+  const extraScenes = Math.max(0, sceneCount - 10);
+  const OVERALL_TIMEOUT_MS = Math.min(55, 25 + extraScenes * 2.5) * 60 * 1000;
   const startedAt = Date.now();
   try {
     const result = await Promise.race([
