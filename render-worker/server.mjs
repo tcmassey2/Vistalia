@@ -618,11 +618,17 @@ async function refundRenderCredit(userId, jobId, errorCode) {
 
 // Run the per-scene regenerate orchestrator with an overall timeout. Regen
 // only generates 1 new clip + downloads N-1 + re-stitches, so it's much
-// faster than a full render. 10-minute cap is conservative — typical
-// runtime is 60-180 seconds.
+// faster than a full render.
+//
+// v49: the flat 10-minute cap died the same death as the render cap — a
+// 16-scene master's regen re-stitches all 17 clips on CPU, and with a
+// second render running concurrently it blew past 10 minutes (first
+// customer, first Redo-with-AI, 2026-07-15). Scale with the master's
+// scene count: 10 min through 8 scenes, +1 min per extra scene, 25 cap.
 async function runRegenerateJob(progressKey, body) {
   updateJob(progressKey, { status: "rendering", phase: "Starting regen", progress: 5 });
-  const REGEN_TIMEOUT_MS = 10 * 60 * 1000;
+  const regenScenes = Array.isArray(body?.manifest?.scenes) ? body.manifest.scenes.length : 8;
+  const REGEN_TIMEOUT_MS = Math.min(25, 10 + Math.max(0, regenScenes - 8)) * 60 * 1000;
   const startedAt = Date.now();
   try {
     const result = await Promise.race([
