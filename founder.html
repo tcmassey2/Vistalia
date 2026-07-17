@@ -88,7 +88,7 @@
   <div class="grid" id="cards">
     <div class="card hero"><div class="label">Leads today</div><div class="big" id="m-leads-today">—</div><div class="sub"><span id="m-leads-total">—</span> all-time · from Instant Forms</div></div>
     <div class="card"><div class="label">Renders today</div><div class="big" id="m-renders-today">—</div><div class="sub"><span id="m-renders-total">—</span> all-time</div></div>
-    <div class="card"><div class="label">Signups today</div><div class="big" id="m-users-today">—</div><div class="sub"><span id="m-users-total">—</span> accounts total</div></div>
+    <div class="card"><div class="label">Signups today</div><div class="big" id="m-users-today">—</div><div class="sub"><span id="m-users-total">—</span> accounts · <span id="m-signins-today">—</span> signed in today</div></div>
     <div class="card"><div class="label">Subscribers</div><div class="big" id="m-subs">—</div><div class="sub"><span id="m-credits">—</span> credit holders</div></div>
   </div>
 
@@ -99,6 +99,7 @@
       <div class="step"><div class="n" id="f-accounts">—</div><div class="t">Accounts made</div></div>
       <div class="step"><div class="n" id="f-emailed">—</div><div class="t">Welcomed</div></div>
       <div class="step"><div class="n" id="f-nudged">—</div><div class="t">Nudged</div></div>
+      <div class="step"><div class="n" id="f-signedin">—</div><div class="t">Signed in</div></div>
       <div class="step"><div class="n" id="f-renders">—</div><div class="t">Renders</div></div>
       <div class="step"><div class="n" id="f-paying">—</div><div class="t">Paying</div></div>
     </div>
@@ -153,11 +154,18 @@
       var badge=isPaying?'<span class="badge paying">'+esc(u.tier||'credits')+'</span>'
         :(u.source==='meta_lead'?'<span class="badge lead">Lead'+(u.licensed===false?' · unlic':'')+'</span>':'<span class="badge direct">Direct</span>');
       var renders=u.renders>0?'<span class="renders-yes">'+u.renders+' render'+(u.renders===1?'':'s')+'</span>':'no renders';
+      var seen='';
+      if(u.last_sign_in_at){
+        var fresh=(Date.now()-new Date(u.last_sign_in_at).getTime())<86400000;
+        seen=' · <span'+(fresh?' style="color:var(--gold-light);font-weight:600"':'')+'>seen '+ago(u.last_sign_in_at).replace(' ago','')+'</span>';
+      } else {
+        seen=' · never signed in';
+      }
       return '<div class="row">'+
         '<div class="who"><div class="name">'+esc(u.name||u.email.split('@')[0])+'</div>'+
         '<div class="email">'+esc(u.email)+'</div></div>'+
         badge+
-        '<div class="meta">'+ago(u.created_at)+'<br>'+renders+'</div>'+
+        '<div class="meta">'+ago(u.created_at)+seen+'<br>'+renders+'</div>'+
       '</div>';
     }).join('');
   }
@@ -218,6 +226,8 @@
         put('m-subs', j.paying&&j.paying.subscribers); put('m-credits', j.paying&&j.paying.credit_holders);
         put('f-leads', j.leads&&j.leads.total); put('f-accounts', j.leads&&j.leads.accounts_created);
         put('f-emailed', j.leads&&j.leads.emailed); put('f-nudged', j.leads&&j.leads.nudged);
+        put('f-signedin', j.signins&&j.signins.leads);
+        put('m-signins-today', j.signins&&j.signins.today);
         put('f-renders', j.renders&&j.renders.total);
         var pay=(j.paying&&j.paying.subscribers||0)+(j.paying&&j.paying.credit_holders||0);
         put('f-paying', pay);

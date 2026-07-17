@@ -78,12 +78,31 @@ export default async function handler(request, response) {
   // the activation count. All best-effort — roster failures never break
   // the counters.
   let recent = [];
+  // Sign-in visibility (the metric between "welcomed" and "rendered"):
+  // computed from GoTrue last_sign_in_at across all accounts, plus the
+  // lead-only count for the funnel strip.
+  let signins = { total: null, today: null, leads: null };
   try {
-    const usersRes = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=1&per_page=50`, {
+    const usersRes = await fetch(`${supabaseUrl}/auth/v1/admin/users?page=1&per_page=200`, {
       headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }
     });
     const usersBody = await usersRes.json().catch(() => ({}));
-    const users = (Array.isArray(usersBody?.users) ? usersBody.users : [])
+    const allUsers = Array.isArray(usersBody?.users) ? usersBody.users : [];
+
+    try {
+      const leadEmailRows = await fetch(`${supabaseUrl}/rest/v1/meta_leads?select=email&limit=1000`, {
+        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` }
+      }).then((r) => (r.ok ? r.json() : []));
+      const leadEmails = new Set((Array.isArray(leadEmailRows) ? leadEmailRows : []).map((l) => String(l.email).toLowerCase()));
+      const signedIn = allUsers.filter((u) => u.last_sign_in_at);
+      signins = {
+        total: signedIn.length,
+        today: signedIn.filter((u) => u.last_sign_in_at >= midnight).length,
+        leads: signedIn.filter((u) => leadEmails.has(String(u.email || "").toLowerCase())).length
+      };
+    } catch { /* sign-in counts are best-effort */ }
+
+    const users = allUsers
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       .slice(0, 25);
 
@@ -122,6 +141,7 @@ export default async function handler(request, response) {
         email,
         name: lead?.full_name || u.user_metadata?.full_name || "",
         created_at: u.created_at,
+        last_sign_in_at: u.last_sign_in_at || null,
         source: lead ? "meta_lead" : "direct",
         licensed: lead ? lead.licensed : null,
         renders: renderCount.get(u.id) || 0,
@@ -232,6 +252,7 @@ export default async function handler(request, response) {
     renders: { total: rendersTotal, today: rendersToday },
     users: { total: usersTotal, today: usersToday },
     paying: { subscribers: payingSubs, credit_holders: creditHolders },
+    signins,
     recent,
     recent_renders
   });
