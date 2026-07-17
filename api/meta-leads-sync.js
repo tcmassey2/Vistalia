@@ -28,7 +28,7 @@
 //   META_PAGE_ID             optional — defaults to the Vistalia Page.
 
 import { sendTransactionalEmail } from "./_lib/email.js";
-import { leadWelcomeEmail, leadNudgeEmail } from "./_lib/email-templates.js";
+import { leadWelcomeEmail, leadNudgeEmail, firstRenderUpsellEmail } from "./_lib/email-templates.js";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 const DEFAULT_PAGE_ID = "1250774388114584"; // Vistalia (true Graph id)
@@ -114,6 +114,7 @@ export default async function handler(request, response) {
 
     // --- nudge pass: ~20h old, welcomed, never nudged, never rendered ---
     await runNudgePass({ supabaseUrl, serviceKey, summary });
+    await runUpsellPass({ supabaseUrl, serviceKey, summary });
 
     if (summary.errors.length) console.error("[meta-leads-sync]", JSON.stringify(summary.errors));
     return response.status(200).json({ status: "ok", ...summary });
@@ -342,4 +343,98 @@ function parseFieldData(fieldData) {
     else if (name.includes("licensed")) out.licensed = /^yes/i.test(value.trim());
   }
   return out;
+}
+
+/* ============================================================
+   Post-first-render upsell pass (PROFITABILITY_PLAN Phase 0).
+   The paywall moment we never email: a trial user rendered their first
+   video 20+ hours ago and hasn't bought. Sell the NEXT listing ($39
+   wedge / Pro graduation) while the first one is still fresh.
+
+   Rules: first render 20h–7d old · tier=trial · zero credits (goodwill
+   holders get the in-app credits-exhausted paywall instead) · one send
+   ever via app_metadata.upsell_sent (claim-first, like the nudge).
+   Failures are logged and never break the lead sync.
+   ============================================================ */
+async function runUpsellPass({ supabaseUrl, serviceKey, summary }) {
+  summary.upsold = 0;
+  summary.upsell_skipped = 0;
+  const UPSELL_AFTER_MS = Number(process.env.UPSELL_AFTER_MS || 20 * 3600 * 1000);
+  const UPSELL_BATCH = Number(process.env.UPSELL_BATCH || 10);
+  const rest = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    "Content-Type": "application/json"
+  };
+  try {
+    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const rows = await fetch(
+      `${supabaseUrl}/rest/v1/render_audit_log?select=agent_user_id,created_at&created_at=gte.${encodeURIComponent(since)}&order=created_at.asc&limit=300`,
+      { headers: rest }
+    ).then((r) => (r.ok ? r.json() : []));
+
+    // First render per user inside the window.
+    const firstRender = new Map();
+    for (const r of Array.isArray(rows) ? rows : []) {
+      if (r.agent_user_id && !firstRender.has(r.agent_user_id)) {
+        firstRender.set(r.agent_user_id, new Date(r.created_at).getTime());
+      }
+    }
+
+    let sentCount = 0;
+    for (const [userId, firstAt] of firstRender) {
+      if (sentCount >= UPSELL_BATCH) break;
+      if (Date.now() - firstAt < UPSELL_AFTER_MS) continue;
+
+      // Trial with no credits only — payers and goodwill-credit holders skip.
+      const prof = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?user_id=eq.${encodeURIComponent(userId)}&select=tier,render_credits,email`,
+        { headers: rest }
+      ).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+      const p = Array.isArray(prof) ? prof[0] : null;
+      if (!p || p.tier !== "trial" || Number(p.render_credits || 0) > 0) { summary.upsell_skipped++; continue; }
+
+      // One-shot claim via app_metadata (no migration needed).
+      const userRes = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, { headers: rest });
+      if (!userRes.ok) { summary.upsell_skipped++; continue; }
+      const user = await userRes.json().catch(() => ({}));
+      const email = String(user?.email || p.email || "");
+      if (!email || user?.app_metadata?.upsell_sent) { summary.upsell_skipped++; continue; }
+
+      const claim = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+        method: "PUT",
+        headers: rest,
+        body: JSON.stringify({ app_metadata: { ...(user.app_metadata || {}), upsell_sent: true } })
+      });
+      if (!claim.ok) { summary.errors.push(`upsell claim ${email}: ${claim.status}`); continue; }
+
+      // Fresh magic link (top-level redirect_to — REST admin API shape).
+      let magicLink = "";
+      const linkRes = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+        method: "POST",
+        headers: rest,
+        body: JSON.stringify({
+          type: "magiclink",
+          email,
+          redirect_to: `${process.env.APP_URL || "https://vistalia.ai"}/app/`
+        })
+      });
+      if (linkRes.ok) {
+        const link = await linkRes.json().catch(() => ({}));
+        magicLink = link?.action_link || link?.properties?.action_link || "";
+      }
+
+      const tpl = firstRenderUpsellEmail({ email, magicLink });
+      const sent = await sendTransactionalEmail({
+        to: email,
+        subject: tpl.subject,
+        html: tpl.html,
+        tags: ["first-render-upsell"]
+      });
+      if (sent?.ok) { summary.upsold++; sentCount++; }
+      else if (!sent?.skipped) summary.errors.push(`upsell send ${email}: ${sent?.error || "failed"}`);
+    }
+  } catch (err) {
+    summary.errors.push(`upsell pass: ${err.message}`);
+  }
 }

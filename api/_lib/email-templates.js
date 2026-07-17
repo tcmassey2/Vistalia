@@ -143,7 +143,7 @@ export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobI
     html: shell({
       eyebrow: "Render complete",
       headline: "Your video is ready.",
-      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. One tap below signs you in and opens your library — watch it and download every format you selected.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
+      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. One tap below signs you in and opens your library — watch it and download every format you selected.</p><p style="margin-top:14px;">Post it and tag <strong style="color:#E8E2D6;">@vistalia.ai</strong> on Instagram — we feature our favorite listings.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
       ctaLabel: "Watch your video",
       // One-tap magic link (24h). Plain /app/ fallback if link generation
       // failed — signed-in devices sail through either way.
@@ -209,6 +209,26 @@ export function leadNudgeEmail({ email, firstName, magicLink }) {
       ctaLabel: "Open your studio",
       ctaUrl: magicLink || `${APP_URL}/app/`,
       footer: `The sign-in button expires after a short while — if it's stale, open <a href="${APP_URL}/app/" style="color:#C7A76C;">vistalia.ai/app</a> and continue with Google or Facebook using this same email. This is the only reminder we'll send. Sent to ${escape(email)} from your Facebook/Instagram request.`
+    })
+  };
+}
+
+/* ============================================================
+   Post-first-render upsell — T+20h after a trial user's first render.
+   The moment: they made one video, loved it (or at least kept it), and
+   have a NEXT listing coming. Sell per-listing first ($39), graduate to
+   Pro. One send, ever (app_metadata.upsell_sent).
+   ============================================================ */
+export function firstRenderUpsellEmail({ email, magicLink }) {
+  return {
+    subject: "Your next listing deserves the same video",
+    html: shell({
+      eyebrow: "Your studio",
+      headline: "One listing down. What about the next one?",
+      body: `<p>Your first Vistalia video is in your library — and your next listing deserves the same treatment. Drop in the photos and it's rendered, narrated, and captioned in about ten minutes.</p><p style="margin-top:14px;"><strong style="color:#E8E2D6;">$39 for a single video</strong>, or <strong style="color:#E8E2D6;">5 a month for $69</strong> — and paid videos carry no watermark, just your name, headshot, and brand.</p><p style="margin-top:14px;">Sellers pick the agent with the better marketing. Be the agent with film.</p>`,
+      ctaLabel: "Make your next video",
+      ctaUrl: magicLink || `${APP_URL}/app/`,
+      footer: `The button signs you in automatically and expires within a day — after that, open <a href="${APP_URL}/app/" style="color:#C7A76C;">vistalia.ai/app</a> as usual. Sent to ${escape(email)} because your first render finished yesterday. We won't send this twice.`
     })
   };
 }
