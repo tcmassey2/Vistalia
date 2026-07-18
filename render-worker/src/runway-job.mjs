@@ -229,6 +229,10 @@ export async function renderRunwayJob(body, options = {}) {
       // The Hallucination Guard decision is logged with reasoning so we can
       // tune thresholds based on real-world data.
       const guardDecision = decideUseKenBurns(scene, guardLevel);
+      // v49 audit instrumentation: how many generation attempts this scene
+      // consumed. Persisted to render_audit_log.scenes so floor-rate tuning
+      // runs on data instead of guesses (and feeds the MLS-Safe Certificate).
+      let attemptsUsed = 1;
 
       if (isVeo) {
         // v26.3: NO Ken Burns on the Veo path — ever. The guard's risk
@@ -257,7 +261,7 @@ export async function renderRunwayJob(body, options = {}) {
             qcFloorCount++;
             scenesCompleted++;
             touchWatchdog();
-            return { ...floor, usedPhotoMotionFloor: true };
+            return { ...floor, usedPhotoMotionFloor: true, attemptsUsed: 0, floorReason: "circuit_open" };
           } catch (floorErr) {
             console.warn(`[veo] scene ${index + 1} floor failed under open circuit (${floorErr.message}) — DROPPING this scene.`);
             droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: `stall circuit open; floor failed: ${floorErr.message}` });
@@ -286,6 +290,7 @@ export async function renderRunwayJob(body, options = {}) {
               skip.code = "FAL_CONTENT_POLICY";
               throw skip;
             }
+            attemptsUsed = 2;
             result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
             touchWatchdog();
             usedConstrained = true;
@@ -304,7 +309,16 @@ export async function renderRunwayJob(body, options = {}) {
               });
               qcFloorCount++;
               scenesCompleted++;
-              return { ...floor, usedPhotoMotionFloor: true };
+              return {
+                ...floor,
+                usedPhotoMotionFloor: true,
+                attemptsUsed,
+                floorReason: retryError?.code === "FAL_CONTENT_POLICY"
+                  ? "content_policy"
+                  : retryError?.code === "FAL_CIRCUIT_OPEN"
+                    ? "circuit_open"
+                    : `generation_failed:${String(retryError?.message || "").slice(0, 60)}`
+              };
             } catch (floorErr) {
               console.warn(`[veo] scene ${index + 1} photo-motion floor ALSO failed (${floorErr.message}) — DROPPING this scene.`);
               droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: `generation failed twice (${retryError.message}); floor failed: ${floorErr.message}` });
@@ -340,6 +354,7 @@ export async function renderRunwayJob(body, options = {}) {
             try {
               // v40: retries escalate to the STRICT static prompt (kitchens'
               // first constrained attempt uses the gentle-motion variant).
+              attemptsUsed++;
               const retry = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, strictConstrained: true });
               const verdict2 = await qcVeoClip({
                 clipPath: retry.clipPath, sourceImageUrl: qcSrcUrl,
@@ -398,6 +413,7 @@ export async function renderRunwayJob(body, options = {}) {
                 // scene. Any third-attempt throw now falls through to the
                 // floor block below (third stays null).
                 try {
+                  attemptsUsed++;
                   third = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, strictConstrained: true });
                   verdict3 = await qcVeoClip({
                     clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
@@ -429,7 +445,7 @@ export async function renderRunwayJob(body, options = {}) {
                   });
                   qcFloorCount++;
                   scenesCompleted++;
-                  return { ...floor, usedPhotoMotionFloor: true };
+                  return { ...floor, usedPhotoMotionFloor: true, attemptsUsed, floorReason: `qc_exhausted:${hard3.join("|").slice(0, 80)}` };
                 } catch (floorErr) {
                   console.warn(`[qc] scene ${index + 1} photo-motion floor ALSO failed (${floorErr.message}) — DROPPING this scene.`);
                   droppedScenes.push({ sceneIndex: index, photoId: scene.photoId, reason: `${hard3.join(", ")}; floor failed: ${floorErr.message}` });
@@ -467,6 +483,11 @@ export async function renderRunwayJob(body, options = {}) {
           result = await generateKenBurnsFallback(scene, manifest, tempDir, index);
           fallbackCount++;
         }
+      }
+      // v49 audit instrumentation: attach attempt count to whatever ships.
+      // (Floor paths return earlier with their own attemptsUsed + floorReason.)
+      if (result && typeof result === "object" && result.attemptsUsed == null) {
+        result.attemptsUsed = attemptsUsed;
       }
       scenesCompleted++;
       const phaseText = complianceMode
@@ -638,7 +659,7 @@ export async function renderRunwayJob(body, options = {}) {
           const floor = await generateKenBurnsFallback(f.scene, manifest, tempDir, f.clip.sceneIndex, {
             durationSec: Number(f.clip.duration) > 0 ? Number(f.clip.duration) : undefined
           });
-          clipResults[f.index] = { ...floor, usedPhotoMotionFloor: true, sweepReplaced: true };
+          clipResults[f.index] = { ...floor, usedPhotoMotionFloor: true, sweepReplaced: true, floorReason: `sweep_replaced:${f.reasons.join("|").slice(0, 80)}` };
         }
         console.info(`[sweep] re-stitching master with ${toReplace.length} floor replacement${toReplace.length === 1 ? "" : "s"}.`);
         options.onProgress?.({ phase: "Finalizing video", progress: 79 });
@@ -2181,7 +2202,15 @@ export async function uploadPerSceneClips({ manifest, jobId, normalizedClips, cl
       cameraMotion: original.cameraMotion || "",
       duration: Number(clip.duration || original.duration || 5),
       runwayPrompt: original.runwayPrompt || "",
-      wasFallback: Boolean(original.fallback)
+      wasFallback: Boolean(original.fallback),
+      // v49 audit enrichment — the Veo path finally writes the v23 fields.
+      // engineUsed/fallbackReason/attempts power the floor-rate tuning
+      // queries (render_scene_breakdown) and, later, the MLS-Safe
+      // Certificate's per-scene provenance.
+      engineUsed: (original.usedPhotoMotionFloor || original.fallback) ? "photo_motion" : "veo",
+      fallbackReason: original.floorReason || null,
+      attempts: Number.isFinite(original.attemptsUsed) ? original.attemptsUsed : null,
+      sweepReplaced: Boolean(original.sweepReplaced)
     });
   }
   return sceneMeta;
@@ -2725,8 +2754,17 @@ function decideUseKenBurns(scene, guardLevel) {
   if (room === "kitchen") {
     return { useKenBurns: true, risk, reason: `kitchen always falls back (risk ${risk})` };
   }
-  if (room === "bathroom" && risk >= 85) {
-    return { useKenBurns: true, risk, reason: `bathroom risk≥85 (${risk})` };
+  // v49 FLOOR-RATE DATA (Jul 17 2026, 541 scenes / 14 days of production):
+  // bathrooms floored 32%, bedrooms 26.7%, amenity 33% — versus kitchens at
+  // 7.7% under always-constrained. The old bathroom risk≥85 threshold almost
+  // never tripped (base 60 needs +25 in keyword bumps), so mirror/glass/
+  // textile rooms ran BOLD on attempt 1, burned the QC ladder, and floored
+  // 4× more than the room the policy protects. Constrained-first is cheaper
+  // (fewer retries), faster, and ships MORE real Veo motion, not less —
+  // kitchens are the proof. Bedrooms earn it for patterned bedding/artwork
+  // (the m48 "morphing pillows" class); amenity for gym/pool-room mirrors.
+  if (room === "bathroom" || room === "bedroom" || room === "amenity") {
+    return { useKenBurns: true, risk, reason: `${room} constrained-first (v49 floor-rate data; risk ${risk})` };
   }
   if (risk >= 90) {
     return { useKenBurns: true, risk, reason: `risk≥90 (${risk}, ${room || "unknown"})` };
