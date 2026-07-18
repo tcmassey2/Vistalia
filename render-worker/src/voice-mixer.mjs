@@ -35,6 +35,42 @@ const SYNTH_TIMEOUT_MS = 25000;
 // bed while a line plays. Override via env DUCK_LEVEL or manifest.duckLevel.
 const DUCK_LEVEL = Number(process.env.DUCK_LEVEL ?? 0.30);
 
+// v50: SMOOTH ducking. The legacy expression was a hard step — the bed
+// snapped to 30% the instant a line started and snapped back the instant it
+// ended, which ears read as "automated." Real mixes ride the fader: the bed
+// eases down just before the voice (0.35s attack) and swells back after it
+// (0.60s release). Implemented as a pure volume expression (still
+// eval=frame, still deterministic — the v43.3 "no time-varying loudnorm"
+// contract only bans ANALYSIS-driven gain, not authored envelopes).
+// DUCK_RAMP=0 restores the legacy step expression byte-for-byte.
+const DUCK_RAMP = process.env.DUCK_RAMP !== "0";
+const DUCK_ATTACK_SEC = 0.35;
+const DUCK_RELEASE_SEC = 0.60;
+
+// Build the bed's volume expression for a set of narration windows.
+// Ramped: level(t) = 1 − (1−DUCK)·min(1, Σ trapezoid_i(t)) where each
+// trapezoid rises over the attack ahead of its window and falls over the
+// release after it. Overlapping windows sum and clamp — the bed never dips
+// below DUCK_LEVEL and never double-ducks.
+function buildDuckVolumeExpr(windows) {
+  const list = (windows || []).filter((w) => Array.isArray(w) && w.length === 2);
+  if (!list.length) return "1";
+  if (!DUCK_RAMP) {
+    const duckExpr = list.map(([s, e]) => `between(t,${s.toFixed(2)},${e.toFixed(2)})`).join("+");
+    return `if(${duckExpr},${DUCK_LEVEL},1)`;
+  }
+  const depth = (1 - DUCK_LEVEL).toFixed(3);
+  const parts = list.map(([s, e]) => {
+    const a = Math.max(0, s - DUCK_ATTACK_SEC).toFixed(2);
+    const b = (e + DUCK_RELEASE_SEC).toFixed(2);
+    return (
+      `min(max((t-${a})/${DUCK_ATTACK_SEC.toFixed(2)},0),1)*` +
+      `min(max((${b}-t)/${DUCK_RELEASE_SEC.toFixed(2)},0),1)`
+    );
+  });
+  return `1-${depth}*min(1,${parts.join("+")})`;
+}
+
 // v43.3 STEM-NORMALIZED MIX (m31 finding). The final loudnorm was DYNAMIC:
 // during the music fade-in it cranked gain up — boosting line 1 and its
 // sibilance into audible "clatter" — then pulled everything down once the
@@ -459,12 +495,8 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   // ============================================================
   onProgress?.({ phase: "Mixing narration with music", fraction: 0.9 });
 
-  const duckExpr = narrationActiveWindows.length
-    ? narrationActiveWindows.map(([s, e]) => `between(t,${s.toFixed(2)},${e.toFixed(2)})`).join("+")
-    : "0";
-  const volumeExpr = narrationActiveWindows.length
-    ? `if(${duckExpr},${DUCK_LEVEL},1)`
-    : "1";
+  // v50: smooth attack/release ducking (DUCK_RAMP=0 → legacy step).
+  const volumeExpr = buildDuckVolumeExpr(narrationActiveWindows);
 
   const mixedMp4 = path.join(tempDir, `${jobId}-narrated.mp4`);
 
@@ -704,8 +736,8 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     const end = Math.min(trackPadSec, p.startAt + Math.min(p.dur / p.tempo, p.cap) + 0.15);
     return [Math.max(0, p.startAt - 0.1), end];
   });
-  const duckExpr = duckWindows.map(([s, e]) => `between(t,${s.toFixed(2)},${e.toFixed(2)})`).join("+");
-  const volumeExpr = `if(${duckExpr},${DUCK_LEVEL},1)`;
+  // v50: smooth attack/release ducking (DUCK_RAMP=0 → legacy step).
+  const volumeExpr = buildDuckVolumeExpr(duckWindows);
   const mixedMp4 = path.join(tempDir, `${jobId}-narrated.mp4`);
   const masterHasAudio = await detectAudioStream(masterMp4);
 

@@ -103,6 +103,202 @@ const PRE_SCALE_DENOISE = "hqdn3d=2.2:1.6:6:6";
 const COLOR_GRADE =
   "eq=contrast=1.05:saturation=0.96:gamma=1.02,colorbalance=rs=0.05:bs=-0.025,unsharp=5:5:0.28:3:3:0.12";
 
+// =================================================================
+// v50 FINISHING PASS — "polish lives in finishing, not pixels"
+// =================================================================
+// Six levers, all per-clip (the v19/v20 OOM lesson: never a second
+// full-master encode), all fail-open, all behind env kills:
+//   FINISH_PASS=0       — master switch: byte-identical v49 chains
+//   FINISH_DEFLICKER=0  — temporal luma smoothing pre-denoise (kills the
+//                         faint Veo luma pulse the eye reads as "AI")
+//   FINISH_MATCH=0      — scene-to-scene tone leveling: every clip's
+//                         luma/saturation nudged toward the render's
+//                         median so cuts don't jump in exposure. Clamped
+//                         to ±0.045 brightness / ±6% saturation; probe
+//                         failure → zero correction.
+//   FINISH_GRADE=0      — per-style parametric grade (falls back to the
+//                         legacy COLOR_GRADE). MLS keeps COLOR_GRADE
+//                         always: compliance-neutral look.
+//   FINISH_FILM=0       — film finish: vignette + halation bloom on lit
+//                         highlights (luxury only) + fine grain. Never on
+//                         MLS.
+//   FINISH_TITLE=0      — serif two-line title reveal (falls back to the
+//                         v48 single-line chip).
+//   DUCK_RAMP=0         — (voice-mixer) smooth attack/release music
+//                         ducking → legacy step ducking.
+// preNormalized clips (regen path) skip conditioning/grade/film entirely —
+// they were graded when first rendered; re-grading compounded contrast on
+// every regen before v50.
+const FINISH_PASS = process.env.FINISH_PASS !== "0";
+const FINISH_DEFLICKER = FINISH_PASS && process.env.FINISH_DEFLICKER !== "0";
+const FINISH_MATCH = FINISH_PASS && process.env.FINISH_MATCH !== "0";
+const FINISH_GRADE = FINISH_PASS && process.env.FINISH_GRADE !== "0";
+const FINISH_FILM = FINISH_PASS && process.env.FINISH_FILM !== "0";
+const FINISH_TITLE = FINISH_PASS && process.env.FINISH_TITLE !== "0";
+
+// One-shot ffmpeg filter capability probe. cas/deflicker exist in every
+// ffmpeg ≥4.3, but "don't leave room for error": if the binary lacks a
+// filter we substitute (cas→unsharp) or skip (deflicker) instead of
+// handing ffmpeg a chain it will reject.
+let _ffFilterSetPromise = null;
+function ffFilterSet() {
+  if (_ffFilterSetPromise) return _ffFilterSetPromise;
+  _ffFilterSetPromise = new Promise((resolve) => {
+    try {
+      const proc = spawn("ffmpeg", ["-hide_banner", "-filters"], { stdio: ["ignore", "pipe", "ignore"] });
+      let out = "";
+      proc.stdout.on("data", (d) => { out += d; });
+      const done = () => {
+        const set = new Set();
+        for (const line of out.split("\n")) {
+          const m = line.match(/^\s*[TSC.]{3}\s+([a-z0-9_]+)\s/i);
+          if (m) set.add(m[1]);
+        }
+        resolve(set);
+      };
+      proc.on("close", done);
+      proc.on("error", () => resolve(new Set()));
+      setTimeout(() => { try { proc.kill(); } catch {} resolve(new Set()); }, 5000);
+    } catch {
+      resolve(new Set());
+    }
+  });
+  return _ffFilterSetPromise;
+}
+
+// Map the customer-facing style name onto a finishing personality.
+function resolveFinishStyle(manifest) {
+  if (manifest?.runwayConfig?.complianceMode) return "mls";
+  const s = String(manifest?.selectedStyle || "").toLowerCase();
+  if (s.includes("mls")) return "mls";
+  if (s.includes("social")) return "social";
+  if (s.includes("invest")) return "investor";
+  if (s.includes("lux") || s.includes("cinematic")) return "luxury";
+  return "neutral";
+}
+
+// Per-style parametric grade. Same eq/colorbalance family as COLOR_GRADE so
+// the character shift is a tune, not a re-look; sharpening moves from
+// unsharp to contrast-adaptive (cas) when available — cleaner texture on
+// marble/wood, no halo on window frames.
+function buildStyleGrade(styleKey, caps) {
+  const sharpen = caps.has("cas") ? "cas=0.30" : "unsharp=5:5:0.28:3:3:0.12";
+  switch (styleKey) {
+    case "mls":
+      return COLOR_GRADE; // compliance-neutral: the exact pre-v50 look
+    case "luxury":
+      return (
+        "eq=contrast=1.06:saturation=0.97:gamma=1.02," +
+        "colorbalance=rs=0.06:gs=0.005:bs=-0.045," +
+        "curves=all='0/0.015 0.5/0.5 1/0.985'," + // gentle filmic S: lifted blacks, protected highlights
+        sharpen
+      );
+    case "social":
+      return (
+        "eq=contrast=1.07:saturation=1.05:gamma=1.01," +
+        "colorbalance=rs=0.02:bs=-0.012," +
+        sharpen
+      );
+    case "investor":
+    case "neutral":
+    default:
+      return (
+        "eq=contrast=1.05:saturation=0.96:gamma=1.02," +
+        "colorbalance=rs=0.05:bs=-0.025," +
+        sharpen
+      );
+  }
+}
+
+// Film finish: vignette + grain as -vf chain pieces, halation as a small
+// filter_complex sub-graph (split → threshold → cheap quarter-res boxblur
+// bloom → screen blend). Halation is luxury-only — it's the "lit windows
+// glow at dusk" look; grain is style-scaled; MLS gets none of it.
+function buildFilmFinish(styleKey, caps, dimensions) {
+  if (!FINISH_FILM || styleKey === "mls") return { vignette: "", grain: "", halation: false };
+  const grainStrength = styleKey === "luxury" ? 5 : 4;
+  return {
+    vignette: caps.has("vignette") ? "vignette=angle=PI/4.8" : "",
+    grain: caps.has("noise") ? `noise=alls=${grainStrength}:allf=t` : "",
+    halation: styleKey === "luxury" && caps.has("blend"),
+    halationGraph: (inL, outL) => {
+      const qw = Math.max(2, Math.round(dimensions.width / 4 / 2) * 2);
+      const qh = Math.max(2, Math.round(dimensions.height / 4 / 2) * 2);
+      return (
+        `[${inL}]split=2[hbase][hsrc];` +
+        `[hsrc]scale=${qw}:${qh},lutyuv=y='if(gt(val,190),val,0)',boxblur=10:2,` +
+        `scale=${dimensions.width}:${dimensions.height}[hglow];` +
+        `[hbase][hglow]blend=all_mode=screen:all_opacity=0.22[${outL}]`
+      );
+    }
+  };
+}
+
+// Scene-to-scene tone leveling. Probes mean luma (YAVG) + saturation
+// (SATAVG) on ~8 sampled frames per clip, computes the render's median as
+// reference, and returns a per-scene clamped eq correction. Any probe or
+// parse failure → empty map → zero corrections (fail-open).
+async function buildSceneMatchMap(clipResults) {
+  const stats = new Map();
+  for (const clip of clipResults) {
+    if (!clip?.clipPath || clip.preNormalized) continue;
+    try {
+      const s = await probeClipTone(clip.clipPath);
+      if (s) stats.set(clip.sceneIndex, s);
+    } catch { /* fail-open per clip */ }
+  }
+  if (stats.size < 3) return new Map();
+  const med = (arr) => {
+    const a = [...arr].sort((x, y) => x - y);
+    return a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2;
+  };
+  const refY = med([...stats.values()].map((s) => s.y));
+  const refSat = med([...stats.values()].map((s) => s.sat));
+  const out = new Map();
+  for (const [idx, s] of stats) {
+    const bRaw = ((refY - s.y) / 255) * 0.9;
+    const b = Math.max(-0.045, Math.min(0.045, bRaw));
+    const satRaw = s.sat > 1 ? refSat / s.sat : 1;
+    const satF = Math.max(0.94, Math.min(1.06, satRaw));
+    const bStr = Math.abs(b) >= 0.008 ? b.toFixed(4) : null;
+    const satStr = Math.abs(satF - 1) >= 0.02 ? satF.toFixed(3) : null;
+    if (!bStr && !satStr) continue;
+    const parts = [];
+    if (bStr) parts.push(`brightness=${bStr}`);
+    if (satStr) parts.push(`saturation=${satStr}`);
+    out.set(idx, `eq=${parts.join(":")}`);
+  }
+  return out;
+}
+
+async function probeClipTone(clipPath) {
+  return await new Promise((resolve) => {
+    try {
+      const proc = spawn("ffmpeg", [
+        "-hide_banner", "-v", "error",
+        "-i", clipPath,
+        "-vf", "select='not(mod(n,12))',signalstats,metadata=print:file=-",
+        "-frames:v", "8",
+        "-f", "null", "-"
+      ], { stdio: ["ignore", "pipe", "ignore"] });
+      let out = "";
+      proc.stdout.on("data", (d) => { out += d; });
+      const finish = () => {
+        const ys = [...out.matchAll(/YAVG=([0-9.]+)/g)].map((m) => Number(m[1]));
+        const sats = [...out.matchAll(/SATAVG=([0-9.]+)/g)].map((m) => Number(m[1]));
+        if (!ys.length) return resolve(null);
+        const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+        resolve({ y: avg(ys), sat: sats.length ? avg(sats) : 0 });
+      };
+      proc.on("close", finish);
+      proc.on("error", () => resolve(null));
+      setTimeout(() => { try { proc.kill(); } catch {} resolve(null); }, 15000);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 export async function renderRunwayJob(body, options = {}) {
   const { manifest, requestedFormat } = body || {};
   validateRunwayManifest(manifest);
@@ -1441,7 +1637,23 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   const freeWatermarkFilter = manifest.freeRenderWatermark
     ? buildFreeRenderWatermark(dimensions)
     : "";
-  const colorGrade = COLOR_GRADE;
+  // v50: resolve the finishing recipe ONCE per stitch. With FINISH_PASS=0
+  // every value below collapses to the pre-v50 constants and the per-clip
+  // chain is byte-identical to v49.
+  const finishStyle = resolveFinishStyle(manifest);
+  const filterCaps = await ffFilterSet();
+  const colorGrade = FINISH_GRADE ? buildStyleGrade(finishStyle, filterCaps) : COLOR_GRADE;
+  const film = buildFilmFinish(finishStyle, filterCaps, dimensions);
+  const deflickerFilter = FINISH_DEFLICKER && filterCaps.has("deflicker") ? "deflicker=mode=pm:size=5" : "";
+  let toneMatchMap = new Map();
+  if (FINISH_MATCH) {
+    try {
+      toneMatchMap = await buildSceneMatchMap(clipResults);
+      if (toneMatchMap.size > 0) {
+        console.info(`[finish] tone-leveling ${toneMatchMap.size}/${clipResults.length} scenes toward the render median (style=${finishStyle}).`);
+      }
+    } catch { toneMatchMap = new Map(); }
+  }
   // Pre-render the small corner headshot ONCE. Reused as a 2nd input on
   // every normalize call below. Falls back to null if the user has no
   // headshot URL or the pre-render fails — in that case we use -vf and
@@ -1468,12 +1680,22 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // v48: address chip rides ONLY the opening scene (clipResults is sorted,
     // so i===0 is the tour's first clip even if the original scene 1 was
     // dropped). Empty string = filter chain identical to v47.
-    const addressIntroFilter = i === 0 ? buildAddressIntro(manifest, dimensions, clip.duration) : "";
-    const baseFilters = [
+    // v50: upgraded to the serif title reveal; falls back to the v48 chip
+    // (FINISH_TITLE=0) or "" — both preserve the fail-open contract.
+    const addressIntroFilter = i === 0 ? buildTitleIntro(manifest, dimensions, clip.duration, finishStyle) : "";
+    // v50: regen-path clips arrive preNormalized — already graded, sharpened
+    // and watermarked on their first render. They skip conditioning/grade/
+    // film so nothing compounds (pre-v50, regen re-applied the full grade).
+    const isPre = Boolean(clip.preNormalized);
+    const matchEqFilter = !isPre ? (toneMatchMap.get(clip.sceneIndex) || "") : "";
+    const preHalation = [
       `fps=30`,
+      // v50: deflicker BEFORE denoise — temporal luma pulse is easiest to
+      // remove at native resolution, and hqdn3d then has less to chase.
+      ...(!isPre && deflickerFilter ? [deflickerFilter] : []),
       // v31: denoise at the clip's NATIVE resolution (720p for Veo) before the
       // lanczos upscale to master size — see PRE_SCALE_DENOISE notes up top.
-      PRE_SCALE_DENOISE,
+      ...(!isPre ? [PRE_SCALE_DENOISE] : []),
       `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=increase:flags=lanczos`,
       // v35.2 (test-17): square crop bias is PER-ROOM — a uniform upward
       // bias beheaded exteriors, because vertical listing photos put sky
@@ -1494,51 +1716,73 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
             return `crop=${dimensions.width}:${dimensions.height}:(in_w-${dimensions.width})/2:(in_h-${dimensions.height})*${bias}`;
           })()
         : `crop=${dimensions.width}:${dimensions.height}`,
-      colorGrade,
+      ...(!isPre ? [colorGrade] : []),
+      ...(matchEqFilter ? [matchEqFilter] : []),
+      ...(!isPre && film.vignette ? [film.vignette] : [])
+    ].join(",");
+    // Grain sits ON TOP of the halation bloom; text overlays draw after
+    // grain so typography stays crisp.
+    const postHalation = [
+      ...(!isPre && film.grain ? [film.grain] : []),
       ...(watermarkFilter ? [watermarkFilter] : []),
       ...(freeWatermarkFilter ? [freeWatermarkFilter] : []),
       ...(addressIntroFilter ? [addressIntroFilter] : [])
     ].join(",");
+    const useHalation = !isPre && film.halation;
+    const encodeArgs = [
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-preset", ENCODE_PRESET,
+      "-crf", ENCODE_CRF_MASTER,
+      "-x264-params", X264_PARAMS,
+      "-bufsize", BUFSIZE,
+      ...trimArgs,
+      "-an",
+      normalized
+    ];
 
-    if (cornerHeadshotPath) {
-      // Two-input filter_complex: base video → grade + watermark → overlay headshot.
-      const filterComplex =
-        `[0:v]${baseFilters}[bg];` +
-        `[bg][1:v]overlay=${cornerOverlayX}:${cornerOverlayY}[vout]`;
+    if (useHalation) {
+      // Halation needs a split/blend sub-graph → filter_complex always.
+      const graph =
+        `[0:v]${preHalation}[fbase];` +
+        film.halationGraph("fbase", "fglow") + ";" +
+        `[fglow]${postHalation || "null"}[vout]` +
+        (cornerHeadshotPath ? `;[vout][1:v]overlay=${cornerOverlayX}:${cornerOverlayY}[vfinal]` : "");
       await runFFmpeg([
         "-y",
         "-threads", "1",
         "-i", clip.clipPath,
-        "-i", cornerHeadshotPath,
-        "-filter_complex", filterComplex,
-        "-map", "[vout]",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-preset", ENCODE_PRESET,
-        "-crf", ENCODE_CRF_MASTER,
-        "-x264-params", X264_PARAMS,
-        "-bufsize", BUFSIZE,
-        ...trimArgs,
-        "-an",
-        normalized
+        ...(cornerHeadshotPath ? ["-i", cornerHeadshotPath] : []),
+        "-filter_complex", graph,
+        "-map", cornerHeadshotPath ? "[vfinal]" : "[vout]",
+        ...encodeArgs
       ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
     } else {
-      // No headshot — simpler single-input -vf chain.
-      await runFFmpeg([
-        "-y",
-        "-threads", "1",
-        "-i", clip.clipPath,
-        "-vf", baseFilters,
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-preset", ENCODE_PRESET,
-        "-crf", ENCODE_CRF_MASTER,
-        "-x264-params", X264_PARAMS,
-        "-bufsize", BUFSIZE,
-        ...trimArgs,
-        "-an",
-        normalized
-      ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
+      const baseFilters = [preHalation, postHalation].filter(Boolean).join(",");
+      if (cornerHeadshotPath) {
+        // Two-input filter_complex: base video → grade + watermark → overlay headshot.
+        const filterComplex =
+          `[0:v]${baseFilters}[bg];` +
+          `[bg][1:v]overlay=${cornerOverlayX}:${cornerOverlayY}[vout]`;
+        await runFFmpeg([
+          "-y",
+          "-threads", "1",
+          "-i", clip.clipPath,
+          "-i", cornerHeadshotPath,
+          "-filter_complex", filterComplex,
+          "-map", "[vout]",
+          ...encodeArgs
+        ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
+      } else {
+        // No headshot — simpler single-input -vf chain.
+        await runFFmpeg([
+          "-y",
+          "-threads", "1",
+          "-i", clip.clipPath,
+          "-vf", baseFilters,
+          ...encodeArgs
+        ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
+      }
     }
 
     normalizedClips.push({ ...clip, clipPath: normalized });
@@ -1869,6 +2113,80 @@ function buildAddressIntro(manifest, dimensions, clipDuration) {
     );
   } catch {
     return "";
+  }
+}
+
+// v50: serif title reveal — the thumbnail typography, in motion, over the
+// opening scene. Street in the brand serif, thin gold rule, city beneath in
+// letterspaced caps; staggered fades, gone by ~5s like the v48 chip it
+// replaces. FAIL-OPEN CONTRACT: FINISH_TITLE=0, a missing/oversized
+// address, a short opening clip, a missing serif font file, or ANY throw
+// falls back to the v48 chip (which has its own fail-open to ""). Nothing
+// user-controlled reaches the chain unsanitized.
+function buildTitleIntro(manifest, dimensions, clipDuration, styleKey) {
+  if (!FINISH_TITLE) return buildAddressIntro(manifest, dimensions, clipDuration);
+  try {
+    const clean = (s) =>
+      String(s || "")
+        .replace(/'/g, "’")
+        .replace(/,/g, " ")
+        .replace(/[^A-Za-z0-9 #.·\-&’\/]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    const street = clean(manifest?.project?.address);
+    if (!street) return "";
+    if (street.length > 40) return buildAddressIntro(manifest, dimensions, clipDuration);
+    const dur = Number(clipDuration) > 0 ? Number(clipDuration) : 0;
+    if (dur < 3.0) return buildAddressIntro(manifest, dimensions, clipDuration);
+    const serifPath = path.join(CAPTIONS_FONTS_DIR, "VistaliaSerif-SemiBold.ttf");
+    if (!existsSync(serifPath)) return buildAddressIntro(manifest, dimensions, clipDuration);
+
+    const city = clean(manifest?.project?.city);
+    // Letterspaced caps via thin single-space joins — drawtext has no
+    // tracking parameter; this is the standard approximation.
+    const citySpaced = city ? city.toUpperCase().split("").join(" ").replace(/   /g, "  ") : "";
+
+    const end = Math.min(4.8, dur - 0.4);
+    const endS = end.toFixed(2);
+    const goneS = (end + 0.5).toFixed(2);
+    const streetSize = Math.round(dimensions.width / (street.length > 26 ? 26 : 22));
+    const citySize = Math.max(18, Math.round(dimensions.width / 46));
+    const yStreet = Math.round(dimensions.height * 0.056);
+    const yRule = yStreet + streetSize + 16;
+    const yCity = yRule + 14;
+    const ruleW = Math.round(dimensions.width * 0.17);
+
+    const alphaFor = (inStart, inEnd) =>
+      `if(lt(t,${inStart}),0,if(lt(t,${inEnd}),(t-${inStart})/${(inEnd - inStart).toFixed(2)},` +
+      `if(lt(t,${endS}),1,if(lt(t,${goneS}),(${goneS}-t)/0.5,0))))`;
+
+    const parts = [
+      `drawtext=fontfile='${serifPath}'` +
+        `:text='${ffEscape(street)}'` +
+        `:fontcolor=white@0.96:fontsize=${streetSize}` +
+        `:x=(w-text_w)/2:y=${yStreet}` +
+        `:alpha='${alphaFor(0.55, 1.15)}'` +
+        `:shadowcolor=black@0.55:shadowx=0:shadowy=2`,
+      `drawbox=x=(iw-${ruleW})/2:y=${yRule}:w=${ruleW}:h=2:color=0xC7A76C@0.85:t=fill` +
+        `:enable='between(t,0.95,${goneS})'`
+    ];
+    if (citySpaced && citySpaced.length <= 40) {
+      parts.push(
+        `drawtext=fontfile='${serifPath}'` +
+          `:text='${ffEscape(citySpaced)}'` +
+          `:fontcolor=0xC7A76C@0.95:fontsize=${citySize}` +
+          `:x=(w-text_w)/2:y=${yCity}` +
+          `:alpha='${alphaFor(0.85, 1.45)}'` +
+          `:shadowcolor=black@0.5:shadowx=0:shadowy=1`
+      );
+    }
+    return parts.join(",");
+  } catch {
+    try {
+      return buildAddressIntro(manifest, dimensions, clipDuration);
+    } catch {
+      return "";
+    }
   }
 }
 
