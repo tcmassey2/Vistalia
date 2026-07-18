@@ -131,7 +131,7 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
             `You receive the ORIGINAL listing photo first, then ${frames.length} frames IN TIME ORDER ` +
             "from a video generated FROM that photo. The video may only move the camera — " +
             "the scene itself must match the photo and behave rigidly. Respond with strict JSON: " +
-            '{"text_artifacts": boolean, "object_artifacts": boolean, "motion_artifacts": boolean, "occlusion_artifacts": boolean, "notes": "≤20 words"}. ' +
+            '{"text_artifacts": boolean, "object_artifacts": boolean, "motion_artifacts": boolean, "occlusion_artifacts": boolean, "temporal_artifacts": boolean, "notes": "≤20 words"}. ' +
             "text_artifacts=true if ANY text, numbers, symbols, captions, or watermark-like " +
             "shapes appear in frames that are not present in the original photo. " +
             "CRITICAL — WATERMARKS ARE NEVER ARTIFACTS, IN EITHER DIRECTION: photographer " +
@@ -178,6 +178,20 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
             "a foreground object — a large blurry surface (beam, wall, furniture, plant) " +
             "fills or wipes a major part of the frame, or the room becomes mostly blocked. " +
             "A well-framed shot keeps the space clearly visible in every frame. " +
+            "temporal_artifacts=true for TEXTURE BOIL: compare each frame TO THE NEXT " +
+            "FRAME (not to the photo — a boiling texture can match the photo in every " +
+            "single frame while morphing between them; master-58 shipped chattering tree " +
+            "branches this way). Look at tree branches, foliage clusters, leaves, grasses, " +
+            "railings, brickwork, tile patterns, and any fine repeating texture: between " +
+            "consecutive frames their INTERNAL STRUCTURE must stay the same structure, " +
+            "merely shifted by the camera move. Needles or leaves that sprout, vanish, or " +
+            "reorganize; branch layouts that redraw; patterns that crawl, rewrite, or " +
+            "seethe; edges that ripple like liquid = temporal_artifacts=true. " +
+            "LEGITIMATE MOTION IS NOT BOIL: fire and fireplace flames, water surfaces, " +
+            "pool ripples, fountains, steam, clouds, swaying curtains, and TV/screen " +
+            "content are EXPECTED to change between frames — never flag them. Gentle " +
+            "uniform wind-sway of a whole branch is fine; the defect is structure " +
+            "REWRITING itself, not structure MOVING. " +
             "Small softness/blur/lighting shifts are NOT artifacts. Be tolerant of minor " +
             "differences; flag only clearly visible defects a home buyer would notice.";
     const userText =
@@ -305,6 +319,7 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
     if (verdict.object_artifacts === true) reasons.push("object artifacts");
     if (verdict.motion_artifacts === true) reasons.push("motion artifacts (object moves with camera)");
     if (verdict.occlusion_artifacts === true) reasons.push("occlusion (camera collides with foreground)");
+    if (verdict.temporal_artifacts === true) reasons.push("temporal instability (texture boil between frames)");
     const pass = reasons.length === 0;
     console.info(
       `[${logTag}] scene ${sceneIndex + 1} (${roomType || "?"}): ${pass ? "PASS" : `FAIL (${reasons.join(", ")})`}` +
