@@ -358,6 +358,31 @@ const RENDER_CONCURRENCY = Math.max(1, Number(process.env.RENDER_CONCURRENCY || 
 const WORKER_ID = `worker-${process.pid}-${Math.random().toString(36).slice(2, 7)}`;
 let activeRenders = 0;
 
+// v50.1 CRASH OBSERVABILITY (Jul 18 incident): the Summit Springs job ran
+// THREE times — every container boot in the log landed in the tone-leveling→
+// stitch window and every redelivery came at exact reaper spacing (20-min
+// stale + 5-min tick), but nothing ever logged WHY a process ended or WHY a
+// completed status failed to stick. These handlers make the next death name
+// itself, and the RSS ticker shows whether it's the OOM killer.
+process.on("uncaughtException", (e) => {
+  console.error(`[fatal] uncaughtException on ${WORKER_ID}: ${e?.stack || e?.message || e}`);
+});
+process.on("unhandledRejection", (e) => {
+  console.error(`[fatal] unhandledRejection on ${WORKER_ID}: ${e?.stack || e?.message || e}`);
+});
+process.on("SIGTERM", () => {
+  console.error(`[fatal] SIGTERM on ${WORKER_ID} — platform is stopping this container (deploy/restart/OOM-adjacent). activeRenders=${activeRenders}`);
+});
+process.on("beforeExit", (code) => {
+  console.error(`[fatal] beforeExit code=${code} on ${WORKER_ID} — event loop drained. activeRenders=${activeRenders}`);
+});
+setInterval(() => {
+  const m = process.memoryUsage();
+  if (activeRenders > 0 || m.rss > 2_000_000_000) {
+    console.info(`[mem] rss=${Math.round(m.rss / 1048576)}MB heap=${Math.round(m.heapUsed / 1048576)}MB active=${activeRenders} worker=${WORKER_ID}`);
+  }
+}, 120_000).unref();
+
 const sbHeaders = {
   apikey: SUPABASE_SERVICE_KEY,
   Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
@@ -420,7 +445,15 @@ function persistJobStatus(jobId, job) {
   if (job.error) patch.error = job.error;
   if (job.status === "completed") patch.result = job;
   if (Object.keys(patch).length === 0) return;
-  const url = `${SUPABASE_URL}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(jobId)}`;
+  // v50.1 MONOTONIC TERMINAL GUARD: a late/racing progress tick (or a
+  // heartbeat from any stale writer) must NEVER flip a completed/failed row
+  // back to 'rendering' — that exact regression re-arms the stuck reaper
+  // against a finished job. Non-terminal patches now only match rows that
+  // are not already terminal; terminal patches stay unconditional.
+  const terminalGuard = (patch.status === "completed" || patch.status === "failed")
+    ? ""
+    : "&status=not.in.(completed,failed)";
+  const url = `${SUPABASE_URL}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(jobId)}${terminalGuard}`;
   // v46 (Troy's smoke test): a regen finished in memory but its final
   // status=completed patch was lost (single fire-and-forget attempt) — the
   // row froze at status=rendering/progress=100 and the 20-min stuck reaper
@@ -464,6 +497,46 @@ function persistJobStatus(jobId, job) {
   })().catch(() => {});
 }
 
+// v50.1: does a delivered artifact already exist for this job? The audit row
+// (written at upload time) is the durable receipt — if it exists with a
+// master URL, any fresh claim of the same job_id is a reaper redelivery of a
+// FINISHED render. Best-effort: null on any error → claim proceeds normally.
+async function auditRowForJob(jobId) {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/render_audit_log?job_id=eq.${encodeURIComponent(jobId)}&select=job_id,master_mp4_url,thumbnail_url&limit=1`,
+      { headers: sbHeaders }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json().catch(() => []);
+    return Array.isArray(rows) && rows[0] && rows[0].master_mp4_url ? rows[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+// v50.1: confirm a terminal status actually LANDED in render_jobs. Read-only
+// poll — the writes come from persistJobStatus's retry loop; this just
+// refuses to declare victory until the row agrees. Missing row = non-queue
+// (inline/smoke) job — nothing to confirm.
+async function confirmTerminalPersist(jobId, status) {
+  if (!QUEUE_ENABLED || !jobId) return true;
+  const url = `${SUPABASE_URL}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(jobId)}&select=status`;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const res = await fetch(url, { headers: sbHeaders });
+      if (res.ok) {
+        const rows = await res.json().catch(() => []);
+        if (Array.isArray(rows) && rows.length === 0) return true; // inline job, no queue row
+        if (rows[0]?.status === status) return true;
+      }
+    } catch { /* retry */ }
+    await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
+  }
+  console.error(`[queue] ⚠️ could not CONFIRM status=${status} for ${jobId} — the terminal write may be lost; the stuck reaper may redeliver (the idempotent claim guard will stop a re-render/re-email).`);
+  return false;
+}
+
 // Poll the queue and start jobs up to the concurrency cap. Each claim is atomic
 // (SKIP LOCKED) so multiple worker instances never collide on the same job.
 async function pollAndProcess() {
@@ -477,6 +550,25 @@ async function pollAndProcess() {
       // runner — runRenderJob would dispatch a full render AND refund a
       // credit on failure that regen never charged.
       const isRegen = Boolean(claimed.manifest?.__regen);
+      // v50.1 IDEMPOTENT CLAIM GUARD (Jul 18 incident: one job rendered 3×,
+      // customer emailed 2×, ~2 renders of fal spend wasted). If the audit
+      // row says this job already delivered, re-assert the terminal status
+      // and skip — never re-render, never re-email.
+      if (!isRegen) {
+        const delivered = await auditRowForJob(claimed.job_id);
+        if (delivered) {
+          console.error(`[queue] ${claimed.job_id} claimed but ALREADY DELIVERED (audit row present) — reaper redelivery caught. Re-asserting completed; skipping re-render + email.`);
+          updateJob(claimed.job_id, {
+            status: "completed",
+            phase: "Ready to download",
+            progress: 100,
+            mp4Url: delivered.master_mp4_url,
+            thumbnailUrl: delivered.thumbnail_url || "",
+            jobId: claimed.job_id
+          });
+          continue;
+        }
+      }
       activeRenders++;
       jobs.set(claimed.job_id, {
         status: "rendering", phase: isRegen ? "Starting scene redo" : "Claimed", progress: 5, jobId: claimed.job_id,
@@ -569,6 +661,13 @@ async function runRenderJob(jobId, body) {
       progress: 100,
       jobId
     });
+    // v50.1: confirm the terminal row LANDED before emailing. If the
+    // container dies in this window, the async persist can vanish, the
+    // reaper redelivers a finished job, and the customer is emailed again
+    // by the re-run (Jul 18: Summit Springs, 3 runs, 2 emails). Awaited,
+    // read-only, ~max 18s; the claim guard is the backstop if it still
+    // fails.
+    await confirmTerminalPersist(jobId, "completed");
     // v49: "your video is ready" email. The Vercel endpoint + branded
     // template have existed since f761c5d — but nothing ever CALLED it, so
     // no customer has ever been told their render finished. Fire-and-forget
