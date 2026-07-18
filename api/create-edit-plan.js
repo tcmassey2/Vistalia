@@ -868,6 +868,55 @@ async function enrichFallbackPlan(plan, photos, context) {
    verified lines exactly as they are. */
 const PLAN_POLISH_TIMEOUT_MS = 9000;
 
+// v50.5 (m61 "almost every sentence mentions wood") — deterministic
+// repetition detector. The vision model writes each line from its own photo,
+// so a wood cabin gets "wood" in every sentence and nobody in the pipeline
+// ever hears the echo. This scan is lexical and cheap: stem material/feature
+// families (wood/wooden/woodwork → wood), count how many LINES each family
+// appears in, and flag anything present in more than two. The flags feed
+// named constraints into the polish prompt, and a post-polish recount logs
+// whether the fix landed (fail-open — repetitive beats silent).
+const NARRATION_STOPWORDS = new Set([
+  "the", "a", "an", "and", "or", "with", "of", "to", "in", "on", "for",
+  "this", "that", "its", "is", "are", "has", "have", "your", "by", "at",
+  "from", "into", "out", "up", "home", "room", "rooms", "area", "areas",
+  "space", "spaces", "scene", "private", "tour", "today", "schedule",
+  "come", "see", "features", "offers", "includes", "throughout"
+]);
+const NARRATION_STEM_FAMILIES = [
+  "wood", "stair", "window", "light", "floor", "cabinet", "ceiling",
+  "granite", "marble", "tile", "stone", "brick", "counter", "deck",
+  "patio", "pool", "view", "modern", "natural", "spacious"
+];
+function narrationStem(raw) {
+  let t = String(raw || "").toLowerCase().replace(/[^a-z\-]/g, "");
+  if (t.length > 3 && t.endsWith("es")) t = t.slice(0, -2);
+  else if (t.length > 3 && t.endsWith("s")) t = t.slice(0, -1);
+  for (const fam of NARRATION_STEM_FAMILIES) {
+    if (t.startsWith(fam)) return fam;
+  }
+  return t;
+}
+function repetitionFlags(lines, maxLines = 2) {
+  const counts = new Map();
+  lines.forEach((line, idx) => {
+    const seen = new Set();
+    for (const raw of String(line || "").split(/\s+/)) {
+      const t = narrationStem(raw);
+      if (!t || t.length < 4 || NARRATION_STOPWORDS.has(t)) continue;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      if (!counts.has(t)) counts.set(t, []);
+      counts.get(t).push(idx + 1);
+    }
+  });
+  const flags = [];
+  for (const [term, lineIdxs] of counts) {
+    if (lineIdxs.length > maxLines) flags.push({ term, lines: lineIdxs });
+  }
+  return flags.sort((a, b) => b.lines.length - a.lines.length);
+}
+
 async function polishNarrationFlow(plan, context) {
   const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
   const narrated = scenes.filter((s) => String(s.narrationLine || "").trim());
@@ -887,6 +936,18 @@ async function polishNarrationFlow(plan, context) {
     .map((s, i) =>
       `${i + 1} (${s.roomType}, max ${budgets[i]} words): "${s.narrationLine}"`)
     .join("\n");
+  // v50.5: repetition constraints, computed deterministically from the
+  // drafts and named explicitly in the prompt — "vary your vocabulary" is
+  // ignorable; "the wood family appears in lines 1,3,4,5,6,8" is not.
+  const repFlags = repetitionFlags(narrated.map((s) => s.narrationLine), 2);
+  const repetitionClause = repFlags.length
+    ? `- REPETITION DETECTED (deterministic scan of the drafts) — the #1 defect to fix: ` +
+      repFlags.slice(0, 5).map((f) => `the "${f.term}" family appears in lines ${f.lines.join(",")}`).join("; ") +
+      `. Keep each flagged family in at most TWO lines (pick the scenes where it matters most) and rewrite the ` +
+      `others around DIFFERENT true qualities those lines already contain — light, space, texture, height, views, ` +
+      `layout, warmth. Synonym-swapping ("wood"→"timber") does NOT count as fixing; change what the sentence is ` +
+      `ABOUT. (m61 shipped "wood" in six consecutive sentences this way.)\n`
+    : "";
   const prompt =
     `Polish the narration for a ${context.selectedStyle || "cinematic"} real-estate listing video. ` +
     `Each numbered line below narrates one scene, in order, and has been verified accurate against that scene's photo.\n` +
@@ -907,6 +968,7 @@ async function polishNarrationFlow(plan, context) {
     `across two lines, never open with a verb fragment.\n` +
     `- Variety: no two lines open with the same word; use each of ` +
     `"cozy", "bright", "spacious", "beautiful", "stunning", "modern" at most once across the whole script.\n` +
+    repetitionClause +
     `- NON-NEGOTIABLE: the FINAL line is an INVITATION, never a description. It contains "tour" or ` +
     `"see" (e.g. "Schedule your private tour today." / "Come see it for yourself."). A room ` +
     `description in the final slot is an error. No address, no phone, no agent name.\n` +
@@ -979,6 +1041,18 @@ async function polishNarrationFlow(plan, context) {
       }
     }
     console.info(`[plan-polish] ${applied}/${narrated.length} lines polished in ${Date.now() - t0}ms.`);
+    // v50.5: recount after polish — the QC half of the repetition fix.
+    // Fail-open (repetitive beats silent), but LOUD: the founder log now
+    // says whether the echo was actually fixed.
+    if (repFlags.length) {
+      const after = repetitionFlags(narrated.map((s) => s.narrationLine), 2);
+      const still = after.filter((f) => repFlags.some((g) => g.term === f.term));
+      if (still.length === 0) {
+        console.info(`[plan-polish] repetition QC: ${repFlags.length} flagged famil${repFlags.length === 1 ? "y" : "ies"} (${repFlags.map((f) => `${f.term}×${f.lines.length}`).join(", ")}) → clean after polish.`);
+      } else {
+        console.warn(`[plan-polish] repetition QC: STILL repetitive after polish — ${still.map((f) => `${f.term} in lines ${f.lines.join(",")}`).join("; ")} — shipping fail-open.`);
+      }
+    }
   } catch (err) {
     console.warn(`[plan-polish] failed open (${err.message}) — verified lines ship un-polished.`);
   }
