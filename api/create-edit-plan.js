@@ -614,7 +614,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   const scriptWordTarget = Math.round(clampedDuration * 1.7);
   const narrationGuidance = includeNarration
     ? [
-        `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece. SCENE-SYNC DISCIPLINE (v50.3, non-negotiable): each sentence must FINISH while its own scene is still on screen — size every sentence to its scene's seconds at ~2 words/sec, and NEVER let a sentence about one space still be playing when a different room appears (a bathroom sentence narrating the patio is the exact defect this rule exists to kill). Prefer two short sentences over one long one; never describe two different rooms in one sentence; never mention a space before its scene arrives.`,
+        `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece. SCENE-SYNC DISCIPLINE (v50.3, non-negotiable): each sentence must FINISH while its own scene is still on screen — size every sentence to its scene's seconds at ~2 words/sec, and NEVER let a sentence about one space still be playing when a different room appears (a bathroom sentence narrating the patio is the exact defect this rule exists to kill). Prefer two short sentences over one long one; never describe two different rooms in one sentence; never mention a space before its scene arrives. THE OPENER MUST FIT ITS SCENE: if the full address is too long for scene 1's seconds, use the short street form ("Welcome to Hawks Nest Lane" not the full unit-numbered address) — a chopped first sentence ruins the whole video. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. SELL THE SPACE, NOT THE STAGING (v34.4): never describe movable furniture or decor — sofas, tables, chairs, beds, rugs, lamps, art, plants. The furniture leaves with the seller; buyers are buying light, space, views, ceilings, windows, flooring, and finishes (cabinetry, counters, fireplaces, and built-ins are part of the home — those are fine). "A glass table sits beside the window" → "Expansive windows frame the red-rock views". CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
         // v40.1: style-aware narration tone (master-21: MLS Clean shipped
@@ -1618,6 +1618,34 @@ function normalizeEditPlan(plan, photos, context) {
   // MIN_LAST_SCENE_SEC, funded proportionally by earlier scenes (each
   // floored at 2.2s). Total duration is unchanged; the small off-grid
   // shift on donors is the price of an ending that lands.
+  // v50.4 (m61 line-1 TRIM): the OPENER needs a stage too. A dense grid
+  // dealt scene 1 ~3.2s while the property-naming opener ran 4.6s — the
+  // very first words of the video shipped atempo-1.15 + trimmed mid-word.
+  // Same machinery as the CTA guarantee below: scene 1 gets at least
+  // MIN_FIRST_SCENE_SEC, funded proportionally by scenes 2..n-1 (each
+  // floored at 2.2s), total duration unchanged.
+  const MIN_FIRST_SCENE_SEC = 4.2;
+  {
+    const n = snappedDurations.length;
+    if (n >= 3 && snappedDurations[0] < MIN_FIRST_SCENE_SEC) {
+      const before0 = snappedDurations[0];
+      const need = MIN_FIRST_SCENE_SEC - before0;
+      const donorTotal = snappedDurations.slice(1).reduce((a, b) => a + b, 0);
+      let funded = 0;
+      for (let i = 1; i < n; i++) {
+        const share = Math.min(need * (snappedDurations[i] / donorTotal), Math.max(0, snappedDurations[i] - 2.2));
+        if (share > 0) {
+          snappedDurations[i] = Math.round((snappedDurations[i] - share) * 1000) / 1000;
+          funded += share;
+        }
+      }
+      snappedDurations[0] = Math.round((snappedDurations[0] + funded) * 1000) / 1000;
+      if (funded > 0.05) {
+        console.info(`[plan] opening scene stretched ${before0.toFixed(2)}s → ${snappedDurations[0].toFixed(2)}s so the opener fits its stage.`);
+      }
+    }
+  }
+
   const MIN_LAST_SCENE_SEC = 3.4;
   {
     const n = snappedDurations.length;
