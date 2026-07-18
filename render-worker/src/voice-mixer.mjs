@@ -629,10 +629,39 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
   // Placement: sentence i starts at its scene start (+lead-in); its window
   // runs to the NEXT narrated scene's start (flowing-window model). Overruns
   // get per-segment atempo ≤1.15, then trim+fade as last resort.
+  // v50.3 (m59 "carries over too much scene to scene"): the flowing window
+  // must not carry a room's sentence across a DIFFERENT room — the bathroom
+  // line kept narrating over the patio grill. SOFT family cap: if the
+  // sentence fits (at ≤1.15x atempo) inside the anchor scene plus its
+  // consecutive same-family neighbors, cap it there and let the music own
+  // the cross-family remainder. A sentence that can't fit keeps the full
+  // flowing window — spill beats a mid-word chop. Never applied to the CTA
+  // (its v34.2 outro grace must survive).
+  const FAM_OUTDOOR = /exterior|outdoor|backyard|front|yard|patio|pool|garden|deck/;
+  const famMatch = (a, b) => {
+    const ra = String(a || "").toLowerCase();
+    const rb = String(b || "").toLowerCase();
+    return (FAM_OUTDOOR.test(ra) && FAM_OUTDOOR.test(rb)) || ra === rb;
+  };
+  const familyEndSec = (anchorIdx) => {
+    let end = sceneStarts[anchorIdx] + sceneVisible[anchorIdx];
+    for (let j = anchorIdx + 1; j < photoScenes.length; j++) {
+      if (!famMatch(photoScenes[anchorIdx]?.roomType, photoScenes[j]?.roomType)) break;
+      end = sceneStarts[j] + sceneVisible[j];
+    }
+    return end;
+  };
   const placements = segs.map((s, i) => {
     const startAt = sceneStarts[s.index] + leadInSec;
     const nextStart = i + 1 < segs.length ? sceneStarts[segs[i + 1].index] : trackPadSec;
-    const cap = Math.max(0.6, nextStart - startAt - 0.15);
+    const mergedCap = Math.max(0.6, nextStart - startAt - 0.15);
+    const famCap = Math.max(0.6, familyEndSec(s.index) - startAt - 0.15);
+    let cap = mergedCap;
+    let famLimited = false;
+    if (i < segs.length - 1 && famCap < mergedCap - 0.05 && s.dur / 1.15 <= famCap + 0.001) {
+      cap = famCap;
+      famLimited = true;
+    }
     let tempo = 1;
     if (s.dur > cap) tempo = Math.min(1.15, s.dur / cap);
     const effective = s.dur / tempo;
@@ -640,6 +669,7 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     console.info(
       `[voice] aligned line ${i + 1} → scene ${s.index + 1}: audio ${s.segStart.toFixed(2)}-${s.segEnd.toFixed(2)}s ` +
       `(${s.dur.toFixed(2)}s) @ t=${startAt.toFixed(2)}s, window ${cap.toFixed(2)}s` +
+      (famLimited ? " fam-capped" : "") +
       (tempo > 1.005 ? ` atempo ${tempo.toFixed(3)}` : "") + (trimmed ? " TRIM" : "")
     );
     return { ...s, startAt, cap, tempo, trimmed };

@@ -614,7 +614,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   const scriptWordTarget = Math.round(clampedDuration * 1.7);
   const narrationGuidance = includeNarration
     ? [
-        `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece.`,
+        `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece. SCENE-SYNC DISCIPLINE (v50.3, non-negotiable): each sentence must FINISH while its own scene is still on screen — size every sentence to its scene's seconds at ~2 words/sec, and NEVER let a sentence about one space still be playing when a different room appears (a bathroom sentence narrating the patio is the exact defect this rule exists to kill). Prefer two short sentences over one long one; never describe two different rooms in one sentence; never mention a space before its scene arrives.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. SELL THE SPACE, NOT THE STAGING (v34.4): never describe movable furniture or decor — sofas, tables, chairs, beds, rugs, lamps, art, plants. The furniture leaves with the seller; buyers are buying light, space, views, ceilings, windows, flooring, and finishes (cabinetry, counters, fireplaces, and built-ins are part of the home — those are fine). "A glass table sits beside the window" → "Expansive windows frame the red-rock views". CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
         // v40.1: style-aware narration tone (master-21: MLS Clean shipped
@@ -764,8 +764,17 @@ async function enrichFallbackPlan(plan, photos, context) {
     const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
     if (!scenes.length || !process.env.OPENAI_API_KEY) return plan;
     // Greedy window coverage — same algorithm as normalizeEditPlan v34.2.
+    // v50.3: same room-family merge guard as the primary path (see
+    // normalizeEditPlan) — windows never absorb a different room.
     const durations = scenes.map((s) => Number(s.duration) || 3);
     const MIN_WINDOW_SEC = 3.2;
+    const FB_OUTDOOR_FAM = /exterior|outdoor|backyard|front|yard|patio|pool|garden|deck/;
+    const fbSameFamily = (a, b) => {
+      const ra = String(a || "").toLowerCase();
+      const rb = String(b || "").toLowerCase();
+      if (FB_OUTDOOR_FAM.test(ra) && FB_OUTDOOR_FAM.test(rb)) return true;
+      return ra === rb;
+    };
     const isNarrated = new Array(durations.length).fill(false);
     {
       let i = 0;
@@ -773,7 +782,11 @@ async function enrichFallbackPlan(plan, photos, context) {
         isNarrated[i] = true;
         let w = durations[i];
         let j = i + 1;
-        while (j < durations.length && w < MIN_WINDOW_SEC) {
+        while (
+          j < durations.length &&
+          w < MIN_WINDOW_SEC &&
+          fbSameFamily(scenes[i]?.roomType, scenes[j]?.roomType)
+        ) {
           w += durations[j];
           j += 1;
         }
@@ -1628,6 +1641,20 @@ function normalizeEditPlan(plan, photos, context) {
   }
 
   const MIN_WINDOW_SEC = 3.2;
+  // v50.3 (m59 "carries over too much scene to scene"): a narration window
+  // may only absorb FOLLOWING scenes in the same room family — merging the
+  // bathroom's window across the patio made the tile line narrate the
+  // grill, and the exterior's window across a person-photo scene put
+  // "backyard lawn" over a face. exterior/outdoor pool together; everything
+  // else must match exactly. A cross-family neighbor starts its own window
+  // (and its own, scene-sized line) instead of donating airtime.
+  const OUTDOOR_FAM = /exterior|outdoor|backyard|front|yard|patio|pool|garden|deck/;
+  const sameNarrationFamily = (a, b) => {
+    const ra = String(a || "").toLowerCase();
+    const rb = String(b || "").toLowerCase();
+    if (OUTDOOR_FAM.test(ra) && OUTDOOR_FAM.test(rb)) return true;
+    return ra === rb;
+  };
   const isNarrated = new Array(snappedDurations.length).fill(false);
   {
     let i = 0;
@@ -1635,7 +1662,11 @@ function normalizeEditPlan(plan, photos, context) {
       isNarrated[i] = true; // i=0 first pass → the opener always speaks
       let w = snappedDurations[i];
       let j = i + 1;
-      while (j < snappedDurations.length && w < MIN_WINDOW_SEC) {
+      while (
+        j < snappedDurations.length &&
+        w < MIN_WINDOW_SEC &&
+        sameNarrationFamily(baseScenes[i]?.roomType, baseScenes[j]?.roomType)
+      ) {
         w += snappedDurations[j];
         j += 1;
       }
