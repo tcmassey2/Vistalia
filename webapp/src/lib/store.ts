@@ -71,6 +71,9 @@ interface AppState {
   // v35.1: opt-in 1:1 square deliverable (adds ~2 min of render time —
   // most agents only want the 9:16). Default false.
   includeSquare: boolean;
+  // v50.7: twilight (blue-hour) color correction — softens heavy violet
+  // casts on dusk photos. Default true; off = original color character.
+  blueHourCorrection: boolean;
   // v24.2: independent music toggle + volume. Previously music was
   // forced-on whenever a track existed. Now agents can ship voice-only,
   // music-only, or silent. musicVolume is 0.0-1.0, multiplied with the
@@ -144,6 +147,7 @@ interface AppState {
   setNarrationEnabled: (enabled: boolean) => void;
   setCaptionsEnabled: (enabled: boolean) => void;
   setIncludeSquare: (enabled: boolean) => void;
+  setBlueHourCorrection: (enabled: boolean) => void;
   setMusicEnabled: (enabled: boolean) => void;
   setMusicVolume: (volume: number) => void;
   setTargetDuration: (sec: 30 | 60) => void;
@@ -345,6 +349,7 @@ const emptyProject = () => ({
   narrationEnabled: true,
   captionsEnabled: true,
   includeSquare: false,
+  blueHourCorrection: true,
   musicEnabled: true,
   // 1.0 = use the worker's default musicBedLevel as-is. 0.0 = silent.
   // 1.5 = music 50% louder than default. Slider in UI typically 0-1.5.
@@ -541,6 +546,7 @@ export const useStore = create<AppState>((set, get) => ({
   setNarrationEnabled: (enabled) => (set({ narrationEnabled: enabled, editPlan: null }), persistPrefs({ narrationEnabled: enabled })),
   setCaptionsEnabled: (enabled) => (set({ captionsEnabled: enabled }), persistPrefs({ captionsEnabled: enabled })),
   setIncludeSquare: (enabled) => (set({ includeSquare: enabled }), persistPrefs({ includeSquare: enabled })),
+  setBlueHourCorrection: (enabled) => (set({ blueHourCorrection: enabled }), persistPrefs({ blueHourCorrection: enabled })),
   setMusicEnabled: (enabled) => (set({ musicEnabled: enabled }), persistPrefs({ musicEnabled: enabled })),
   setMusicVolume: (volume) => {
     const v = Math.max(0, Math.min(2, Number(volume) || 1));

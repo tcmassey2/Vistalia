@@ -2060,7 +2060,32 @@ function FormatsToggle() {
           <div className="text-xs text-ink-muted">Adds IG/FB feed format · ~2 min longer</div>
         </button>
       </div>
+      <TwilightCorrectionToggle />
     </div>
+  );
+}
+
+/* v50.7: twilight color correction — dusk/blue-hour photos often arrive
+   with a heavy violet cast (the photographer's own grade). When on
+   (default), Vistalia gently neutralizes the purple while keeping the
+   twilight sky and warm windows. Off = photos keep their exact original
+   color character. */
+function TwilightCorrectionToggle() {
+  const enabled = useStore((s) => s.blueHourCorrection);
+  const setEnabled = useStore((s) => s.setBlueHourCorrection);
+  return (
+    <label className="mt-3 flex items-center justify-between gap-3 p-3 rounded-lg bg-surface border border-edge cursor-pointer hover:border-edge-strong">
+      <span>
+        <span className="block text-sm font-semibold tracking-tightish">Twilight correction</span>
+        <span className="block text-xs text-ink-muted">Softens heavy purple casts on dusk photos — sky stays twilight, walls stay true</span>
+      </span>
+      <input
+        type="checkbox"
+        checked={enabled}
+        onChange={(e) => setEnabled(e.target.checked)}
+        className="h-4 w-4 accent-[#C7A76C]"
+      />
+    </label>
   );
 }
 
@@ -2365,7 +2390,12 @@ function RenderControls() {
         // v35.1: 1:1 square is opt-in (adds ~2 min; most agents want 9:16 only).
         includeSquare: useStore.getState().includeSquare === true,
         // v38: word-synced narration captions (Audio panel toggle).
-        captionsEnabled: useStore.getState().captionsEnabled !== false
+        captionsEnabled: useStore.getState().captionsEnabled !== false,
+        // v50.7: twilight (blue-hour) color correction toggle — worker
+        // softens heavy violet casts on dusk scenes when true (default).
+        finishOptions: {
+          blueHourCorrection: useStore.getState().blueHourCorrection !== false
+        }
       };
 
       // v27: capture the manifest so the Edit Studio can re-render a single

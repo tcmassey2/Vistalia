@@ -213,6 +213,11 @@ export interface RenderManifest {
   includeSquare?: boolean;
   // v38: burn word-synced captions over the narration (default true).
   captionsEnabled?: boolean;
+  // v50.7: finishing-pass options. blueHourCorrection (default true)
+  // softens heavy violet casts on dusk scenes ("Twilight correction").
+  finishOptions?: {
+    blueHourCorrection?: boolean;
+  };
   // When true, the worker upscales the master + every aspect variant to
   // 4K-equivalent resolution (2160×3840 vertical, etc). Defaults to true
   // now that we're on Render Pro 4GB / Supabase Pro 5GB-per-file.

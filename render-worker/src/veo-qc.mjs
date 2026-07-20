@@ -319,7 +319,23 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
     if (verdict.object_artifacts === true) reasons.push("object artifacts");
     if (verdict.motion_artifacts === true) reasons.push("motion artifacts (object moves with camera)");
     if (verdict.occlusion_artifacts === true) reasons.push("occlusion (camera collides with foreground)");
-    if (verdict.temporal_artifacts === true) reasons.push("temporal instability (texture boil between frames)");
+    if (verdict.temporal_artifacts === true) {
+      // v50.7 (m64 refresh: the sweep floored a fire pit for "boiling and
+      // changing shape" — which is what fire does): the prompt's carve-out
+      // for legitimately-moving elements is applied inconsistently by the
+      // model, so enforce it in code. If the model's own note names a
+      // flame/water/steam element as the moving subject AND no rigid
+      // subject (foliage, branches, patterns, shadows) is mentioned, the
+      // flag is a false positive — log and ignore.
+      const notes = String(verdict.notes || "");
+      const flameSubject = /(fire|flame|water|ripple|fountain|steam|smoke|candle)[^.]{0,50}\b(boil|chang|shift|flicker|mov|shimmer|danc)/i.test(notes);
+      const rigidSubject = /foliage|tree|branch|grass|plant|shadow|pattern|tile|brick|text|railing|gravel|wall|roof/i.test(notes);
+      if (flameSubject && !rigidSubject) {
+        console.info(`[${logTag}] scene ${sceneIndex + 1}: temporal flag on a legitimately-moving element ("${notes.slice(0, 70)}") — carve-out enforced, not an artifact.`);
+      } else {
+        reasons.push("temporal instability (texture boil between frames)");
+      }
+    }
     const pass = reasons.length === 0;
     console.info(
       `[${logTag}] scene ${sceneIndex + 1} (${roomType || "?"}): ${pass ? "PASS" : `FAIL (${reasons.join(", ")})`}` +

@@ -210,11 +210,18 @@ function buildStyleGrade(styleKey, caps) {
   }
 }
 
-// v50.6: the grade for blue-hour/cool scenes — contrast and sharpen only,
-// no warm colorbalance, no curve lift. Twilight photos keep their twilight.
+// v50.6: the grade for blue-hour/cool scenes.
+// v50.7 (Troy, after m64: "still super purple"): neutral wasn't enough —
+// twilight listing photos often arrive ALREADY violet from the
+// photographer's own grade, so faithful preservation still reads purple.
+// Blue-hour now actively DE-PURPLES: pull red out of shadows/mids
+// (rs −0.05 / rm −0.02 kills the magenta while leaving blue sky) and ease
+// saturation to 0.92. Calibrated on Michelle's actual opener: 'medium'
+// strength returns the stucco to cream while the sky stays twilight and
+// interior lamps stay golden; 'strong' flattened the dusk entirely.
 function buildBlueHourGrade(caps) {
   const sharpen = caps.has("cas") ? "cas=0.30" : "unsharp=5:5:0.28:3:3:0.12";
-  return "eq=contrast=1.05:saturation=0.98:gamma=1.01," + sharpen;
+  return "eq=contrast=1.05:saturation=0.92:gamma=1.01,colorbalance=rs=-0.05:rm=-0.02," + sharpen;
 }
 
 // Film finish: vignette + grain as -vf chain pieces, halation as a small
@@ -1686,7 +1693,15 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // lift. Never applied to MLS (its legacy grade is untouched by v50) and
   // never without probe data (fail-open to the style grade).
   const blueHourGrade = FINISH_GRADE ? buildBlueHourGrade(filterCaps) : COLOR_GRADE;
-  const blueHourEligible = FINISH_GRADE && finishStyle !== "mls";
+  // v50.7: customer-facing toggle — manifest.finishOptions.blueHourCorrection
+  // (default ON; webapp exposes it as "Twilight correction"). Env kill
+  // FINISH_BLUEHOUR=0 remains for ops.
+  const blueHourUserEnabled = manifest?.finishOptions?.blueHourCorrection !== false;
+  const blueHourEligible =
+    FINISH_GRADE &&
+    finishStyle !== "mls" &&
+    blueHourUserEnabled &&
+    process.env.FINISH_BLUEHOUR !== "0";
   const isBlueHourScene = (sceneIndex) => {
     if (!blueHourEligible) return false;
     const t = sceneTones.get(sceneIndex);
