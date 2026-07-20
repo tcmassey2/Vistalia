@@ -12,7 +12,7 @@
   "rewrites": [
     {
       "source": "/v/:token",
-      "destination": "/v.html"
+      "destination": "/v"
     },
     {
       "source": "/demo",
