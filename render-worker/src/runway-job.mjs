@@ -210,6 +210,13 @@ function buildStyleGrade(styleKey, caps) {
   }
 }
 
+// v50.6: the grade for blue-hour/cool scenes — contrast and sharpen only,
+// no warm colorbalance, no curve lift. Twilight photos keep their twilight.
+function buildBlueHourGrade(caps) {
+  const sharpen = caps.has("cas") ? "cas=0.30" : "unsharp=5:5:0.28:3:3:0.12";
+  return "eq=contrast=1.05:saturation=0.98:gamma=1.01," + sharpen;
+}
+
 // Film finish: vignette + grain as -vf chain pieces, halation as a small
 // filter_complex sub-graph (split → threshold → cheap quarter-res boxblur
 // bloom → screen blend). Halation is luxury-only — it's the "lit windows
@@ -238,7 +245,10 @@ function buildFilmFinish(styleKey, caps, dimensions) {
 // (SATAVG) on ~8 sampled frames per clip, computes the render's median as
 // reference, and returns a per-scene clamped eq correction. Any probe or
 // parse failure → empty map → zero corrections (fail-open).
-async function buildSceneMatchMap(clipResults) {
+// v50.6: probing and correction-building split — the caller needs the raw
+// per-scene tones too (chroma drives blue-hour grade protection), and a
+// shared mutable cache would race under RENDER_CONCURRENCY=2.
+async function probeSceneTones(clipResults) {
   const stats = new Map();
   for (const clip of clipResults) {
     if (!clip?.clipPath || clip.preNormalized) continue;
@@ -247,7 +257,11 @@ async function buildSceneMatchMap(clipResults) {
       if (s) stats.set(clip.sceneIndex, s);
     } catch { /* fail-open per clip */ }
   }
-  if (stats.size < 3) return new Map();
+  return stats;
+}
+
+function buildSceneMatchCorrections(stats) {
+  if (!stats || stats.size < 3) return new Map();
   const med = (arr) => {
     const a = [...arr].sort((x, y) => x - y);
     return a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2;
@@ -286,9 +300,16 @@ async function probeClipTone(clipPath) {
       const finish = () => {
         const ys = [...out.matchAll(/YAVG=([0-9.]+)/g)].map((m) => Number(m[1]));
         const sats = [...out.matchAll(/SATAVG=([0-9.]+)/g)].map((m) => Number(m[1]));
+        const us = [...out.matchAll(/UAVG=([0-9.]+)/g)].map((m) => Number(m[1]));
+        const vs = [...out.matchAll(/VAVG=([0-9.]+)/g)].map((m) => Number(m[1]));
         if (!ys.length) return resolve(null);
         const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
-        resolve({ y: avg(ys), sat: sats.length ? avg(sats) : 0 });
+        resolve({
+          y: avg(ys),
+          sat: sats.length ? avg(sats) : 0,
+          u: us.length ? avg(us) : 128,
+          v: vs.length ? avg(vs) : 128
+        });
       };
       proc.on("close", finish);
       proc.on("error", () => resolve(null));
@@ -1646,14 +1667,31 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   const film = buildFilmFinish(finishStyle, filterCaps, dimensions);
   const deflickerFilter = FINISH_DEFLICKER && filterCaps.has("deflicker") ? "deflicker=mode=pm:size=5" : "";
   let toneMatchMap = new Map();
+  let sceneTones = new Map();
   if (FINISH_MATCH) {
     try {
-      toneMatchMap = await buildSceneMatchMap(clipResults);
+      sceneTones = await probeSceneTones(clipResults);
+      toneMatchMap = buildSceneMatchCorrections(sceneTones);
       if (toneMatchMap.size > 0) {
         console.info(`[finish] tone-leveling ${toneMatchMap.size}/${clipResults.length} scenes toward the render median (style=${finishStyle}).`);
       }
-    } catch { toneMatchMap = new Map(); }
+    } catch { toneMatchMap = new Map(); sceneTones = new Map(); }
   }
+  // v50.6 BLUE-HOUR PROTECTION (Michelle, m58: "odd purple cast on the
+  // opening photo"): the luxury grade warms shadows (+red), and red poured
+  // into a blue-hour photo reads MAGENTA — lavender stucco, violet gravel.
+  // Chroma tells the two worlds apart cleanly (measured: dusk U−V ≈ +32,
+  // warm interiors ≈ −13 to −31). Scenes with U−V > 8 keep their natural
+  // blue hour: neutral contrast + sharpen, no warm colorbalance, no curve
+  // lift. Never applied to MLS (its legacy grade is untouched by v50) and
+  // never without probe data (fail-open to the style grade).
+  const blueHourGrade = FINISH_GRADE ? buildBlueHourGrade(filterCaps) : COLOR_GRADE;
+  const blueHourEligible = FINISH_GRADE && finishStyle !== "mls";
+  const isBlueHourScene = (sceneIndex) => {
+    if (!blueHourEligible) return false;
+    const t = sceneTones.get(sceneIndex);
+    return Boolean(t && (t.u - t.v) > 8);
+  };
   // Pre-render the small corner headshot ONCE. Reused as a 2nd input on
   // every normalize call below. Falls back to null if the user has no
   // headshot URL or the pre-render fails — in that case we use -vf and
@@ -1688,6 +1726,13 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // film so nothing compounds (pre-v50, regen re-applied the full grade).
     const isPre = Boolean(clip.preNormalized);
     const matchEqFilter = !isPre ? (toneMatchMap.get(clip.sceneIndex) || "") : "";
+    // v50.6: cool/blue-hour scenes swap the warm style grade for the
+    // neutral blue-hour grade — red-into-blue makes purple.
+    const clipGrade = !isPre && isBlueHourScene(clip.sceneIndex) ? blueHourGrade : colorGrade;
+    if (!isPre && clipGrade === blueHourGrade && blueHourGrade !== colorGrade) {
+      const t = sceneTones.get(clip.sceneIndex);
+      console.info(`[finish] scene ${clip.sceneIndex + 1}: blue-hour protected (U−V=+${(t.u - t.v).toFixed(0)}) — neutral grade, natural dusk kept.`);
+    }
     const preHalation = [
       `fps=30`,
       // v50: deflicker BEFORE denoise — temporal luma pulse is easiest to
@@ -1716,7 +1761,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
             return `crop=${dimensions.width}:${dimensions.height}:(in_w-${dimensions.width})/2:(in_h-${dimensions.height})*${bias}`;
           })()
         : `crop=${dimensions.width}:${dimensions.height}`,
-      ...(!isPre ? [colorGrade] : []),
+      ...(!isPre ? [clipGrade] : []),
       ...(matchEqFilter ? [matchEqFilter] : []),
       ...(!isPre && film.vignette ? [film.vignette] : [])
     ].join(",");
