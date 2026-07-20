@@ -1,4 +1,4 @@
-# EstateMotion — robots.txt
+# Vistalia — robots.txt
 # Allow public crawling of marketing + help + legal. Block the React app
 # itself (login-walled, no SEO value) and the API surface.
 
