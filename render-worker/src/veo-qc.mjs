@@ -192,6 +192,14 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
             "content are EXPECTED to change between frames — never flag them. Gentle " +
             "uniform wind-sway of a whole branch is fine; the defect is structure " +
             "REWRITING itself, not structure MOVING. " +
+            "SEVERITY BAR (v50.8 — a pine-heavy listing floored 5 of 9 scenes on " +
+            "marginal flags): flag temporal_artifacts ONLY when the boil is PROMINENT — " +
+            "a buyer watching casually would notice it without being told where to look. " +
+            "Subtle shimmer on DISTANT foliage, small background trees, vegetation seen " +
+            "THROUGH windows or glass, and fine texture noise in the far background are " +
+            "normal generation noise, NOT artifacts. If you would need to look twice or " +
+            "zoom in to see it, do not flag it. Foreground foliage that visibly redraws " +
+            "its structure = flag; background trees that faintly seethe = ignore. " +
             "Small softness/blur/lighting shifts are NOT artifacts. Be tolerant of minor " +
             "differences; flag only clearly visible defects a home buyer would notice.";
     const userText =
