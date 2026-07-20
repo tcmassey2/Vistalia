@@ -2315,10 +2315,21 @@ async function buildBrandOutroClip(
   const S = Math.min(W, Math.round((H * 9) / 16));
   const padTop = Math.round(H * 0.12);
   const headshotY = headshotCirclePath ? padTop : 0;
-  const logoY = padTop + Math.round(headshotSize * 0.5) - Math.round(logoMaxHeight / 2);
+  // v50.9 (Pam Jensen outro): with a logo but NO headshot, logoY used the
+  // headshot-centering formula (padTop + headshotSize*0.5 − logoH/2 — and
+  // headshotSize is computed even when no headshot exists) while the text
+  // block started at padTop as if no header existed — so the agent's NAME
+  // drew straight through the logo. Name-wordmark logos made it obvious.
+  // Coherent rule: the header is whatever exists (headshot, logo, both,
+  // neither), and text always starts below it.
+  const logoY = headshotCirclePath
+    ? padTop + Math.round(headshotSize * 0.5) - Math.round(logoMaxHeight / 2)
+    : padTop;
   const headerBlockBottom = headshotCirclePath
     ? padTop + headshotSize
-    : padTop;
+    : logoAssetPath
+      ? padTop + logoMaxHeight
+      : padTop;
   const ctaY = headerBlockBottom + Math.round(H * 0.04);
   const ctaSize = Math.max(16, Math.round(S / 48));
   const nameSize = Math.max(40, Math.round(S / 13));
@@ -2368,9 +2379,11 @@ async function buildBrandOutroClip(
     lastLabel = "withhead";
   }
   if (logoInputIdx >= 0) {
+    // v50.9: true centering via overlay expressions — the old guess assumed
+    // a 3:1 logo aspect, which walked wide wordmarks off-center.
     const logoX = headshotCirclePath
-      ? Math.round(W / 2 + 30)
-      : Math.round((W - logoMaxHeight * 3) / 2); // centered when no headshot
+      ? String(Math.round(W / 2 + 30))
+      : "(main_w-overlay_w)/2";
     graphSteps.push(`[${lastLabel}][${logoInputIdx}:v]overlay=${logoX}:${logoY}[withlogo]`);
     lastLabel = "withlogo";
   }
