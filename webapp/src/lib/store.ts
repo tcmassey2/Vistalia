@@ -131,6 +131,15 @@ interface AppState {
   goToScreen: (s: Screen) => void;
 
   newProject: () => void;
+  // v52: listing-URL import — start a project with server-imported photos
+  // and prefilled listing facts. projectId must match the id the import
+  // endpoint stored photos under.
+  beginImportedProject: (payload: {
+    projectId: string;
+    title: string;
+    listing: Partial<ListingDetails>;
+    photos: Photo[];
+  }) => void;
   openProject: (id: string) => void;
 
   setProjectTitle: (t: string) => void;
@@ -479,6 +488,16 @@ export const useStore = create<AppState>((set, get) => ({
   goToScreen: (s) => set({ screen: s, error: "" }),
 
   newProject: () => set({ ...emptyProject(), screen: "project", error: "" }),
+  beginImportedProject: ({ projectId, title, listing, photos }) =>
+    set({
+      ...emptyProject(),
+      projectId,
+      projectTitle: title || "Imported listing",
+      listing: { ...emptyListing, ...listing },
+      photos,
+      screen: "project",
+      error: ""
+    }),
   openProject: (id) => {
     // Stub: in MVP we just open a fresh editor. Persistence comes later.
     const summary = get().projectList.find((p) => p.id === id);

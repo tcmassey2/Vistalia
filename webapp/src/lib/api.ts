@@ -286,6 +286,44 @@ export interface SubmitRenderResult {
   currentTier?: string;
 }
 
+/* ============================================================
+   v52: Listing URL import — paste a Zillow/Redfin/Realtor link,
+   the server prefixes the project: address from the URL slug,
+   facts via RentCast, photos downloaded into the user's storage.
+   ============================================================ */
+export interface ImportedListingPhoto {
+  storagePath: string;
+  bucket: string;
+  fileName: string;
+  size: number;
+  publicUrl: string;
+}
+export interface ImportListingResponse {
+  status: "ok" | "not_found" | "failed";
+  message?: string;
+  error?: string;
+  address?: { line: string; city: string; state: string; zip: string; display: string } | null;
+  facts?: {
+    beds?: number | null; baths?: number | null; sqft?: number | null;
+    yearBuilt?: number | null; price?: number | null; propertyType?: string | null;
+  } | null;
+  photoSource?: string;
+  photos?: ImportedListingPhoto[];
+  warnings?: string[];
+}
+export async function importListing(url: string, projectId: string): Promise<ImportListingResponse> {
+  const headers = await authHeaders();
+  const res = await fetch("/api/import-listing", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ url, projectId })
+  });
+  const payload = (await res.json().catch(() => ({}))) as ImportListingResponse;
+  if (!res.ok && !payload.error) payload.error = `Import failed (${res.status}).`;
+  if (!payload.status) payload.status = res.ok ? "ok" : "failed";
+  return payload;
+}
+
 export async function submitRender(manifest: RenderManifest): Promise<SubmitRenderResult> {
   const headers = await authHeaders();
   const res = await fetch("/api/render", {

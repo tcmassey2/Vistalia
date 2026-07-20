@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../lib/store";
-import { fetchLibrary, sendDesktopLink } from "../lib/api";
+import { fetchLibrary, sendDesktopLink, importListing } from "../lib/api";
 import { buildSamplePhotos, SAMPLE_LISTING, SAMPLE_PROJECT_TITLE } from "../lib/samples";
-import type { LibraryEntry } from "../lib/types";
+import type { LibraryEntry, Photo } from "../lib/types";
 import { engineLabel } from "../lib/engine-labels";
 import LibraryDetailModal from "./LibraryDetailModal";
 import PlanStatusBanner from "../components/PlanStatusBanner";
@@ -113,6 +113,12 @@ export default function DashboardScreen() {
       {/* Plan / trial status — surfaces tier, quota, and trial countdown.
           On expired trial, this becomes the primary upgrade prompt. */}
       <PlanStatusBanner />
+
+      {/* v52: listing-URL import — the phone-first path. Leads arrive from
+          Instagram on phones where their MLS photos aren't; a listing link
+          is the one asset every agent has in hand. Server pulls address,
+          facts, and (best-effort) the photos straight into the project. */}
+      <ImportListingBand />
 
       {/* Loading state */}
       {libraryLoading && (
@@ -246,6 +252,115 @@ export default function DashboardScreen() {
           onUpdated={reloadLibrary}
         />
       )}
+    </div>
+  );
+}
+
+/* v52: paste-a-listing-link import. Generates the projectId up front so the
+   server stores photos under the same path the project will use, probes
+   image dimensions client-side (the server doesn't decode), and drops the
+   user straight into a photo-ready project. Every failure path still lands
+   somewhere useful: address-only → prefilled project + "add photos". */
+function ImportListingBand() {
+  const beginImportedProject = useStore((s) => s.beginImportedProject);
+  const setToast = useStore((s) => s.setToast);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const probeDims = (src: string) =>
+    new Promise<{ width: number; height: number }>((resolve) => {
+      const img = new Image();
+      const done = (w: number, h: number) => resolve({ width: w || 1024, height: h || 1365 });
+      const timer = setTimeout(() => done(0, 0), 8000);
+      img.onload = () => { clearTimeout(timer); done(img.naturalWidth, img.naturalHeight); };
+      img.onerror = () => { clearTimeout(timer); done(0, 0); };
+      img.src = src;
+    });
+
+  const handleImport = async () => {
+    const trimmed = url.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const projectId = `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const result = await importListing(trimmed, projectId);
+      if (result.status === "failed") {
+        setError(result.error || "Import failed — try again or start manually.");
+        return;
+      }
+      if (result.status === "not_found") {
+        setError(result.message || "We couldn't read that link — paste the listing page URL.");
+        return;
+      }
+      const imported = result.photos || [];
+      const dims = await Promise.all(imported.map((p) => probeDims(p.publicUrl)));
+      const photos: Photo[] = imported.map((p, i) => ({
+        id: `imported-${projectId}-${i}`,
+        fileName: p.fileName,
+        publicUrl: p.publicUrl,
+        durableUrl: p.publicUrl,
+        storagePath: p.storagePath,
+        bucket: p.bucket,
+        width: dims[i].width,
+        height: dims[i].height,
+        size: p.size,
+        order: i,
+        uploadedAt: new Date().toISOString()
+      }));
+      const addr = result.address;
+      const facts = result.facts || {};
+      beginImportedProject({
+        projectId,
+        title: addr?.line || "Imported listing",
+        listing: {
+          address: addr?.line || "",
+          city: [addr?.city, addr?.state].filter(Boolean).join(" "),
+          price: facts.price ? String(facts.price) : "",
+          beds: facts.beds != null ? String(facts.beds) : "",
+          baths: facts.baths != null ? String(facts.baths) : "",
+          squareFeet: facts.sqft != null ? String(facts.sqft) : ""
+        },
+        photos
+      });
+      setToast(
+        photos.length > 0
+          ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"} — review the order and render.`
+          : "Listing details imported — add your photos and render."
+      );
+    } catch {
+      setError("Import failed — try again or start manually.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border border-edge rounded-xl bg-surface px-4 py-3.5 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+        <div className="flex-none sm:pr-1">
+          <span className="block text-sm font-semibold tracking-tightish">Have the listing link?</span>
+          <span className="block text-xs text-ink-muted">Zillow, Redfin, or Realtor.com — we'll pull the details</span>
+        </div>
+        <input
+          value={url}
+          onChange={(e) => { setUrl(e.target.value); setError(""); }}
+          onKeyDown={(e) => { if (e.key === "Enter") handleImport(); }}
+          placeholder="https://www.zillow.com/homedetails/…"
+          inputMode="url"
+          autoComplete="off"
+          className="flex-1 h-11 rounded-lg bg-surface-input border border-edge px-3 text-sm placeholder:text-ink-dim focus:border-gold outline-none min-w-0"
+        />
+        <button
+          onClick={handleImport}
+          disabled={busy || !url.trim()}
+          className="btn-primary-em h-11 px-5 rounded-lg text-sm flex-none disabled:opacity-50"
+        >
+          {busy ? "Importing…" : "Import listing"}
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-300 mt-2">{error}</p>}
     </div>
   );
 }
