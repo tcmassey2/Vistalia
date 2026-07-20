@@ -35,6 +35,17 @@ const SYNTH_TIMEOUT_MS = 25000;
 // bed while a line plays. Override via env DUCK_LEVEL or manifest.duckLevel.
 const DUCK_LEVEL = Number(process.env.DUCK_LEVEL ?? 0.30);
 
+// v53.1 (m66 line 7 "provide rest—"): two atempo ceilings instead of one.
+// ≤1.15x is fully imperceptible (v31.3); 1.15–1.22x is a barely-perceptible
+// last resort we spend ONLY to avoid cutting actual speech. The m66 defect:
+// the aligned path's fit decision counted the 0.30s release padding
+// (segEnd = last char + 0.3, v45.10) as speech, declared TRIM, cut the
+// final word mid-way, and captions happily highlighted the un-spoken word
+// against silence. Fit SPEECH, sacrifice release, trim words only when
+// even 1.22x can't save them — and then tell the captions about it.
+const ATEMPO_SOFT = 1.15;
+const ATEMPO_HARD = 1.22;
+
 // v50: SMOOTH ducking. The legacy expression was a hard step — the bed
 // snapped to 30% the instant a line started and snapped back the instant it
 // ended, which ears read as "automated." Real mixes ride the fader: the bed
@@ -445,7 +456,10 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
       const cap = n.maxNarrationSec;
       const dur = n.mp3DurSec > 0 ? n.mp3DurSec : cap; // probe failed → old behavior
       let tempo = 1;
-      if (dur > cap) tempo = Math.min(1.15, dur / cap);
+      // v53.1: ceiling raised 1.15 → 1.22. This path has no character
+      // alignment to separate speech from trailing silence, but a line
+      // needing 1.16–1.22x now speeds slightly instead of being cut.
+      if (dur > cap) tempo = Math.min(ATEMPO_HARD, dur / cap);
       const effective = dur / tempo;
       const trimmed = effective > cap + 0.05;
       console.info(
@@ -617,13 +631,18 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     // timestamp is GONE because it deleted exactly this padding on the final
     // line (atrim past real audio EOF is harmless). Next-line overlap is
     // clamped in the pass below.
-    const segEnd = (ends[b] ?? segStart + 1) + 0.3;
-    segs.push({ index: lines[i].index, segStart, segEnd, dur: Math.max(0.2, segEnd - segStart), charFrom: from, charTo: to });
+    const speechEnd = ends[b] ?? segStart + 1; // last spoken char — release excluded
+    const segEnd = speechEnd + 0.3;
+    segs.push({ index: lines[i].index, segStart, segEnd, speechEnd, dur: Math.max(0.2, segEnd - segStart), charFrom: from, charTo: to });
   }
   // Release padding must never swallow the next line's first word.
   for (let i = 0; i < segs.length - 1; i++) {
     segs[i].segEnd = Math.min(segs[i].segEnd, Math.max(segs[i].segStart + 0.2, segs[i + 1].segStart - 0.02));
     segs[i].dur = Math.max(0.2, segs[i].segEnd - segs[i].segStart);
+  }
+  // v53.1: speech-only duration — what the fit decision must protect.
+  for (const s of segs) {
+    s.speechDur = Math.max(0.2, Math.min(s.speechEnd, s.segEnd) - s.segStart);
   }
 
   // Placement: sentence i starts at its scene start (+lead-in); its window
@@ -662,17 +681,43 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
       cap = famCap;
       famLimited = true;
     }
+    // v53.1 fit ladder — protect SPEECH, spend release and tempo in that order:
+    //   1. Whole line (speech + 0.3s release) fits at ≤1.15x → use it,
+    //      natural decay intact (pre-v53.1 behavior).
+    //   2. SPEECH fits at ≤1.22x → speed just enough; the atrim only eats
+    //      release silence. trimKind="release": short anti-click fade, and
+    //      captions keep every word (they were all spoken).
+    //   3. Even 1.22x can't fit the speech → atempo 1.22 + real TRIM with
+    //      the long fade. trimKind="speech": captions must drop the cut
+    //      words (m66 highlighted "RESTFUL" over silence). WARN-logged so
+    //      daily log review catches planner/beat-snap regressions.
     let tempo = 1;
-    if (s.dur > cap) tempo = Math.min(1.15, s.dur / cap);
-    const effective = s.dur / tempo;
-    const trimmed = effective > cap + 0.05;
+    let trimKind = null; // null | "release" | "speech"
+    if (s.dur > cap) tempo = Math.min(ATEMPO_SOFT, s.dur / cap);
+    if (s.dur / tempo > cap + 0.05) {
+      const tempoSpeech = s.speechDur / cap;
+      if (tempoSpeech <= ATEMPO_HARD) {
+        tempo = Math.max(tempo, Math.min(ATEMPO_HARD, Math.max(1, tempoSpeech)));
+        trimKind = "release";
+      } else {
+        tempo = ATEMPO_HARD;
+        trimKind = "speech";
+        console.warn(
+          `[voice] WARN hard-trim: line ${i + 1} speech ${s.speechDur.toFixed(2)}s needs ` +
+          `${tempoSpeech.toFixed(2)}x for a ${cap.toFixed(2)}s window — cutting ` +
+          `${(s.speechDur / ATEMPO_HARD - cap).toFixed(2)}s of speech. Captions will drop the cut words.`
+        );
+      }
+    }
+    const trimmed = trimKind !== null;
     console.info(
       `[voice] aligned line ${i + 1} → scene ${s.index + 1}: audio ${s.segStart.toFixed(2)}-${s.segEnd.toFixed(2)}s ` +
-      `(${s.dur.toFixed(2)}s) @ t=${startAt.toFixed(2)}s, window ${cap.toFixed(2)}s` +
+      `(${s.dur.toFixed(2)}s, speech ${s.speechDur.toFixed(2)}s) @ t=${startAt.toFixed(2)}s, window ${cap.toFixed(2)}s` +
       (famLimited ? " fam-capped" : "") +
-      (tempo > 1.005 ? ` atempo ${tempo.toFixed(3)}` : "") + (trimmed ? " TRIM" : "")
+      (tempo > 1.005 ? ` atempo ${tempo.toFixed(3)}` : "") +
+      (trimKind === "release" ? " TRIM(release only)" : trimKind === "speech" ? " TRIM" : "")
     );
-    return { ...s, startAt, cap, tempo, trimmed };
+    return { ...s, startAt, cap, tempo, trimmed, trimKind };
   });
 
   // v38 WORD-SYNCED CAPTIONS: the alignment already gives us character
@@ -684,9 +729,22 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
   if (captionsEnabled) {
     try {
       const words = [];
+      let wordsDroppedByTrim = 0;
       for (let i = 0; i < placements.length; i++) {
         const p = placements[i];
         const text = texts[i];
+        // v53.1b: captions must track what's AUDIBLE, not what was planned.
+        // - untrimmed: window end (speech ends naturally before it anyway)
+        // - release trim: every word was spoken — boundary is speech end
+        // - speech trim: the fade starts at cap−0.30; a word starting past
+        //   cap−0.15 lands in silence (m66: gold-highlighted "RESTFUL" with
+        //   no voice under it). Words past the boundary are dropped and the
+        //   drop is logged.
+        const capEnd = p.startAt + p.cap;
+        const audibleEnd =
+          p.trimKind === "speech" ? capEnd - 0.15 :
+          p.trimKind === "release" ? p.startAt + Math.min(p.cap, p.speechDur / p.tempo) :
+          capEnd;
         let wStart = -1;
         let firstOfLine = true; // v38.1: caption pages never straddle lines
         for (let c = 0; c <= text.length; c++) {
@@ -699,9 +757,13 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
             const aEnd = ends[gi1] ?? aStart + 0.2;
             let vStart = p.startAt + (aStart - p.segStart) / p.tempo;
             let vEnd = p.startAt + (aEnd - p.segStart) / p.tempo;
-            const capEnd = p.startAt + p.cap;
-            if (vStart < capEnd - 0.05) {
-              vEnd = Math.min(vEnd, capEnd);
+            if (p.trimKind === "speech" && vStart >= audibleEnd - 0.03) {
+              wordsDroppedByTrim += 1;
+              wStart = -1;
+              continue;
+            }
+            if (vStart < audibleEnd - 0.03) {
+              vEnd = Math.min(vEnd, audibleEnd);
               words.push({
                 text: text.slice(wStart, c).replace(/[.,!?]+$/, ""),
                 start: vStart,
@@ -719,7 +781,10 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
         captionsSquareAssPath = path.join(tempDir, `${jobId}-captions-sq.ass`);
         await fs.writeFile(captionsAssPath, buildCaptionsAss({ words, playW: 1080, playH: 1920, variant: captionsVariant }));
         await fs.writeFile(captionsSquareAssPath, buildCaptionsAss({ words, playW: 1080, playH: 1080, variant: captionsVariant }));
-        console.info(`[captions] ${words.length} words → ${path.basename(captionsAssPath)} (word-synced, skin=${captionsVariant})`);
+        console.info(
+          `[captions] ${words.length} words → ${path.basename(captionsAssPath)} (word-synced, skin=${captionsVariant})` +
+          (wordsDroppedByTrim ? ` — ${wordsDroppedByTrim} word${wordsDroppedByTrim === 1 ? "" : "s"} dropped past audio trim` : "")
+        );
       }
     } catch (err) {
       console.warn(`[captions] build failed open (${err.message}) — shipping without captions.`);
@@ -736,7 +801,11 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
       p.tempo > 1.005 ? `atempo=${p.tempo.toFixed(4)}` : null,
       p.trimmed ? `atrim=duration=${p.cap.toFixed(2)}` : null,
       "afade=t=in:st=0:d=0.04",
-      p.trimmed ? `afade=t=out:st=${Math.max(0, p.cap - 0.3).toFixed(2)}:d=0.30` : null,
+      // v53.1: the 0.30s fade exists to soften a mid-speech cut. When the
+      // trim only eats release silence, that fade would dim the final
+      // word's natural decay instead — use a short anti-click fade there.
+      p.trimKind === "speech" ? `afade=t=out:st=${Math.max(0, p.cap - 0.3).toFixed(2)}:d=0.30` : null,
+      p.trimKind === "release" ? `afade=t=out:st=${Math.max(0, p.cap - 0.08).toFixed(2)}:d=0.08` : null,
       `adelay=${Math.round(p.startAt * 1000)}|${Math.round(p.startAt * 1000)}`,
       `apad=whole_dur=${Math.round(trackPadSec * 1000)}ms`
     ].filter(Boolean).join(",");
@@ -876,7 +945,8 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
   const rawDur = await probeAudioDuration(mp3Path);
   const dur = rawDur > 0 ? rawDur : availSec;
   let tempo = 1;
-  if (dur > availSec) tempo = Math.min(1.15, dur / availSec);
+  // v53.1: ceiling raised 1.15 → 1.22 (see ATEMPO_HARD note at top).
+  if (dur > availSec) tempo = Math.min(ATEMPO_HARD, dur / availSec);
   const effective = dur / tempo;
   const trimmed = effective > availSec + 0.05;
   console.info(

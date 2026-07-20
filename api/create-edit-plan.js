@@ -2215,8 +2215,11 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // see those phrase-boundary words; cutting BEFORE an article or
   // preposition always ends on a complete grammatical unit.
   const CONNECTIVES = /^(and|or|with|by|plus|featuring|that|which|where|while|as|creating|offering|framing|overlooking|providing|including|showcasing|boasting|to|for|from|near|beside|beneath|under|above|amid|among|along|across|behind|beyond|atop|against|around|over|into|through|toward|towards|of|in|on|at|a|an|the)$/i;
-  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features|showcases|captures|offers|includes|invites|inviting|provides|delivers|highlights|reveals|enjoys|creates|boasts|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|define|defines|continue|continues|extend|extends)$/i;
-  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium)$/i;
+  // v53.1: the list carried singular verb forms only ("provides") — a
+  // plural subject left the bare form dangling ("bedrooms provide." — the
+  // m66 clamp path). Bare forms added for every listed verb.
+  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features?|showcases?|captures?|offers?|includes?|invites?|inviting|provides?|delivers?|highlights?|reveals?|enjoys?|creates?|boasts?|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|defines?|continues?|extends?)$/i;
+  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium|restful|comfortable|soft|clean|fresh|quiet|peaceful|stylish|graceful|welcoming)$/i;
   // v45.6 (m38): a predicate adjective after a copula is a COMPLETE ending —
   // "…is bright." reads fine and must survive the strip; "…and bright." must
   // not. Without this guard the junk strip gutted grammatical sentences like
@@ -2239,13 +2242,21 @@ function clampNarrationSentenceSafe(text, maxWords) {
     return out;
   };
   // v41 (pipeline audit, masters 20+22): slack was 1.35x on the theory that
-  // "the mixer absorbs it" — but the mixer's ceiling is atempo 1.15x, so
+  // "the mixer absorbs it" — but the mixer's ceiling was atempo 1.15x, so
   // every line in the 1.15-1.35x band shipped clamp-legal and GUARANTEED to
   // be speed-warped and TRIMMED in the final audio (m22 line 1: budget 6,
   // 9 words = exactly ceil(6*1.35); m20 line 6: budget 4, 6 words = exactly
-  // ceil(4*1.35) — one clipped line per render, every render). Slack now
-  // matches what the mixer can genuinely absorb.
-  if (words.length <= Math.ceil(maxWords * 1.15)) {
+  // ceil(4*1.35) — one clipped line per render, every render).
+  // v53.1 (m66 line 7 "provide rest—"): the 1.15x slack was STILL double-
+  // spending. The mixer's soft 1.15x is already consumed by ElevenLabs pace
+  // variance (v31.3: natural reads run 15-20% long at honest budgets), so a
+  // slack-legal line arrives needing ~1.32x — and beat-snap can shrink the
+  // runtime window below the plan's on top of that. Slack now spends only
+  // the NEW mixer headroom (1.22/1.15 ≈ 1.06), and short budgets — where
+  // ceil() would grant a proportionally huge +1 word — get floor():
+  // budget 4 stays 4, budget 6 stays 6; long lines (≥8) may round up one.
+  const slackCap = maxWords < 8 ? Math.floor(maxWords * 1.06) : Math.ceil(maxWords * 1.06);
+  if (words.length <= slackCap) {
     // v42.2 (m27 "The kitchen boasts."): within-budget lines used to skip
     // ALL quality checks — a model-written fragment ending on a dangling
     // transitive verb shipped as the entire spoken line. Strip trailing
@@ -2256,7 +2267,7 @@ function clampNarrationSentenceSafe(text, maxWords) {
     if (cleaned.length < 3) return "";
     return `${cleaned.join(" ").replace(/[,;:\s]+$/, "")}.`;
   }
-  const slack = words.slice(0, Math.ceil(maxWords * 1.15)).join(" ");
+  const slack = words.slice(0, slackCap).join(" ");
   // 1) A full sentence inside the slack window — best cut.
   const lastSentence = slack.match(/^(.+[.!?])(?:\s|$)/);
   if (lastSentence) return lastSentence[1].trim();
