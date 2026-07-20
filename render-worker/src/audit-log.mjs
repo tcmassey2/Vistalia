@@ -11,6 +11,8 @@
 // Failures here are logged but never rethrown. Audit-log writes must NEVER
 // take down a render that otherwise succeeded.
 
+import crypto from "node:crypto";
+
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
@@ -67,11 +69,16 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
       disableAddressCard: Boolean(manifest?.disableAddressCard)
     },
     // Per-scene metadata for regenerate-scene flow. JSONB column.
-    scenes: Array.isArray(scenes) ? scenes : []
+    scenes: Array.isArray(scenes) ? scenes : [],
+    // v51 MLS-Safe Certificate: unguessable public handle for
+    // vistalia.ai/v/<token>. Migration 29 adds the column; the insert
+    // below retries WITHOUT the field if the migration hasn't been
+    // applied yet (deploy-order resilience, same pattern as heartbeat_at).
+    certificate_token: crypto.randomBytes(12).toString("hex")
   };
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/render_audit_log`, {
+    let res = await fetch(`${SUPABASE_URL}/rest/v1/render_audit_log`, {
       method: "POST",
       headers: {
         apikey: SERVICE_ROLE_KEY,
@@ -82,7 +89,23 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
       body: JSON.stringify([row])
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
+      const early = await res.text().catch(() => "");
+      if (/certificate_token/i.test(early)) {
+        console.warn("[Vistalia audit-log] certificate_token column missing (run migration 29) — writing audit row without it.");
+        const { certificate_token, ...rest } = row;
+        res = await fetch(`${SUPABASE_URL}/rest/v1/render_audit_log`, {
+          method: "POST",
+          headers: {
+            apikey: SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal"
+          },
+          body: JSON.stringify([rest])
+        });
+        if (res.ok) return;
+      }
+      const text = early || (await res.text().catch(() => ""));
       // Detect "table does not exist" once and stop attempting future writes.
       // The PostgREST code for missing-relation is PGRST205.
       if (res.status === 404 && /PGRST205|Could not find the table/i.test(text)) {

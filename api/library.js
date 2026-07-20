@@ -137,6 +137,8 @@ export default async function handler(request, response) {
         // every narrated render read as "Your cloned voice". Classify
         // server-side against the premade catalog instead.
         narrationVoiceKind: classifyNarrationVoice(row.narration_voice_id),
+        // v51 MLS-Safe Certificate: public share token → vistalia.ai/v/<token>
+        certificateToken: row.certificate_token || null,
         // Per-scene metadata for the LibraryDetailModal's regen UI. Older
         // renders predating the v16 migration won't have this — UI shows a
         // "regen requires re-render once" hint in that case.

@@ -285,6 +285,9 @@ export interface LibraryEntry {
   // distinguish presets from clones because the worker stores the RESOLVED
   // ElevenLabs ID for both.
   narrationVoiceKind?: "preset" | "cloned" | null;
+  // v51 MLS-Safe Certificate: public verification page token
+  // (vistalia.ai/v/<token>). Null for renders made before migration 29.
+  certificateToken?: string | null;
   // Per-scene metadata (one entry per scene in the rendered video). Populated
   // for renders made with worker v16+ where each scene was persisted to
   // Supabase Storage. Empty for older renders — UI shows a "re-render once

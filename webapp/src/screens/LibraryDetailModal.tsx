@@ -335,6 +335,12 @@ function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
     { label: "Formats", value: formatsValue }
   ].filter((f) => f.value && f.value !== "—");
 
+  // v51: MLS-Safe Certificate — the shareable proof page. Shown whenever
+  // this render has a token (every render after migration 29).
+  const certificateUrl = entry.certificateToken
+    ? `https://vistalia.ai/v/${entry.certificateToken}`
+    : null;
+
   return (
     <div
       className="rounded-xl border border-edge-soft px-5 py-4"
@@ -356,6 +362,22 @@ function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
           </div>
         ))}
       </div>
+      {certificateUrl && (
+        <a
+          href={certificateUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-4 flex items-center justify-between rounded-lg border border-edge px-4 py-3 text-sm hover:border-gold transition-colors"
+        >
+          <span>
+            <span className="block font-semibold text-ink">Verification certificate</span>
+            <span className="block text-xs text-ink-muted">
+              Every scene beside its source photo — share it with brokers, sellers, or compliance
+            </span>
+          </span>
+          <span className="text-gold flex-shrink-0 ml-3">↗</span>
+        </a>
+      )}
     </div>
   );
 }

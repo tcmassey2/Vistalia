@@ -131,8 +131,14 @@ export function paymentFailed({ email, planLabel }) {
 /* ============================================================
    Render complete
    ============================================================ */
-export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId, magicLink }) {
+export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId, magicLink, certificateUrl }) {
   const safeTitle = escape(listingTitle || "Your listing video");
+  // v51: the MLS-Safe Certificate line — forwardable proof that every scene
+  // was verified against the source photos. Only rendered when a token
+  // exists for this job.
+  const certBlock = certificateUrl
+    ? `<p style="margin-top:14px;">Need to show a broker, seller, or compliance desk that nothing was invented? <a href="${escape(certificateUrl)}" style="color:#C7A76C;">View the verification certificate</a> — every scene beside its source photo.</p>`
+    : "";
   const previewBlock = thumbnailUrl
     ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 24px auto;border-radius:10px;overflow:hidden;">
          <tr><td><a href="${escape(magicLink || mp4Url)}"><img src="${escape(thumbnailUrl)}" alt="" width="280" style="display:block;max-width:280px;height:auto;border:1px solid #2A2A30;border-radius:10px;"></a></td></tr>
@@ -143,7 +149,7 @@ export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobI
     html: shell({
       eyebrow: "Render complete",
       headline: "Your video is ready.",
-      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. One tap below signs you in and opens your library — watch it and download every format you selected.</p><p style="margin-top:14px;">Post it and tag <strong style="color:#E8E2D6;">@vistalia.ai</strong> on Instagram — we feature our favorite listings.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
+      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. One tap below signs you in and opens your library — watch it and download every format you selected.</p>${certBlock}<p style="margin-top:14px;">Post it and tag <strong style="color:#E8E2D6;">@vistalia.ai</strong> on Instagram — we feature our favorite listings.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
       ctaLabel: "Watch your video",
       // One-tap magic link (24h). Plain /app/ fallback if link generation
       // failed — signed-in devices sail through either way.

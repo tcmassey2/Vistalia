@@ -11,6 +11,10 @@
   ],
   "rewrites": [
     {
+      "source": "/v/:token",
+      "destination": "/v.html"
+    },
+    {
       "source": "/demo",
       "destination": "/app/index.html"
     },

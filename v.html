@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Verification Certificate · Vistalia</title>
+<meta name="description" content="Every scene in this Vistalia listing video was verified against the original listing photographs before delivery. Nothing invented." />
+<meta name="robots" content="noindex" />
+<style>
+  :root {
+    --bg: #0a0a0b; --panel: #131316; --edge: #26262b;
+    --ink: #f4f2ee; --muted: #9b9891; --gold: #c7a76c; --green: #7fb98a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; }
+  .serif { font-family: Palatino, "Palatino Linotype", Georgia, "Times New Roman", serif; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 20px 80px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; border-bottom: 1px solid var(--edge); }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
+  .vmark { width: 34px; height: 34px; border: 1.5px solid var(--gold); border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--gold); font-size: 19px; }
+  .brand b { font-size: 17px; letter-spacing: .02em; }
+  .certtag { font-size: 11px; letter-spacing: .22em; color: var(--gold); text-transform: uppercase; }
+  .hero { padding: 44px 0 10px; text-align: center; }
+  .hero h1 { font-size: clamp(26px, 5vw, 40px); font-weight: 600; letter-spacing: .01em; }
+  .hero .addr { color: var(--muted); margin-top: 6px; font-size: 15px; }
+  .sealline { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 26px 0 8px; color: var(--gold); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; }
+  .sealline::before, .sealline::after { content: ""; height: 1px; width: 72px; background: var(--gold); opacity: .5; }
+  .summary { text-align: center; color: var(--ink); font-size: 15px; margin-bottom: 6px; }
+  .date { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 34px; }
+  .attest { background: var(--panel); border: 1px solid var(--edge); border-left: 2px solid var(--gold); border-radius: 10px; padding: 18px 20px; color: var(--muted); font-size: 14px; margin-bottom: 40px; }
+  .attest b { color: var(--ink); font-weight: 600; }
+  .scene { border: 1px solid var(--edge); border-radius: 14px; overflow: hidden; margin-bottom: 26px; background: var(--panel); }
+  .scene .media { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--edge); }
+  .scene .cell { position: relative; background: #000; aspect-ratio: 9/16; overflow: hidden; }
+  .scene .cell img, .scene .cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cell .lab { position: absolute; top: 10px; left: 10px; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; background: rgba(0,0,0,.55); color: var(--ink); padding: 4px 9px; border-radius: 99px; }
+  .scene .meta { padding: 14px 18px; display: flex; align-items: flex-start; gap: 10px; }
+  .badge { flex: none; margin-top: 2px; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+  .badge.v { background: rgba(127,185,138,.14); color: var(--green); border: 1px solid rgba(127,185,138,.5); }
+  .badge.d { background: rgba(199,167,108,.12); color: var(--gold); border: 1px solid rgba(199,167,108,.5); }
+  .meta .t { font-size: 14px; font-weight: 600; }
+  .meta .room { color: var(--gold); text-transform: capitalize; font-weight: 600; margin-right: 6px; }
+  .meta .d { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  footer { border-top: 1px solid var(--edge); margin-top: 30px; padding-top: 26px; text-align: center; color: var(--muted); font-size: 13px; }
+  footer a { color: var(--gold); text-decoration: none; }
+  .tok { margin-top: 8px; font-size: 11px; color: #55534e; letter-spacing: .06em; }
+  .cta { display: inline-block; margin-top: 16px; border: 1px solid var(--gold); color: var(--gold); padding: 10px 22px; border-radius: 99px; text-decoration: none; font-size: 14px; }
+  .state { text-align: center; padding: 90px 0; color: var(--muted); }
+  @media (max-width: 560px) { .scene .media { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="https://vistalia.ai"><span class="vmark serif">V</span><b class="serif">Vistalia</b></a>
+    <span class="certtag">Verification Certificate</span>
+  </header>
+
+  <div id="state" class="state">Loading certificate…</div>
+
+  <div id="cert" style="display:none">
+    <div class="hero">
+      <div class="sealline">Verified Listing Video</div>
+      <h1 class="serif" id="title"></h1>
+      <div class="addr" id="addr"></div>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="date" id="date"></div>
+    <div class="attest" id="attest"></div>
+    <div id="scenes"></div>
+    <footer>
+      <div><b style="color:var(--ink)">How to read this certificate.</b> Left is the agent's original listing photograph. Right is the delivered scene. Vistalia checks every scene against its photograph before delivery — scenes that cannot be verified are replaced with direct photo motion, which cannot invent detail.</div>
+      <a class="cta" href="https://vistalia.ai">Made with Vistalia — every scene verified</a>
+      <div class="tok" id="tok"></div>
+    </footer>
+  </div>
+</div>
+
+<script>
+(function () {
+  var m = location.pathname.match(/\/v\/([A-Za-z0-9]+)/);
+  var token = m ? m[1] : new URLSearchParams(location.search).get("token") || "";
+  var stateEl = document.getElementById("state");
+
+  var MOCK = {
+    title: "28412 N Summit Springs Road",
+    address: "Rio Verde, Arizona",
+    createdAt: new Date().toISOString(),
+    summary: { totalScenes: 2, verified: 2, deterministic: 0, line: "2 scenes · 2 verified against source photography" },
+    attestation: "Every scene in this video was checked against the agent's original listing photograph before delivery. Scenes that could not be verified to match were replaced with deterministic photo motion, which cannot invent detail.",
+    scenes: [
+      { index: 1, roomType: "exterior", photoUrl: "", clipUrl: "", status: "verified", statusLabel: "Verified — matches the source photograph", statusDetail: "This scene was machine-checked against the agent's original listing photograph before delivery." },
+      { index: 2, roomType: "kitchen", photoUrl: "", clipUrl: "", status: "deterministic", statusLabel: "Direct photo motion — animated from the photograph itself", statusDetail: "By construction this scene cannot differ from the photograph." }
+    ],
+    token: "demo"
+  };
+
+  function esc(s) { var d = document.createElement("div"); d.textContent = String(s == null ? "" : s); return d.innerHTML; }
+
+  function render(data) {
+    document.getElementById("state").style.display = "none";
+    document.getElementById("cert").style.display = "";
+    document.getElementById("title").textContent = data.title || "Listing video";
+    document.getElementById("addr").textContent = data.address || "";
+    document.getElementById("summary").textContent = data.summary && data.summary.line || "";
+    var dt = data.createdAt ? new Date(data.createdAt) : null;
+    document.getElementById("date").textContent = dt ? ("Rendered " + dt.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })) : "";
+    document.getElementById("attest").innerHTML = "<b>Attestation.</b> " + esc(data.attestation || "");
+    document.getElementById("tok").textContent = "Certificate " + (data.token || token);
+    var wrap = document.getElementById("scenes");
+    wrap.innerHTML = "";
+    (data.scenes || []).forEach(function (s) {
+      var div = document.createElement("div");
+      div.className = "scene";
+      var isV = s.status === "verified";
+      div.innerHTML =
+        '<div class="media">' +
+          '<div class="cell">' + (s.photoUrl ? '<img loading="lazy" src="' + esc(s.photoUrl) + '" alt="Source photo" />' : "") + '<span class="lab">Source photo</span></div>' +
+          '<div class="cell">' + (s.clipUrl ? '<video muted loop playsinline autoplay preload="metadata" src="' + esc(s.clipUrl) + '"></video>' : "") + '<span class="lab">Delivered scene</span></div>' +
+        '</div>' +
+        '<div class="meta">' +
+          '<span class="badge ' + (isV ? "v" : "d") + '">' + (isV ? "✓" : "◈") + "</span>" +
+          '<div><div class="t"><span class="room">Scene ' + esc(s.index) + " · " + esc(s.roomType) + "</span>" + esc(s.statusLabel) + "</div>" +
+          '<div class="d">' + esc(s.statusDetail || "") + "</div></div>" +
+        "</div>";
+      wrap.appendChild(div);
+    });
+  }
+
+  if (!token) { stateEl.textContent = "Certificate not found."; return; }
+  if (token === "demo") { render(MOCK); return; }
+  fetch("/api/certificate?token=" + encodeURIComponent(token))
+    .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+    .then(render)
+    .catch(function () { stateEl.textContent = "Certificate not found. Check the link and try again."; });
+})();
+</script>
+</body>
+</html>

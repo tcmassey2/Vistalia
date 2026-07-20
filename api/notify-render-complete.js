@@ -82,7 +82,24 @@ export default async function handler(request, response) {
     }
   } catch { /* fall back to plain /app/ */ }
 
-  const tpl = renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId, magicLink });
+  // v51 MLS-Safe Certificate: the audit row (written before this endpoint
+  // fires) carries the public certificate token — include the link so the
+  // very first "video ready" email teaches agents the certificate exists.
+  // Best-effort: absent token (migration lag / audit write failed) → no line.
+  let certificateUrl = "";
+  try {
+    const certRes = await fetch(
+      `${supabaseUrl}/rest/v1/render_audit_log?job_id=eq.${encodeURIComponent(jobId)}&select=certificate_token&limit=1`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
+    );
+    if (certRes.ok) {
+      const rows = await certRes.json().catch(() => []);
+      const tok = rows?.[0]?.certificate_token;
+      if (tok) certificateUrl = `${process.env.APP_URL || "https://vistalia.ai"}/v/${tok}`;
+    }
+  } catch { /* no certificate line */ }
+
+  const tpl = renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId, magicLink, certificateUrl });
   const result = await sendTransactionalEmail({
     to: email,
     subject: tpl.subject,
