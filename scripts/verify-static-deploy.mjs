@@ -8,7 +8,6 @@ const requiredFiles = [
   // Marketing landing
   "index.html",
   "landing.css",
-  "landing.js",
 
   // App (Vite + React + TypeScript) — source lives at /webapp/
   "webapp/package.json",
