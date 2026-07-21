@@ -1871,9 +1871,17 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   options.onProgress?.({ phase: "Building outro card", progress: 80 });
   const headshotSize = Math.round(dimensions.width * 0.32);
   const logoMaxHeight = Math.round(dimensions.height * 0.07);
+  // v53.3 (m68 Cheryl/KW): the logo's horizontal budget depends on layout.
+  // Beside a headshot it gets the right half minus margins (overlay x is
+  // W/2+30 in buildBrandOutroClip — keep in sync); centered alone it gets
+  // the frame minus side padding. Without this cap, wide wordmark logos
+  // scaled past the frame edge and clipped ("NJ METRO G—").
+  const logoMaxWidth = brand.headshotUrl
+    ? dimensions.width - (Math.round(dimensions.width / 2) + 30) - Math.round(dimensions.width * 0.05)
+    : dimensions.width - 2 * Math.round(dimensions.width * 0.08);
   const [headshotCirclePath, logoAssetPath] = await Promise.all([
     buildHeadshotCircle(brand.headshotUrl, headshotSize, tempDir),
-    buildLogoAsset(brand.brokerageLogoUrl, logoMaxHeight, tempDir)
+    buildLogoAsset(brand.brokerageLogoUrl, logoMaxHeight, tempDir, logoMaxWidth)
   ]);
   const outroClip = await buildBrandOutroClip(brand, dimensions, tempDir, {
     headshotCirclePath,
@@ -2070,17 +2078,24 @@ async function buildHeadshotCircle(headshotUrl, sizePx, tempDir) {
 
 // Pre-render the brokerage logo scaled to fit a target height (preserving
 // aspect ratio and transparent background). Returns null on failure.
-async function buildLogoAsset(logoUrl, maxHeightPx, tempDir) {
+async function buildLogoAsset(logoUrl, maxHeightPx, tempDir, maxWidthPx = 0) {
   if (!logoUrl) return null;
   try {
     const sourcePath = path.join(tempDir, "logo-source");
     await downloadImageValidated(logoUrl, sourcePath, "logo");
     const outPath = path.join(tempDir, `logo-${maxHeightPx}.png`);
+    // v53.3 (m68 Cheryl/KW outro): height-only scaling let wide wordmark
+    // logos overflow the frame — "NJ METRO GROUP" rendered as "NJ METRO G"
+    // clipped at the right edge. Fit BOTH boxes: height cap as before, and
+    // when a width cap is given, force-fit inside it (decrease only).
+    const fit = maxWidthPx > 0
+      ? `scale=w='min(${maxWidthPx},iw*${maxHeightPx}/ih)':h=-1:flags=lanczos`
+      : `scale=-1:${maxHeightPx}:flags=lanczos`;
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", sourcePath,
-      // Scale to fit the height, preserve aspect, keep alpha if present.
-      "-vf", `scale=-1:${maxHeightPx}:flags=lanczos,format=rgba`,
+      // Scale to fit, preserve aspect, keep alpha if present.
+      "-vf", `${fit},format=rgba`,
       "-frames:v", "1",
       outPath
     ], { timeoutMs: 30000, label: "runway:logo-asset" });
@@ -2389,10 +2404,17 @@ async function buildBrandOutroClip(
   if (logoInputIdx >= 0) {
     // v50.9: true centering via overlay expressions — the old guess assumed
     // a 3:1 logo aspect, which walked wide wordmarks off-center.
+    // v53.3: with the new width cap (buildLogoAsset maxWidthPx) a wide logo
+    // can render SHORTER than logoMaxHeight, so vertical centering beside
+    // the headshot must use the actual overlay height, not the precomputed
+    // logoY.
     const logoX = headshotCirclePath
       ? String(Math.round(W / 2 + 30))
       : "(main_w-overlay_w)/2";
-    graphSteps.push(`[${lastLabel}][${logoInputIdx}:v]overlay=${logoX}:${logoY}[withlogo]`);
+    const logoYExpr = headshotCirclePath
+      ? `${padTop + Math.round(headshotSize / 2)}-overlay_h/2`
+      : String(logoY);
+    graphSteps.push(`[${lastLabel}][${logoInputIdx}:v]overlay=${logoX}:${logoYExpr}[withlogo]`);
     lastLabel = "withlogo";
   }
 
@@ -2428,9 +2450,13 @@ async function buildBrandOutroClip(
       `drawtext=fontfile='${FFMPEG_FONT_REGULAR}':text='${contact}':fontcolor=white@0.92:fontsize=${contactSize}:x=(w-text_w)/2:y=${contactY}`
     );
   }
-  // Bottom accent rule
+  // Bottom accent rule.
+  // v53.3 (m68): in drawbox, `w` is the BOX width — not the frame width
+  // like drawtext's `w`. (w-280)/2 therefore evaluated to (280-280)/2 = 0
+  // and the gold rule has been drawing as a stub at the LEFT EDGE on every
+  // outro ever rendered. `iw` is the frame width in drawbox.
   drawtextChain.push(
-    `drawbox=x=(w-280)/2:y=${accentRuleY}:w=280:h=2:color=0xC7A76C:t=fill`
+    `drawbox=x=(iw-280)/2:y=${accentRuleY}:w=280:h=2:color=0xC7A76C:t=fill`
   );
   // Equal Housing + Vistalia attribution footer (MLS compliance)
   const footerText = ffEscape("Equal Housing Opportunity  ·  Made with Vistalia");
