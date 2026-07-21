@@ -128,7 +128,15 @@ async function computeStemGains(masterMp4, narrationTrackPath) {
     measureLoudnessI(masterMp4),
     measureLoudnessI(narrationTrackPath)
   ]);
-  const bedGainDb = bedI == null ? 0 : clampDb(BED_TARGET_I - bedI, -18, 6);
+  // v53.2 (m67): the +6dB makeup cap silenced quiet library tracks — the
+  // luxury warm_confident bed measured −31.3 LUFS, needed +12.3 to hit the
+  // −19 target, got clamped to +6 and shipped at ~−25 ≈ inaudible. Produced
+  // tracks take +12-14dB of clean makeup; the WARN flags tracks that need
+  // renormalizing in the library.
+  const bedGainDb = bedI == null ? 0 : clampDb(BED_TARGET_I - bedI, -18, 14);
+  if (bedI != null && BED_TARGET_I - bedI > 8) {
+    console.warn(`[voice] WARN quiet music track: bed measured ${bedI.toFixed(1)} LUFS (needs +${(BED_TARGET_I - bedI).toFixed(1)}dB) — renormalize this track in the library.`);
+  }
   const voiceGainDb = voiceI == null ? 3 : clampDb(VOICE_TARGET_I - voiceI, -6, 18);
   console.info(
     `[voice] stem levels — narration ${voiceI == null ? "unmeasured" : `${voiceI.toFixed(1)} LUFS`} → ` +

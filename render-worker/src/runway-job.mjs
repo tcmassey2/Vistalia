@@ -239,10 +239,18 @@ function buildFilmFinish(styleKey, caps, dimensions) {
       const qw = Math.max(2, Math.round(dimensions.width / 4 / 2) * 2);
       const qh = Math.max(2, Math.round(dimensions.height / 4 / 2) * 2);
       return (
+        // v53.2 (m67 "awful" + Michelle's "purple cast" — SAME BUG): all_mode
+        // applied screen to the CHROMA planes too. The lutyuv gate only zeroes
+        // luma, so U/V rode into the blend at full value, and screen() on
+        // neutral chroma is pure poison: screen(128,128)=192, so at 0.22
+        // opacity every neutral pixel shifted 128 → ~142 on BOTH chroma
+        // planes = a uniform magenta wash on every luxury render since v50
+        // (m67 measured U137/V144; math predicts 142). Halation is a LUMA
+        // bloom: screen Y only, take base chroma untouched.
         `[${inL}]split=2[hbase][hsrc];` +
         `[hsrc]scale=${qw}:${qh},lutyuv=y='if(gt(val,190),val,0)',boxblur=10:2,` +
         `scale=${dimensions.width}:${dimensions.height}[hglow];` +
-        `[hbase][hglow]blend=all_mode=screen:all_opacity=0.22[${outL}]`
+        `[hbase][hglow]blend=c0_mode=screen:c0_opacity=0.22:c1_mode=normal:c1_opacity=1:c2_mode=normal:c2_opacity=1[${outL}]`
       );
     }
   };

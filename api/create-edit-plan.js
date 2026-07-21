@@ -927,8 +927,9 @@ async function polishNarrationFlow(plan, context) {
   // Scenes with sub-4-word windows are already silent by this point.
   const budgets = narrated.map((s, i) => {
     const isLast = i === narrated.length - 1;
+    // v53.2: recalibrated to measured TTS (see normalize speakSec note).
     return Math.max(
-      Math.floor((Number(s.narrationWindowSec || 0) - 0.95) * 1.9),
+      Math.floor((Number(s.narrationWindowSec || 0) - 0.65) * 2.1),
       isLast ? 4 : 4
     );
   });
@@ -1079,8 +1080,10 @@ async function verifyAndRepairScenes(plan, photos, context) {
     // window-honest: a narrated scene whose window can't hold 4 words goes
     // SILENT instead (its airtime flows to the previous line via the
     // mixer's flowing-window model); only the CTA keeps a 4-word floor.
+    // v53.2: recalibrated to measured TTS — see the speakSec note in
+    // normalize. Same model at all three budget sites or they fight.
     const rawBudget = narrated
-      ? Math.max(Math.floor((Number(scene.narrationWindowSec) - 0.95) * 1.9), isLastScene ? 4 : 0)
+      ? Math.max(Math.floor((Number(scene.narrationWindowSec) - 0.65) * 2.1), isLastScene ? 4 : 0)
       : 12;
     const lineWritable = !narrated || rawBudget >= 4;
     const wordBudget = rawBudget;
@@ -1798,7 +1801,16 @@ function normalizeEditPlan(plan, photos, context) {
     // them chopped mid-sentence. The mixer also measures each MP3 and
     // absorbs residual overruns with ≤1.15x atempo, so budget + measurement
     // together make truncation rare instead of routine.
-    const speakSec = narrationWindows[index] - 0.35 - 0.6;
+    // v53.2 (m67: 3 lines / 16 words on a 9-scene luxury): the budget model
+    // sat exactly on a cliff. Overhead 0.95s (0.35 lead + 0.6 tail guard) at
+    // 1.9 w/s meant any window under ~3.06s went SILENT via the v35.3
+    // going-silent rule — and v49's denser scenes put typical 30s windows at
+    // ~3.0s, so one render narrated 8/9 scenes and the next 3/9 on ±0.1s of
+    // beat-snap. Recalibrated to MEASURED TTS (m66/m67 transcripts: ~2.0-2.05
+    // w/s spoken; release ~0.3s): overhead 0.65s, rate 2.1. Cliff moves to
+    // ~2.55s — below every v49 window. Overshoot is guarded by the v53.1
+    // stack (1.22 ladder, release-aware fit, caption-trim sync, WARN log).
+    const speakSec = narrationWindows[index] - 0.35 - 0.3;
     // v33.2: the final scene's CTA gets a small floor even when the scene
     // is short — a brief CTA reads fine and a silent ending reads broken.
     // v35.3 (test-19): floor lowered 6 → 4. On Investor Tour's alternating
@@ -1807,7 +1819,7 @@ function normalizeEditPlan(plan, photos, context) {
     // TRIMMED mid-word ("Experience this bright home with large—"). Four
     // words ("Schedule your tour today") fit the worst-case window.
     const isLastScene = index === baseScenes.length - 1;
-    const wordBudget = Math.max(Math.floor(speakSec * 1.9), isLastScene ? 4 : 0);
+    const wordBudget = Math.max(Math.floor(speakSec * 2.1), isLastScene ? 4 : 0);
     const narrationLine = isNarrated[index] && wordBudget >= 3
       ? clampNarrationSentenceSafe(s.rawNarration, wordBudget)
       : "";
