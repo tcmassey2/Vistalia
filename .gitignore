@@ -74,3 +74,6 @@ _local/
 !webapp/.env.production
 showcase/photosets/**/*.png
 showcase/photosets/*.zip
+
+# Dreamina/Seedance working references — local ad-gen inputs, never committed
+marketing/seedance-refs/
