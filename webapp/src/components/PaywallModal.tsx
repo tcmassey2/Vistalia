@@ -72,7 +72,11 @@ const PLANS: Plan[] = [
 
 export default function PaywallModal({ open, onClose, reason }: PaywallModalProps) {
   const session = useStore((s) => s.session);
-  const [billing, setBilling] = useState<Billing>("annual"); // default = annual
+  // v54 (Jeff + Lisa abandoned checkouts): annual-default meant the modal
+  // said "$41/mo" and Stripe said "$490 due today" — both real customers
+  // who reached checkout bounced off that cliff. Trial users default to
+  // MONTHLY; annual stays one tap away with the savings nudge.
+  const [billing, setBilling] = useState<Billing>("monthly");
   const [busy, setBusy] = useState<CheckoutTier | null>(null);
   const [error, setError] = useState("");
   // q7: active subscribers who hit quota get the $12 overage row — a far
@@ -150,7 +154,27 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
           </button>
         </div>
 
-        {/* Billing toggle — annual is preselected */}
+        {/* v54: the natural first purchase for a trial user is THIS video for
+            $39 — it leads for non-subscribers instead of hiding in the
+            footer under two subscription cards. */}
+        {!isSubscriber && (
+          <div className="mx-6 sm:mx-8 mt-6 rounded-xl border border-gold/50 bg-gold/5 px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <div className="text-sm font-semibold text-ink">Make your video yours — $39</div>
+              <div className="text-xs text-ink-muted mt-0.5">One cinematic video, watermark-free, yours forever. No subscription.</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleBuy("payg")}
+              disabled={busy === "payg" || !!busy}
+              className="card-press h-10 px-4 rounded-lg text-sm font-semibold bg-gold text-paper hover:bg-gold-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+            >
+              {busy === "payg" ? "Opening Stripe…" : "$39 · this video →"}
+            </button>
+          </div>
+        )}
+
+        {/* Billing toggle — monthly is preselected (v54) */}
         <div className="flex items-center justify-center gap-3 pt-6">
           <div className="inline-flex items-center rounded-full border border-edge bg-surface-input p-1">
             <button
@@ -252,21 +276,24 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
           </div>
         )}
 
-        {/* One-off pay-as-you-go */}
-        <div className="mx-6 sm:mx-8 mb-2 rounded-xl border border-edge bg-surface-input px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <div className="text-sm font-semibold text-ink">Just one listing?</div>
-            <div className="text-xs text-ink-muted mt-0.5">Pay as you go — one cinematic video, no watermark, no subscription.</div>
+        {/* One-off pay-as-you-go — footer position for subscribers only;
+            trial users see it promoted above the plans (v54). */}
+        {isSubscriber && (
+          <div className="mx-6 sm:mx-8 mb-2 rounded-xl border border-edge bg-surface-input px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <div className="text-sm font-semibold text-ink">Just one listing?</div>
+              <div className="text-xs text-ink-muted mt-0.5">Pay as you go — one cinematic video, no watermark, no subscription.</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleBuy("payg")}
+              disabled={busy === "payg" || !!busy}
+              className="card-press h-10 px-4 rounded-lg text-sm font-semibold bg-surface-raised text-ink border border-edge hover:border-gold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+            >
+              {busy === "payg" ? "Opening Stripe…" : "$39 / video →"}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => handleBuy("payg")}
-            disabled={busy === "payg" || !!busy}
-            className="card-press h-10 px-4 rounded-lg text-sm font-semibold bg-surface-raised text-ink border border-edge hover:border-gold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
-          >
-            {busy === "payg" ? "Opening Stripe…" : "$39 / video →"}
-          </button>
-        </div>
+        )}
 
         {error && (
           <div className="mx-6 sm:mx-8 mb-4 px-3 py-2.5 rounded-lg border border-red-500/30 bg-red-500/10 text-xs text-red-300">
