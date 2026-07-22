@@ -965,7 +965,7 @@ async function polishNarrationFlow(plan, context) {
     `more, write exactly one word under the cap — a short line in a long window leaves seconds ` +
     `of dead silence in the video (m44 shipped a 3.5s hole this way). ` +
     `A 4-word complete sentence always beats a 9-word cut one. Every line ` +
-    `stands alone as one complete spoken sentence with a subject and verb. Never end a line on a transitive verb ('The kitchen boasts.' is an error — m27 shipped exactly that): if the object doesn't fit the cap, write a shorter complete thought instead. Never split one idea ` +
+    `stands alone as one complete spoken sentence with a subject and verb. Numbers and addresses count as their SPOKEN length ("356A" is four words, "Road 7" is three). Never end a line on a transitive verb ('The kitchen boasts.' is an error — m27 shipped it; one night's renders shipped 'roof crowns.', 'light fills.', 'exterior adds.', 'countertops blend.', 'tile work complements.') or a preposition ('cabinetry beneath.'): if the object doesn't fit the cap, write a shorter complete thought instead. Match determiners to their nouns ('this area', 'these areas' — never 'this dining areas'). Never split one idea ` +
     `across two lines, never open with a verb fragment.\n` +
     `- Variety: no two lines open with the same word; use each of ` +
     `"cozy", "bright", "spacious", "beautiful", "stunning", "modern" at most once across the whole script.\n` +
@@ -1106,6 +1106,9 @@ async function verifyAndRepairScenes(plan, photos, context) {
       `- line: if lineAccurate is false, ONE warm natural narration sentence, at most ${Math.max(wordBudget, 4)} words, ` +
       `about what is clearly visible in this photo — sell the SPACE: light, views, windows, ceilings, flooring, ` +
       `finishes, built-ins, cabinetry. Never mention movable furniture or decor. No invented features, no address, no price. ` +
+      `The sentence must END on a noun or adjective — never on a verb missing its object ` +
+      `("light fills.", "roof crowns." are errors) or a preposition ("cabinetry beneath."). ` +
+      `Match determiners to nouns ("this area", "these areas"). ` +
       `If lineAccurate is true, repeat the current line exactly.`;
     const body = {
       model: motionModel(),
@@ -2222,6 +2225,29 @@ function clampNarrationSentenceSafe(text, maxWords) {
     return "";
   }
   const words = trimmed.split(/\s+/);
+  // v53.5 (m71 line 1): "356A" is one TEXT token but ~four SPOKEN words —
+  // ElevenLabs reads addresses and numerals long, the fit math counted 1,
+  // and the mixer hard-trimmed the sentence's final noun at 1.22x
+  // ("…County Road 7's welcoming—" faded mid-thought). Every budget
+  // comparison below now counts spoken length: a digit-bearing token costs
+  // its digit count, +1 for a letter suffix ("356A" → "three fifty-six A"
+  // ≈ 4), clamped to 2..5.
+  const spokenCost = (w) => {
+    const digits = (String(w).match(/\d/g) || []).length;
+    if (!digits) return 1;
+    return Math.max(2, Math.min(5, digits + (/\d[a-z]/i.test(w) ? 1 : 0)));
+  };
+  const spokenLen = (arr) => arr.reduce((n, w) => n + spokenCost(w), 0);
+  const sliceBySpoken = (arr, cap) => {
+    const out = [];
+    let used = 0;
+    for (const w of arr) {
+      used += spokenCost(w);
+      if (used > cap) break;
+      out.push(w);
+    }
+    return out;
+  };
   // v41: += of/in/on/at + articles (a/an/the) — masters 20/22 produced
   // "…reveals a warm." and "…charm of vaulted." because the scan couldn't
   // see those phrase-boundary words; cutting BEFORE an article or
@@ -2230,8 +2256,15 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // v53.1: the list carried singular verb forms only ("provides") — a
   // plural subject left the bare form dangling ("bedrooms provide." — the
   // m66 clamp path). Bare forms added for every listed verb.
-  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features?|showcases?|captures?|offers?|includes?|invites?|inviting|provides?|delivers?|highlights?|reveals?|enjoys?|creates?|boasts?|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|defines?|continues?|extends?)$/i;
-  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium|restful|comfortable|soft|clean|fresh|quiet|peaceful|stylish|graceful|welcoming)$/i;
+  // v53.5 (m70/71/72, one night): "roof crowns." / "light fills." /
+  // "exterior adds." / "countertops blend." / "tile work complements." /
+  // "cabinetry beneath." all shipped — every one a transitive verb or
+  // preposition the list didn't carry. The polish prompt already bans verb
+  // endings; the model ignores it under budget pressure, so THIS list is the
+  // enforcement layer and must carry every verb the planner likes. Preps
+  // from CONNECTIVES are mirrored here too (the strip never consulted them).
+  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features?|showcases?|captures?|offers?|includes?|invites?|inviting|provides?|delivers?|highlights?|reveals?|enjoys?|creates?|boasts?|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|defines?|continues?|extends?|crowns?|fills?|adds?|blends?|complements?|compliments?|frames?|anchors?|greets?|welcomes?|enhances?|commands?|graces?|completes?|elevates?|warms?|opens?|beneath|under|above|below|along|across|beyond|behind|toward|towards|throughout|amid|among|beside|upon|onto|into|over)$/i;
+  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium|restful|comfortable|soft|clean|fresh|quiet|peaceful|stylish|graceful|welcoming|outdoor|indoor|sleek|timeless|durable|gleaming|functional|versatile|pristine|immaculate|seamless)$/i;
   // v45.6 (m38): a predicate adjective after a copula is a COMPLETE ending —
   // "…is bright." reads fine and must survive the strip; "…and bright." must
   // not. Without this guard the junk strip gutted grammatical sentences like
@@ -2268,7 +2301,7 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // ceil() would grant a proportionally huge +1 word — get floor():
   // budget 4 stays 4, budget 6 stays 6; long lines (≥8) may round up one.
   const slackCap = maxWords < 8 ? Math.floor(maxWords * 1.06) : Math.ceil(maxWords * 1.06);
-  if (words.length <= slackCap) {
+  if (spokenLen(words) <= slackCap) {
     // v42.2 (m27 "The kitchen boasts."): within-budget lines used to skip
     // ALL quality checks — a model-written fragment ending on a dangling
     // transitive verb shipped as the entire spoken line. Strip trailing
@@ -2279,7 +2312,20 @@ function clampNarrationSentenceSafe(text, maxWords) {
     if (cleaned.length < 3) return "";
     return `${cleaned.join(" ").replace(/[,;:\s]+$/, "")}.`;
   }
-  const slack = words.slice(0, slackCap).join(" ");
+  // v53.5b: never cut THROUGH an address or numeral — an overweight line
+  // carrying a digit token cuts BEFORE the digit run instead of inside it
+  // ("Experience 356A County." must never ship). If what remains is too
+  // short, the line goes silent: the title card already shows the address,
+  // and silence beats a chopped one. (Edge accepted: a rare multi-sentence
+  // line whose first sentence precedes the digits loses that sentence too —
+  // planner lines are single sentences.)
+  const digitIdx = words.findIndex((w) => /\d/.test(w));
+  if (digitIdx !== -1) {
+    const before = stripTrailingJunk(words.slice(0, digitIdx));
+    if (before.length >= 3) return `${before.join(" ").replace(/[,;:\s]+$/, "")}.`;
+    return "";
+  }
+  const slack = sliceBySpoken(words, slackCap).join(" ");
   // 1) A full sentence inside the slack window — best cut.
   const lastSentence = slack.match(/^(.+[.!?])(?:\s|$)/);
   if (lastSentence) return lastSentence[1].trim();
@@ -2329,7 +2375,7 @@ function clampNarrationSentenceSafe(text, maxWords) {
   }
   // 4) Last resort: hard cut at budget — held to the same fragment standard
   //    (v45.6: this exit used to ship ANY residue, fragments included).
-  const within = stripTrailingJunk(words.slice(0, maxWords));
+  const within = stripTrailingJunk(sliceBySpoken(words, maxWords));
   if (within.length < 3) return "";
   return `${within.join(" ").replace(/[,;:\s]+$/, "")}.`;
 }
