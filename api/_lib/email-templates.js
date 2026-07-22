@@ -149,7 +149,7 @@ export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobI
     html: shell({
       eyebrow: "Render complete",
       headline: "Your video is ready.",
-      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. One tap below signs you in and opens your library — watch it and download every format you selected.</p>${certBlock}<p style="margin-top:14px;">Post it and tag <strong style="color:#E8E2D6;">@vistalia.ai</strong> on Instagram — we feature our favorite listings.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
+      body: `${previewBlock}<p>The render for <strong style="color:#E8E2D6;">${safeTitle}</strong> just finished. One tap below signs you in and opens your library — watch it and download every format you selected.</p>${certBlock}<p style="margin-top:14px;">Ready to post it? <strong style="color:#E8E2D6;">$39 makes this video watermark-free</strong> — just your name, headshot, and brand on it. Listing regularly? Pro is 5 videos a month for $69. Both are one tap from your library.</p><p style="margin-top:14px;">Post it and tag <strong style="color:#E8E2D6;">@vistalia.ai</strong> on Instagram — we feature our favorite listings.</p><p style="margin-top:14px;font-size:12px;color:#7A7164;">Job ID: <span style="font-family:'JetBrains Mono','Menlo',monospace;">${escape(jobId)}</span></p>`,
       ctaLabel: "Watch your video",
       // One-tap magic link (24h). Plain /app/ fallback if link generation
       // failed — signed-in devices sail through either way.
