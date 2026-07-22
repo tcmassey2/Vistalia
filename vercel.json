@@ -3,7 +3,12 @@
   "trailingSlash": false,
   "buildCommand": "node scripts/verify-static-deploy.mjs && cd webapp && npm install --no-audit --no-fund && npm run build",
   "outputDirectory": ".",
-  "crons": [],
+  "crons": [
+    {
+      "path": "/api/cron/trial-reminders",
+      "schedule": "0 14 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/v/:token",

@@ -61,52 +61,38 @@ function escape(s) {
 }
 
 /* ============================================================
-   Trial — 3 days remaining
+   Free-video ladder (v54.1) — replaces the retired trial-expiry
+   ladder. HARD RULES for these two templates, learned the hard way
+   (Fox & Roach complaint, Jul 2026): never claim a deadline, an
+   expiry, or a feature lockout that the product does not enforce.
+   Nothing expires under q6 pricing; these emails say so out loud —
+   the anti-deadline IS the trust pitch. Two touches, then silence.
+   Every send carries a one-click opt-out.
    ============================================================ */
-export function trialEndingThreeDays({ email }) {
+export function freeVideoWaiting({ email, magicLink, optOutUrl }) {
   return {
-    subject: "Your Vistalia trial ends in 3 days",
+    subject: "Your free listing video is still waiting",
     html: shell({
-      eyebrow: "Trial reminder",
-      headline: "Three days left in your trial.",
-      body: `Hi there,<p>Your Vistalia free trial wraps up in <strong style="color:#E8E2D6;">three days</strong>. Pick a plan now and your work — brand kit, library, scene-by-scene fixes — keeps right on going without an interruption.</p>`,
-      ctaLabel: "Pick a plan",
-      ctaUrl: `${APP_URL}/app/#settings`,
-      footer: `Sent to ${escape(email)} because your trial is winding down. You can cancel auto-emails by deleting your account at any time.`
+      eyebrow: "First video free",
+      headline: "Your free video is still here.",
+      body: `Hi there,<p>You grabbed a Vistalia account a few days ago — your first listing video is still free, and still waiting.</p><p>Upload the listing photos you already have and a narrated, MLS-safe video comes back in about ten minutes, ready for Reels, TikTok, and the listing page.</p><p style="margin-top:14px;color:#C9C0AE;">No deadline, no card, nothing that renews — the free video simply stays on your account until you use it.</p>`,
+      ctaLabel: "Make my free video",
+      ctaUrl: magicLink || `${APP_URL}/app/`,
+      footer: `Sent to ${escape(email)} because this account's free video hasn't been used. One more note comes if that stays true — or <a href="${escape(optOutUrl || "")}" style="color:#7A7164;text-decoration:underline;">stop these emails</a> with one click.`
     })
   };
 }
 
-/* ============================================================
-   Trial — 1 day remaining (more urgent tone)
-   ============================================================ */
-export function trialEndingOneDay({ email }) {
+export function freeVideoLastNote({ email, magicLink, optOutUrl }) {
   return {
-    subject: "Last day of your Vistalia trial",
+    subject: "Last note from us",
     html: shell({
-      eyebrow: "Final day",
-      headline: "Last day to lock in your plan.",
-      body: `Hi there,<p>Your Vistalia free trial ends <strong style="color:#E8E2D6;">tomorrow</strong>. After that, the Generate button stops responding until you pick a plan.</p><p style="margin-top:14px;">It takes 30 seconds and the videos you've already rendered stay in your library either way.</p>`,
-      ctaLabel: "Choose a plan",
-      ctaUrl: `${APP_URL}/app/#settings`,
-      footer: `Sent to ${escape(email)} because your trial expires within 24 hours.`
-    })
-  };
-}
-
-/* ============================================================
-   Trial — expired
-   ============================================================ */
-export function trialExpired({ email }) {
-  return {
-    subject: "Your Vistalia trial has ended",
-    html: shell({
-      eyebrow: "Trial ended",
-      headline: "Pick a plan when you're ready.",
-      body: `Hi there,<p>Your seven-day free trial has wrapped. Your library, brand kit, and rendered videos are safe in your account — pick a plan whenever you're ready and you can keep going from exactly where you left off.</p>`,
-      ctaLabel: "View plans",
-      ctaUrl: `${APP_URL}/app/#settings`,
-      footer: `Sent to ${escape(email)} on the day your trial ended. We won't keep emailing — but if you ever want a recap of what's new, just sign back in.`
+      eyebrow: "We'll leave you to it",
+      headline: "This is our last email.",
+      body: `Hi there,<p>We won't keep showing up in your inbox — this is the last one we'll send.</p><p>Your free listing video stays on your account with no expiry, whenever a listing needs it: twelve photos in, a narrated MLS-safe video out, about ten minutes.</p>`,
+      ctaLabel: "Use my free video",
+      ctaUrl: magicLink || `${APP_URL}/app/`,
+      footer: `Sent to ${escape(email)}. No more emails after this one either way — or <a href="${escape(optOutUrl || "")}" style="color:#7A7164;text-decoration:underline;">opt out now</a> and we stop immediately.`
     })
   };
 }

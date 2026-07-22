@@ -174,6 +174,18 @@ async function runNudgePass({ supabaseUrl, serviceKey, summary }) {
           summary.nudge_skipped++;
           continue;
         }
+        // v54.1: one-click opt-out is absolute — the claim above already
+        // retired this lead, so an opted-out agent is never nudged, now or
+        // on any later run.
+        const optRes = await fetch(
+          `${supabaseUrl}/rest/v1/profiles?user_id=eq.${encodeURIComponent(lead.user_id)}&select=email_opt_out`,
+          { headers: rest }
+        );
+        const optRows = optRes.ok ? await optRes.json().catch(() => []) : [];
+        if (Array.isArray(optRows) && optRows[0]?.email_opt_out === true) {
+          summary.nudge_skipped++;
+          continue;
+        }
       }
 
       // Fresh magic link (the welcome's expired long ago).
@@ -388,11 +400,13 @@ async function runUpsellPass({ supabaseUrl, serviceKey, summary }) {
 
       // Trial with no credits only — payers and goodwill-credit holders skip.
       const prof = await fetch(
-        `${supabaseUrl}/rest/v1/profiles?user_id=eq.${encodeURIComponent(userId)}&select=tier,render_credits,email`,
+        `${supabaseUrl}/rest/v1/profiles?user_id=eq.${encodeURIComponent(userId)}&select=tier,render_credits,email,email_opt_out`,
         { headers: rest }
       ).then((r) => (r.ok ? r.json() : [])).catch(() => []);
       const p = Array.isArray(prof) ? prof[0] : null;
       if (!p || p.tier !== "trial" || Number(p.render_credits || 0) > 0) { summary.upsell_skipped++; continue; }
+      // v54.1: opted out means no upsell either.
+      if (p.email_opt_out === true) { summary.upsell_skipped++; continue; }
 
       // One-shot claim via app_metadata (no migration needed).
       const userRes = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`, { headers: rest });

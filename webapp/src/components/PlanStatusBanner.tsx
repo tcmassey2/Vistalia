@@ -64,10 +64,6 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
   const isTrial = usage.tier === "trial";
   const credits = usage.render_credits ?? 0;
   const now = new Date();
-  const trialEndsAt = usage.trial_ends_at ? new Date(usage.trial_ends_at) : null;
-  const daysLeft = trialEndsAt
-    ? Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / 86_400_000))
-    : 0;
   const rendersLeft = Math.max(
     0,
     (usage.trial_render_cap ?? 1) - (usage.trial_renders_used ?? 0)
@@ -91,7 +87,10 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
     );
   }
 
-  const trialExpired = isTrial && (!usage.can_render || daysLeft === 0 || rendersLeft === 0);
+  // v54.1: the free video never expires (migration 32) — the banner keys on
+  // what the user actually did (used the freebie / can't render), never on
+  // a calendar.
+  const trialExpired = isTrial && (!usage.can_render || rendersLeft === 0);
 
   if (isTrial && trialExpired) {
     return (
@@ -113,7 +112,7 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
   }
 
   if (isTrial) {
-    const lowOnEither = daysLeft <= 2 || rendersLeft <= 1;
+    const lowOnEither = false; // v54.1: no clock — nothing to be "low" on until the freebie is used
     return (
       <div
         className={
@@ -125,14 +124,14 @@ export default function PlanStatusBanner({ onUpgrade }: { onUpgrade?: () => void
       >
         <div className="flex-1 min-w-0">
           <div className="text-[10px] font-mono uppercase tracking-widest text-gold mb-1.5">
-            Free trial
+            First video free
           </div>
           <div className="text-base sm:text-lg font-semibold tracking-tightish flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span>{daysLeft} {daysLeft === 1 ? "day" : "days"} left</span>
-            <span className="text-ink-dim">·</span>
             <span>
               {rendersLeft} of {usage.trial_render_cap ?? 1} free {rendersLeft === 1 ? "video" : "videos"} left
             </span>
+            <span className="text-ink-dim">·</span>
+            <span className="text-ink-muted text-sm">no expiry</span>
           </div>
           <div className="text-xs text-ink-muted mt-1">
             {lowOnEither

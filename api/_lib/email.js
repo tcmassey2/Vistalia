@@ -15,7 +15,22 @@
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
-export async function sendTransactionalEmail({ to, subject, html, text, replyTo, tags }) {
+// v54.1 — signed one-click opt-out. The token is an HMAC of the user id
+// keyed on the service-role secret: unguessable without the key, stateless
+// to verify, and it never exposes the key itself. api/email-opt-out.js
+// verifies it and flips profiles.email_opt_out; every lead-flow email
+// checks that flag before sending.
+import crypto from "crypto";
+export function optOutToken(userId) {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.CRON_SECRET || "vistalia-dev";
+  return crypto.createHmac("sha256", key).update(`optout:${String(userId)}`).digest("hex").slice(0, 32);
+}
+export function optOutUrl(userId) {
+  const base = process.env.APP_URL || "https://vistalia.ai";
+  return `${base}/api/email-opt-out?u=${encodeURIComponent(String(userId))}&t=${optOutToken(userId)}`;
+}
+
+export async function sendTransactionalEmail({ to, subject, html, text, replyTo, tags, headers }) {
   const apiKey = process.env.RESEND_API_KEY || "";
   const from = process.env.EMAIL_FROM || "Vistalia <noreply@vistalia.ai>";
   const defaultReplyTo = process.env.EMAIL_REPLY_TO || "support@vistalia.ai";
@@ -36,6 +51,12 @@ export async function sendTransactionalEmail({ to, subject, html, text, replyTo,
     text: text || stripHtml(html),
     reply_to: replyTo || defaultReplyTo
   };
+  if (headers && typeof headers === "object") {
+    // v54.1: Resend passes custom headers through — used for
+    // List-Unsubscribe / List-Unsubscribe-Post so Gmail renders its native
+    // unsubscribe affordance instead of the spam button.
+    body.headers = headers;
+  }
   if (Array.isArray(tags) && tags.length) {
     // Resend uses {name, value} pairs for tags. Use ours for analytics in
     // their dashboard (filter by template, e.g. "trial-ending-3-day").
