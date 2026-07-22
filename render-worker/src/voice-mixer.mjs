@@ -803,16 +803,31 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
 
   onProgress?.({ phase: "Building narration track", fraction: 0.6 });
   const steps = placements.map((p, i) => {
+    // v53.4 (m69 "a noise happens" after the CTA): the final line's 0.3s
+    // release window shipped an ElevenLabs breath/click artifact RAW at
+    // −11.9dB — the loudest event in the tail — because an untrimmed line
+    // gets no out-fade at all, and the last line has no next-line clamp
+    // and no music/speech to mask it. Tail-shape the LAST line when
+    // untrimmed: keep the first 0.08s of release untouched (the syllable
+    // decay v45.10 protects), fade over the next 0.12s, end the tail at
+    // +0.20s. Breaths live at +0.15-0.30s; decay energy is done by ~0.12s.
+    // Interior lines keep the full release (clamped by the next line and
+    // masked by the mix).
+    const isLastLine = i === placements.length - 1;
+    const tailShape = isLastLine && p.trimKind === null;
+    const speechEndAtTempo = p.speechDur / p.tempo;
     const chain = [
       `atrim=start=${p.segStart.toFixed(3)}:end=${p.segEnd.toFixed(3)}`,
       "asetpts=PTS-STARTPTS",
       p.tempo > 1.005 ? `atempo=${p.tempo.toFixed(4)}` : null,
       p.trimmed ? `atrim=duration=${p.cap.toFixed(2)}` : null,
+      tailShape ? `atrim=duration=${(speechEndAtTempo + 0.20).toFixed(2)}` : null,
       "afade=t=in:st=0:d=0.04",
       // v53.1: the 0.30s fade exists to soften a mid-speech cut. When the
       // trim only eats release silence, that fade would dim the final
       // word's natural decay instead — use a short anti-click fade there.
       p.trimKind === "speech" ? `afade=t=out:st=${Math.max(0, p.cap - 0.3).toFixed(2)}:d=0.30` : null,
+      tailShape ? `afade=t=out:st=${(speechEndAtTempo + 0.08).toFixed(2)}:d=0.12` : null,
       p.trimKind === "release" ? `afade=t=out:st=${Math.max(0, p.cap - 0.08).toFixed(2)}:d=0.08` : null,
       `adelay=${Math.round(p.startAt * 1000)}|${Math.round(p.startAt * 1000)}`,
       `apad=whole_dur=${Math.round(trackPadSec * 1000)}ms`
