@@ -22,6 +22,22 @@ import {
 } from "../_lib/email-templates.js";
 
 export default async function handler(request, response) {
+  // v53.6 (Amy VanDenburgh, Jul 22 2026): DISABLED. This ladder is a fossil
+  // of the pre-launch 7-day-trial pricing model. Under q6/q7 (first video
+  // free + PAYG + subs) NOTHING expires — there is no trial_ends_at
+  // enforcement anywhere in the render path — yet these emails told every
+  // lead-provisioned agent "the Generate button stops responding until you
+  // pick a plan." A Fox & Roach agent read it as an auto-billing threat and
+  // wrote in asking us not to charge her. No card exists; nothing renews.
+  // The cron entry is removed from vercel.json; this guard makes a manual
+  // or stale-config invocation a no-op. If a nudge ladder returns, it sells
+  // the unused free video — it never claims a deadline that doesn't exist.
+  if (process.env.TRIAL_REMINDERS_ENABLED !== "true") {
+    return response.status(200).json({
+      status: "disabled",
+      reason: "retired with q6 pricing — no trial expiry exists (v53.6)"
+    });
+  }
   // Vercel Cron auth — protects against random internet calls.
   const cronSecret = process.env.CRON_SECRET || "";
   if (cronSecret) {
