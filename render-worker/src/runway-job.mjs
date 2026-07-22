@@ -983,7 +983,39 @@ export async function renderRunwayJob(body, options = {}) {
   );
   // If narration was applied, the mixed file replaces our master going
   // forward. Otherwise the original (silent or music-only) master is used.
-  const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
+  let masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
+
+  // v55: THE $39 INSTANT UNLOCK. Jeff + Lisa both reached a $39 Stripe
+  // checkout and abandoned — because nothing promised the purchase applied
+  // to the video they already had (the mark was baked in, credits only
+  // covered FUTURE renders). Architecture flip: the master above is now
+  // CLEAN (per-clip mark removed in v55); trial renders get the vistalia.ai
+  // mark in ONE extra encode here. Both files upload; purchase flips the
+  // library to the clean URL instantly — no re-render, no wait, no artifact
+  // lottery, zero fal cost. Fail-open direction is deliberate: if the mark
+  // pass fails, the trial user gets a clean video (a generous one-off),
+  // never a failed render.
+  let masterCleanPath = "";
+  if (manifest.freeRenderWatermark) {
+    try {
+      const markedPath = path.join(tempDir, `${jobId}-marked.mp4`);
+      await runFFmpeg([
+        "-y", "-threads", "1",
+        "-i", masterForVariants,
+        "-vf", buildFreeRenderWatermark({ width: 1080, height: 1920 }),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER,
+        "-c:a", "copy",
+        markedPath
+      ], { timeoutMs: 240000, label: "v55:trial-mark" });
+      masterCleanPath = masterForVariants;
+      masterForVariants = markedPath;
+      console.info("[v55] trial mark applied in final pass — clean master retained for instant unlock.");
+    } catch (err) {
+      console.warn(`[v55] trial-mark pass failed (${err.message}) — shipping the clean master unmarked rather than failing the render.`);
+      masterCleanPath = "";
+    }
+  }
 
   // ONE-MASTER simplification: previously this step produced 9:16 +
   // 16:9 + 1:1 variants + a 4K upscale + 3 social shorts (~8 files).
@@ -1010,6 +1042,13 @@ export async function renderRunwayJob(body, options = {}) {
   let variants = {
     vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } }
   };
+  // v55: the clean master uploads alongside the marked deliverable (the
+  // uploader names it clean.mp4 in the same job folder). Not referenced by
+  // the job row — only the audit row carries it, and the library serves it
+  // exclusively after purchase unlock.
+  if (masterCleanPath) {
+    variants.clean = { format: "clean", path: masterCleanPath, dimensions: { w: 1080, h: 1920 } };
+  }
   // v35.1: square is OPT-IN (manifest.includeSquare from the webapp Formats
   // toggle). Default renders ship vertical-only and skip the ~2 min pass.
   try {
@@ -1052,7 +1091,28 @@ export async function renderRunwayJob(body, options = {}) {
       "-shortest",
       squareFinal
     ], { timeoutMs: sqAss ? 240000 : 60000, label: "variants:square-mux" });
-    variants.square = { format: "square", path: squareFinal, dimensions: { w: 1080, h: 1080 } };
+    // v55: square inherits clean clips now — trial renders re-apply the
+    // mark here (the vertical unlock covers the master; square stays the
+    // marked social cut on trial, a deliberate v1 simplification).
+    let squareDeliverable = squareFinal;
+    if (manifest.freeRenderWatermark) {
+      try {
+        const squareMarked = path.join(squareDir, `${jobId}-square-marked.mp4`);
+        await runFFmpeg([
+          "-y", "-threads", "1",
+          "-i", squareFinal,
+          "-vf", buildFreeRenderWatermark({ width: 1080, height: 1080 }),
+          "-c:v", "libx264", "-pix_fmt", "yuv420p",
+          "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER,
+          "-c:a", "copy",
+          squareMarked
+        ], { timeoutMs: 180000, label: "v55:square-trial-mark" });
+        squareDeliverable = squareMarked;
+      } catch (err) {
+        console.warn(`[v55] square trial-mark failed (${err.message}) — shipping square unmarked.`);
+      }
+    }
+    variants.square = { format: "square", path: squareDeliverable, dimensions: { w: 1080, h: 1080 } };
     await fs.unlink(squareSilent).catch(() => {});
     console.info("[variants] TRUE 1:1 square composed from source clips (square-positioned branding, master audio muxed).");
   } catch (err) {
@@ -1668,11 +1728,13 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // and runs serially, never accumulating.
   const watermarkFilter = buildWatermarkDrawtext(brand, dimensions);
   // v46 (Troy): free/trial renders carry a persistent vistalia.ai mark.
-  // The flag is stamped server-side by api/render.js + api/regenerate-scene.js
-  // (trial tier, no purchased credits) — the worker just obeys the manifest.
-  const freeWatermarkFilter = manifest.freeRenderWatermark
-    ? buildFreeRenderWatermark(dimensions)
-    : "";
+  // v55: the mark MOVED OUT of this per-clip chain to a single final pass
+  // over the finished master (see the dual-master block in the main flow).
+  // Why it was per-clip: v46-era Render Standard had 2GB and a full-master
+  // overlay peaked ~250MB. We run Pro Plus (8GB) now, and the final-pass
+  // architecture is what makes the $39 instant-unlock possible: the master
+  // renders CLEAN once, the marked deliverable is one cheap extra encode,
+  // and purchase flips a URL instead of re-rendering.
   // v50: resolve the finishing recipe ONCE per stitch. With FINISH_PASS=0
   // every value below collapses to the pre-v50 constants and the per-clip
   // chain is byte-identical to v49.
@@ -1793,7 +1855,8 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     const postHalation = [
       ...(!isPre && film.grain ? [film.grain] : []),
       ...(watermarkFilter ? [watermarkFilter] : []),
-      ...(freeWatermarkFilter ? [freeWatermarkFilter] : []),
+      // v55: freeRenderWatermark no longer applied here — see the
+      // dual-master final pass in the main flow.
       ...(addressIntroFilter ? [addressIntroFilter] : [])
     ].join(",");
     const useHalation = !isPre && film.halation;

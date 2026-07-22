@@ -131,6 +131,28 @@ export function paymentFailed({ email, planLabel }) {
 /* ============================================================
    Render complete
    ============================================================ */
+// v55: sent by the Stripe webhook the moment a $39 purchase lands.
+// Non-legacy: the clean master already exists — the library now serves it.
+// Legacy (pre-v55 render): honest re-render path, credit already granted.
+export function cleanUnlocked({ email, title, legacy }) {
+  const safeTitle = escape(title || "your listing");
+  return {
+    subject: legacy
+      ? "Your credit is in — one step to your watermark-free video"
+      : `Your watermark-free video is ready — ${safeTitle}`,
+    html: shell({
+      eyebrow: "Purchase confirmed",
+      headline: legacy ? "Credit added — almost there." : "It's yours. Watermark gone.",
+      body: legacy
+        ? `<p>Thanks for your purchase — a video credit is in your account. Your existing video was rendered before our instant-unlock update, so it needs one quick re-render to come back watermark-free: open your library, hit <strong style="color:#E8E2D6;">Re-render</strong> on <strong style="color:#E8E2D6;">${safeTitle}</strong>, and it's yours in about ten minutes.</p><p style="margin-top:14px;">Your credit also covers your next listing whenever it's ready.</p>`
+        : `<p>The watermark-free master of <strong style="color:#E8E2D6;">${safeTitle}</strong> is live in your library right now — same video, just yours. Download it and post it.</p><p style="margin-top:14px;">Your purchase also left a video credit in your account for your next listing. Sellers pick the agent with the better marketing — now you're that agent twice.</p>`,
+      ctaLabel: legacy ? "Open my library" : "Download my video",
+      ctaUrl: `${APP_URL}/app/`,
+      footer: `Sent to ${escape(email)} because a Vistalia purchase just completed. Reply to this email and it reaches the founder directly.`
+    })
+  };
+}
+
 export function renderComplete({ email, listingTitle, mp4Url, thumbnailUrl, jobId, magicLink, certificateUrl }) {
   const safeTitle = escape(listingTitle || "Your listing video");
   // v51: the MLS-Safe Certificate line — forwardable proof that every scene

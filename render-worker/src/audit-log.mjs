@@ -40,6 +40,12 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     listing_price: manifest?.project?.price || null,
     project_title: manifest?.project?.title || null,
     master_mp4_url: upload?.formats?.vertical?.mp4Url || "",
+    // v55 instant unlock: the clean (unwatermarked) master's URL, uploaded
+    // alongside the marked deliverable on trial renders. Never exposed by
+    // the library until the webhook stamps unlocked_at on purchase.
+    // Migration 30 adds the column; insert retries without it (same
+    // deploy-order resilience as certificate_token).
+    master_clean_url: upload?.formats?.clean?.mp4Url || "",
     thumbnail_url: upload?.thumbnailUrl || "",
     social_short_count: Array.isArray(upload?.socialShorts) ? upload.socialShorts.length : 0,
     formats_count: Object.keys(upload?.formats || {}).length || 1,
@@ -90,9 +96,9 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     });
     if (!res.ok) {
       const early = await res.text().catch(() => "");
-      if (/certificate_token/i.test(early)) {
-        console.warn("[Vistalia audit-log] certificate_token column missing (run migration 29) — writing audit row without it.");
-        const { certificate_token, ...rest } = row;
+      if (/certificate_token|master_clean_url/i.test(early)) {
+        console.warn("[Vistalia audit-log] newer column missing (run migrations 29/30) — writing audit row without certificate_token/master_clean_url.");
+        const { certificate_token, master_clean_url, ...rest } = row;
         res = await fetch(`${SUPABASE_URL}/rest/v1/render_audit_log`, {
           method: "POST",
           headers: {

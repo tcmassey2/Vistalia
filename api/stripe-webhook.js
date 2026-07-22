@@ -124,6 +124,16 @@ async function onCheckoutCompleted(session) {
     const credits = Number(session.metadata?.credits || 0);
     if (credits > 0 && session.payment_status === "paid") {
       await grantCredits(userId, credits, session.id);
+      // v55 INSTANT UNLOCK: a PAYG purchase also unlocks the buyer's most
+      // recent trial render's CLEAN master (uploaded alongside the marked
+      // deliverable since v55). The credit above stays intact for their
+      // next listing — the $39 buys both the video in hand and the next
+      // one. Fail-soft: an unlock failure never blocks the credit grant.
+      try {
+        await unlockLatestCleanRender(userId, session);
+      } catch (err) {
+        console.error(`[stripe-webhook] v55 unlock failed (${err.message}) — credits granted regardless.`);
+      }
     }
     // Make sure we have the customer id on file for future purchases.
     if (session.customer) {
@@ -157,6 +167,71 @@ async function grantCredits(userId, credits, sessionId) {
     console.error(`[stripe-webhook] grant_render_credits failed (${res.status}): ${body.slice(0, 200)}`);
   } else {
     console.info(`[stripe-webhook] granted ${credits} credits to ${userId} (session ${sessionId}).`);
+  }
+}
+
+// v55: flip the buyer's latest trial render to its clean master and tell
+// them instantly. Two outcomes, both emailed:
+//   - a clean master exists (post-v55 render): stamp unlocked_at, email
+//     "your watermark-free video is ready" — zero wait, zero re-render.
+//   - legacy render (no clean master stored): honest fallback email —
+//     credit's in the account, re-render the project to go watermark-free.
+async function unlockLatestCleanRender(userId, session) {
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey) return;
+  const headers = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    "Content-Type": "application/json"
+  };
+  const email = session.customer_details?.email || "";
+
+  // Latest completed render for this user, newest first.
+  const q =
+    `${supabaseUrl}/rest/v1/render_audit_log` +
+    `?agent_user_id=eq.${encodeURIComponent(userId)}` +
+    `&status=eq.completed` +
+    `&select=job_id,project_title,listing_address,master_clean_url,unlocked_at,created_at` +
+    `&order=created_at.desc&limit=1`;
+  const res = await fetch(q, { headers });
+  if (!res.ok) {
+    // Column missing (migration 30 not applied yet) → legacy path.
+    const body = await res.text().catch(() => "");
+    if (/master_clean_url|unlocked_at/i.test(body)) {
+      console.warn("[stripe-webhook] v55 columns missing (run migration 30) — sending legacy re-render email.");
+      await sendUnlockEmail(email, { legacy: true, title: "" });
+      return;
+    }
+    throw new Error(`audit query ${res.status}`);
+  }
+  const rows = await res.json().catch(() => []);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  const title = row?.project_title || row?.listing_address || "your listing";
+
+  if (row?.master_clean_url && !row.unlocked_at) {
+    const patch = await fetch(
+      `${supabaseUrl}/rest/v1/render_audit_log?job_id=eq.${encodeURIComponent(row.job_id)}`,
+      { method: "PATCH", headers, body: JSON.stringify({ unlocked_at: new Date().toISOString() }) }
+    );
+    if (!patch.ok) throw new Error(`unlock PATCH ${patch.status}`);
+    console.info(`[stripe-webhook] v55 unlocked clean master for ${userId} (job ${row.job_id}).`);
+    await sendUnlockEmail(email, { legacy: false, title });
+  } else if (row && !row.master_clean_url) {
+    // Pre-v55 render — no clean master stored. Be honest about the path.
+    await sendUnlockEmail(email, { legacy: true, title });
+  }
+  // row already unlocked or no rows: credit-only purchase, no email needed.
+}
+
+async function sendUnlockEmail(email, { legacy, title }) {
+  if (!email) return;
+  try {
+    const { sendTransactionalEmail } = await import("./_lib/email.js");
+    const { cleanUnlocked } = await import("./_lib/email-templates.js");
+    await sendTransactionalEmail({ to: email, ...cleanUnlocked({ email, title, legacy }) });
+  } catch (err) {
+    console.warn(`[stripe-webhook] unlock email failed (${err.message}).`);
   }
 }
 

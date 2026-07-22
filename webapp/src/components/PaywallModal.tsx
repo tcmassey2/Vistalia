@@ -161,7 +161,7 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
           <div className="mx-6 sm:mx-8 mt-6 rounded-xl border border-gold/50 bg-gold/5 px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
             <div>
               <div className="text-sm font-semibold text-ink">Make your video yours — $39</div>
-              <div className="text-xs text-ink-muted mt-0.5">One cinematic video, watermark-free, yours forever. No subscription.</div>
+              <div className="text-xs text-ink-muted mt-0.5">Your latest video goes watermark-free instantly — plus a credit for your next listing. No subscription.</div>
             </div>
             <button
               type="button"

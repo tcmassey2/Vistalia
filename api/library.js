@@ -125,7 +125,12 @@ export default async function handler(request, response) {
         listingCity: row.listing_city || "",
         listingPrice: row.listing_price || "",
         projectTitle: row.project_title || row.listing_address || "Untitled listing",
-        mp4Url: row.master_mp4_url || "",
+        // v55 instant unlock: once the webhook stamps unlocked_at, the
+        // library serves the CLEAN master everywhere the marked one lived.
+        // select=* means pre-migration rows just lack the fields → fall
+        // through to the marked URL unchanged.
+        mp4Url: (row.unlocked_at && row.master_clean_url) ? row.master_clean_url : (row.master_mp4_url || ""),
+        watermarkUnlocked: Boolean(row.unlocked_at && row.master_clean_url),
         thumbnailUrl: row.thumbnail_url || "",
         socialShortCount: Number(row.social_short_count || 0),
         formatsCount: Number(row.formats_count || 1),
