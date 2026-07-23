@@ -159,7 +159,29 @@ async function processOne() {
       headers: { "Content-Type": "application/json", "x-internal-secret": secret },
       body: JSON.stringify({ url: lead.listing_url, projectId, onBehalfOfUserId: lead.user_id })
     }, IMPORT_TIMEOUT_MS);
-    const photos = Array.isArray(imp.json?.photos) ? imp.json.photos : [];
+    // v58.4: the import response photos are raw storage objects
+    // ({fileName, publicUrl, storagePath, bucket, size}) — no id, no
+    // durableUrl, no order. The planner keys scenes to photo.id and
+    // render.js validates scenes against orderedPhotos by id + urls; the
+    // WEBAPP assigns all of that client-side (DashboardScreen ~297).
+    // Without the same mapping here, the first two leads that ever got
+    // past import (Jul 23) died at submit: "scene 1 is not present in
+    // orderedPhotos … 24 more issues". Mirror the webapp shape; dims use
+    // the webapp's own probe-failure fallback (1024×1365) since the
+    // worker has no cheap way to probe 20 remote images.
+    const photos = (Array.isArray(imp.json?.photos) ? imp.json.photos : []).map((p, i) => ({
+      id: `imported-${projectId}-${i}`,
+      fileName: p.fileName,
+      publicUrl: p.publicUrl,
+      durableUrl: p.publicUrl,
+      storagePath: p.storagePath,
+      bucket: p.bucket,
+      width: 1024,
+      height: 1365,
+      size: p.size,
+      order: i,
+      uploadedAt: new Date().toISOString()
+    }));
     if (!imp.ok || imp.json?.status !== "ok" || photos.length < 4) {
       await markStatus(supabaseUrl, lead.lead_id, { auto_render_status: `failed:import(${imp.json?.status || imp.status},${photos.length}p)` });
       console.warn(`[auto-render] import failed for ${lead.lead_id}: ${imp.json?.status || imp.status}, ${photos.length} photos — lead stays in the normal nudge flow.`);
