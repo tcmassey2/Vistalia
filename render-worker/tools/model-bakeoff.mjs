@@ -283,7 +283,9 @@ async function main() {
   if (args.dry) { console.log("(dry run — no API calls)"); return; }
   if (!process.env.FAL_KEY) { console.error("FAL_KEY not set."); process.exit(1); }
 
-  const outDir = args.out || path.join(process.cwd(), "bakeoff-results", new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19));
+  // Date-stamped (not second-stamped) so a dropped shell or a probe→full
+  // sequence RESUMES into the same dir — finished clips are never re-bought.
+  const outDir = args.out || path.join(process.cwd(), "bakeoff-results", new Date().toISOString().slice(0, 10));
   await fs.mkdir(path.join(outDir, "clips"), { recursive: true });
   await fs.mkdir(path.join(outDir, "tmp"), { recursive: true });
   const fal = await loadFal();
@@ -351,6 +353,37 @@ async function main() {
   await fs.writeFile(path.join(outDir, "results.json"), JSON.stringify({ scenes: scenes.map((s) => s.name), rows }, null, 2));
   await fs.rm(path.join(outDir, "tmp"), { recursive: true, force: true }).catch(() => {});
   console.log(`\nDone. Results: ${outDir}\n${lines.slice(4, 6 + modelKeys.length).join("\n")}`);
+
+  // The Render shell has no file download — push the small artifacts
+  // (summary, sheets, results) to Supabase storage and print 7-day signed
+  // URLs so the sheets can be reviewed off-box. Clips stay local (heavy).
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { createClient } = await import("@supabase/supabase-js");
+      const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+      const runId = path.basename(outDir);
+      const files = ["SUMMARY.md", "results.json", ...modelKeys.map((k) => `sheet-${k}.png`)];
+      console.log("\nShareable links (7 days):");
+      for (const f of files) {
+        try {
+          const buf = await fs.readFile(path.join(outDir, f));
+          const objectPath = `bakeoff/${runId}/${f}`;
+          const { error: upErr } = await sb.storage.from("listing-photos").upload(objectPath, buf, {
+            contentType: f.endsWith(".png") ? "image/png" : f.endsWith(".json") ? "application/json" : "text/markdown",
+            upsert: true
+          });
+          if (upErr) throw upErr;
+          const { data, error: signErr } = await sb.storage.from("listing-photos").createSignedUrl(objectPath, 7 * 24 * 3600);
+          if (signErr) throw signErr;
+          console.log(`  ${f}: ${data.signedUrl}`);
+        } catch (e) {
+          console.warn(`  ${f}: upload failed (${e.message || e})`);
+        }
+      }
+    } catch (e) {
+      console.warn(`(share upload skipped: ${e.message || e})`);
+    }
+  }
 }
 
 main().catch((err) => { console.error(`bake-off failed: ${err.stack || err}`); process.exit(1); });
