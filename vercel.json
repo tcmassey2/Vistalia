@@ -9,6 +9,10 @@
       "schedule": "0 14 * * *"
     }
   ],
+  "functions": {
+    "api/import-listing.js": { "maxDuration": 120 },
+    "api/create-edit-plan.js": { "maxDuration": 120 }
+  },
   "rewrites": [
     {
       "source": "/v/:token",
