@@ -313,15 +313,33 @@ export interface ImportListingResponse {
 }
 export async function importListing(url: string, projectId: string): Promise<ImportListingResponse> {
   const headers = await authHeaders();
-  const res = await fetch("/api/import-listing", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ url, projectId })
-  });
-  const payload = (await res.json().catch(() => ({}))) as ImportListingResponse;
-  if (!res.ok && !payload.error) payload.error = `Import failed (${res.status}).`;
-  if (!payload.status) payload.status = res.ok ? "ok" : "failed";
-  return payload;
+  // v58 (live test: Redfin/Realtor hung the band's spinner forever): the
+  // request aborts at 90s — past the server's own proxy budget — and the
+  // band shows an honest error instead of spinning into eternity.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90_000);
+  try {
+    const res = await fetch("/api/import-listing", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url, projectId }),
+      signal: ctrl.signal
+    });
+    const payload = (await res.json().catch(() => ({}))) as ImportListingResponse;
+    if (!res.ok && !payload.error) payload.error = `Import failed (${res.status}).`;
+    if (!payload.status) payload.status = res.ok ? "ok" : "failed";
+    return payload;
+  } catch (err) {
+    return {
+      status: "failed",
+      error:
+        err instanceof DOMException && err.name === "AbortError"
+          ? "The import took too long — that portal may be blocking us. Start the project and add photos manually, or try the listing's Realtor.com link."
+          : "The import couldn't reach the server — check your connection and try again."
+    } as ImportListingResponse;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function submitRender(manifest: RenderManifest): Promise<SubmitRenderResult> {

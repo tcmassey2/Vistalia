@@ -28,6 +28,10 @@ const RENTCAST_BASE = "https://api.rentcast.io/v1";
 const MAX_PHOTOS = 24;
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const PAGE_TIMEOUT_MS = 9000;
+// v58: ScraperAPI with render=true routinely takes 15-40s on bot-walled
+// portals — give it room. The Vercel function budget absorbs it; the
+// worker's auto-render pass calls this endpoint with a 60s client timeout.
+const PROXY_PAGE_TIMEOUT_MS = 45000;
 const PHOTO_TIMEOUT_MS = 10000;
 const BROWSER_HEADERS = {
   "User-Agent":
@@ -257,8 +261,17 @@ async function storePhoto(photoUrl, userId, projectId, index) {
   const supabaseUrl = process.env.SUPABASE_URL || "";
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   if (!supabaseUrl || !serviceKey) throw new Error("storage not configured");
-  const r = await fetchWithTimeout(photoUrl, { headers: BROWSER_HEADERS }, PHOTO_TIMEOUT_MS);
-  if (!r.ok) throw new Error(`fetch ${r.status}`);
+  let r = await fetchWithTimeout(photoUrl, { headers: BROWSER_HEADERS }, PHOTO_TIMEOUT_MS).catch(() => null);
+  // v58: some portal CDNs referer-check direct image GETs — one proxy retry
+  // (no rendering, cheap credit) before giving up on the photo.
+  if ((!r || !r.ok) && process.env.SCRAPER_API_KEY) {
+    r = await fetchWithTimeout(
+      `https://api.scraperapi.com/?api_key=${encodeURIComponent(process.env.SCRAPER_API_KEY)}&url=${encodeURIComponent(photoUrl)}`,
+      {},
+      PHOTO_TIMEOUT_MS + 5000
+    );
+  }
+  if (!r || !r.ok) throw new Error(`fetch ${r ? r.status : "failed"}`);
   const type = String(r.headers.get("content-type") || "");
   if (!type.startsWith("image/")) throw new Error(`not an image (${type.slice(0, 40)})`);
   const buf = Buffer.from(await r.arrayBuffer());
@@ -350,17 +363,41 @@ export default async function handler(request, response) {
     pagePhotoUrls = rc.photos.slice(0, MAX_PHOTOS);
     photoSource = "licensed_listing_data";
   } else {
-    try {
-      const page = await fetchWithTimeout(url, { headers: BROWSER_HEADERS, redirect: "follow" }, PAGE_TIMEOUT_MS);
-      if (page.ok) {
-        const html = await page.text();
-        pagePhotoUrls = extractPagePhotos(html);
-        if (pagePhotoUrls.length > 0) photoSource = "listing_page";
-      } else {
-        warnings.push(`The listing page couldn't be read (${page.status}) — add photos manually.`);
+    // v58 (live 3-portal test, Jul 23): direct fetches are dead on every
+    // major portal — Zillow bot-walls (fast 403/challenge, 0 photos),
+    // Redfin and Realtor.com hang past any serverless budget. RentCast has
+    // no photos tier, so the page IS the photo source and it needs a
+    // rendering proxy. With SCRAPER_API_KEY set, the page fetch routes
+    // through ScraperAPI (residential IPs + JS rendering, generous
+    // timeout); without it, the old direct fetch stays as the dev/local
+    // path. Fail order: proxy → direct → warn (never throws).
+    const proxyKey = process.env.SCRAPER_API_KEY || "";
+    let html = "";
+    if (proxyKey) {
+      try {
+        const prox = await fetchWithTimeout(
+          `https://api.scraperapi.com/?api_key=${encodeURIComponent(proxyKey)}&url=${encodeURIComponent(url)}&render=true&country_code=us`,
+          { redirect: "follow" },
+          PROXY_PAGE_TIMEOUT_MS
+        );
+        if (prox.ok) html = await prox.text();
+        else warnings.push(`Photo proxy returned ${prox.status} — trying direct.`);
+      } catch {
+        warnings.push("Photo proxy timed out — trying direct.");
       }
-    } catch {
-      warnings.push("The listing page couldn't be read — add photos manually.");
+    }
+    if (!html) {
+      try {
+        const page = await fetchWithTimeout(url, { headers: BROWSER_HEADERS, redirect: "follow" }, PAGE_TIMEOUT_MS);
+        if (page.ok) html = await page.text();
+        else warnings.push(`The listing page couldn't be read (${page.status}) — add photos manually.`);
+      } catch {
+        warnings.push("The listing page couldn't be read — add photos manually.");
+      }
+    }
+    if (html) {
+      pagePhotoUrls = extractPagePhotos(html);
+      if (pagePhotoUrls.length > 0) photoSource = proxyKey ? "listing_page_proxy" : "listing_page";
     }
   }
 
