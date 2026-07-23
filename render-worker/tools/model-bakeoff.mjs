@@ -149,7 +149,9 @@ const MODELS = {
     })
   },
   hailuo23fastpro: {
-    endpoint: "fal-ai/minimax/hailuo-2.3/fast-pro/image-to-video",
+    // "fast" is a model-family suffix on fal, then the tier:
+    // …/hailuo-2.3-fast/pro/…  (probe 1 found this the $0-cost way)
+    endpoint: "fal-ai/minimax/hailuo-2.3-fast/pro/image-to-video",
     label: "Hailuo 2.3 Fast Pro",
     estPerScene: 0.33,
     buildInput: (p, img) => ({
