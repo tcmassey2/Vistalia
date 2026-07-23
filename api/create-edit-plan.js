@@ -866,7 +866,58 @@ async function enrichFallbackPlan(plan, photos, context) {
    feature, or object absent from the input line; with no images attached
    there is nothing new to describe. Fail-open: any error keeps the
    verified lines exactly as they are. */
-const PLAN_POLISH_TIMEOUT_MS = 9000;
+// v53.7 (m73): 9s → 16s. The v53.5 completeness additions lengthened the
+// polish prompt, and the one render where polish died on the new prompt
+// shipped the worst script ever gated ("This living area features a
+// fireplace." twice in a row, no CTA). Slower and present beats fast and
+// dead — the plan budget absorbs it.
+const PLAN_POLISH_TIMEOUT_MS = 16000;
+
+// v53.7 — deterministic narration floor. Runs after polish WHETHER IT
+// SUCCEEDED OR FAILED (m73: polish failed open and the raw verify drafts
+// shipped with two identical lines, a bare fragment, and no closing CTA —
+// the customer-visible fingerprint of a silent LLM failure). No model
+// calls here; string ops only, so this floor cannot itself fail open:
+//   - exact-duplicate lines (case/punct-insensitive): the later copy goes
+//     silent — its window donates airtime (v34.2 machinery). Silence beats
+//     hearing the same sentence twice.
+//   - the final line MUST invite the tour (the v34.3 non-negotiable): if
+//     polish died before enforcing it, force the canonical CTA.
+// Returns { dupesSilenced, ctaForced, openerMonotony } for the log.
+function enforceNarrationFloor(narrated) {
+  const out = { dupesSilenced: 0, ctaForced: false, openerMonotony: false };
+  if (!Array.isArray(narrated) || narrated.length === 0) return out;
+  const seen = new Set();
+  for (const s of narrated) {
+    const key = String(s.narrationLine || "").trim().toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ");
+    if (!key) continue;
+    if (seen.has(key)) {
+      s.narrationLine = "";
+      out.dupesSilenced += 1;
+    } else {
+      seen.add(key);
+    }
+  }
+  const spoken = narrated.filter((s) => String(s.narrationLine || "").trim());
+  const last = spoken[spoken.length - 1];
+  if (last && !/\b(tour|come see|see it)\b/i.test(last.narrationLine)) {
+    last.narrationLine = "Schedule your private tour today.";
+    out.ctaForced = true;
+  }
+  // Monotony telemetry: >half the lines opening with the same two words is
+  // the template signature ("This living area…" ×4). Logged, not rewritten
+  // — a deterministic rewriter would just be a worse template.
+  const monotoneAt = (depth) => {
+    const counts = {};
+    for (const s of spoken) {
+      const o = String(s.narrationLine).toLowerCase().split(/\s+/).slice(0, depth).join(" ");
+      counts[o] = (counts[o] || 0) + 1;
+    }
+    return Object.values(counts).some((n) => n > Math.max(1, Math.floor(spoken.length / 2)));
+  };
+  out.openerMonotony = monotoneAt(1) || monotoneAt(2);
+  return out;
+}
 
 // v50.5 (m61 "almost every sentence mentions wood") — deterministic
 // repetition detector. The vision model writes each line from its own photo,
@@ -920,7 +971,11 @@ function repetitionFlags(lines, maxLines = 2) {
 async function polishNarrationFlow(plan, context) {
   const scenes = Array.isArray(plan?.scenes) ? plan.scenes : [];
   const narrated = scenes.filter((s) => String(s.narrationLine || "").trim());
-  if (narrated.length < 2 || !process.env.OPENAI_API_KEY) return;
+  if (narrated.length < 2 || !process.env.OPENAI_API_KEY) {
+    // v53.7: the deterministic floor applies even when polish is skipped.
+    plan.narrationGuard = enforceNarrationFloor(narrated);
+    return;
+  }
   const t0 = Date.now();
   // v35.3: window-honest budgets (the old `isLast ? 6 : 3` floors inflated
   // lines past what tiny windows could hold → mid-word trims, test-19).
@@ -1054,8 +1109,16 @@ async function polishNarrationFlow(plan, context) {
         console.warn(`[plan-polish] repetition QC: STILL repetitive after polish — ${still.map((f) => `${f.term} in lines ${f.lines.join(",")}`).join("; ")} — shipping fail-open.`);
       }
     }
+    plan.narrationPolish = `ok:${applied}/${narrated.length}`;
   } catch (err) {
+    plan.narrationPolish = `failed:${String(err.message).slice(0, 80)}`;
     console.warn(`[plan-polish] failed open (${err.message}) — verified lines ship un-polished.`);
+  }
+  // v53.7: the floor runs on BOTH exits — see enforceNarrationFloor.
+  const floor = enforceNarrationFloor(narrated);
+  plan.narrationGuard = floor;
+  if (floor.dupesSilenced || floor.ctaForced || floor.openerMonotony) {
+    console.warn(`[plan-guard] narration floor acted: ${JSON.stringify(floor)} (polish=${plan.narrationPolish || "?"})`);
   }
 }
 
@@ -1109,6 +1172,8 @@ async function verifyAndRepairScenes(plan, photos, context) {
       `The sentence must END on a noun or adjective — never on a verb missing its object ` +
       `("light fills.", "roof crowns." are errors) or a preposition ("cabinetry beneath."). ` +
       `Match determiners to nouns ("this area", "these areas"). ` +
+      `Vary structure: NEVER the skeleton "This <room> features <thing>" — lead with the concrete ` +
+      `subject instead ("A stone fireplace anchors the living room", "Morning light pours across the island"). ` +
       `If lineAccurate is true, repeat the current line exactly.`;
     const body = {
       model: motionModel(),
