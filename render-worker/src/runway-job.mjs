@@ -19,7 +19,7 @@ import { createClient } from "@supabase/supabase-js";
 // v35: deriveAspectVariants retired — square is recomposed from source clips
 // (see the variants block below); wide is retired until per-aspect generation
 // ships. aspect-variants.mjs stays in tree for the future Formats pack.
-import { applyVoiceNarration, probeAudioDuration } from "./voice-mixer.mjs";
+import { applyVoiceNarration, probeAudioDuration, levelMusicOnlyMaster } from "./voice-mixer.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
 import { renderHomographyDrift } from "./homography-drift.mjs";
 import { CAPTIONS_FONTS_DIR } from "./captions.mjs";
@@ -984,6 +984,12 @@ export async function renderRunwayJob(body, options = {}) {
   // If narration was applied, the mixed file replaces our master going
   // forward. Otherwise the original (silent or music-only) master is used.
   let masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
+  // v58.3: music-only masters shipped at raw bed level (m75 −24.0, m76
+  // −22.9 LUFS — 8-9dB quiet vs platform norm). The narrated path's stem
+  // makeup gain never runs when narration is skipped/failed, so level here.
+  if (!narration.narrationApplied) {
+    masterForVariants = await levelMusicOnlyMaster(masterForVariants, tempDir, jobId);
+  }
 
   // v55: THE $39 INSTANT UNLOCK. Jeff + Lisa both reached a $39 Stripe
   // checkout and abandoned — because nothing promised the purchase applied
@@ -2603,6 +2609,26 @@ async function downloadImageValidated(url, destPath, label) {
     throw new Error(`${label}: file is HEIC/HEIF — ffmpeg can't decode it. Re-upload as JPG or PNG.`);
   }
   if (kind) return kind;
+
+  // v58.3: SVG brand assets (3D Realty's logo on m74) — the webapp accepts
+  // them but ffmpeg can't decode vectors, so every outro silently dropped
+  // the logo. sharp (libvips) rasterizes SVG cleanly; 1024px box keeps the
+  // outro chip crisp.
+  const head = buf.slice(0, 300).toString("utf8").trim().toLowerCase();
+  if (head.startsWith("<?xml") || head.includes("<svg")) {
+    try {
+      const sharp = (await import("sharp")).default;
+      const png = await sharp(buf, { density: 300 })
+        .resize({ width: 1024, height: 1024, fit: "inside" })
+        .png()
+        .toBuffer();
+      await fs.writeFile(destPath, png);
+      console.info(`[brand] ${label}: SVG rasterized to PNG (${png.length} bytes) — logo restored.`);
+      return "png";
+    } catch (svgErr) {
+      console.warn(`[brand] ${label}: SVG rasterize failed (${svgErr.message}).`);
+    }
+  }
 
   // Not an image. Log what we actually got (usually a storage error JSON).
   const preview = buf.slice(0, 120).toString("utf8").replace(/\s+/g, " ");

@@ -121,6 +121,42 @@ async function measureLoudnessI(filePath) {
   });
 }
 
+// v58.3 music-only leveling (m75 −24.0 / m76 −22.9 LUFS): the narrated path
+// gets stem makeup gain, but skipNarration (and narration-failed) masters
+// ship the music bed at library level — the "quiet music track" warning
+// becomes the CUSTOMER's video level, 8-9dB under platform norm. One static
+// gain to a −16 LUFS music target, true-peak guarded, video stream copied
+// (seconds, no re-encode). Fail-open: any error returns the input path.
+const MUSIC_ONLY_TARGET_I = -16;
+export async function levelMusicOnlyMaster(masterMp4, tempDir, jobId) {
+  try {
+    const i = await measureLoudnessI(masterMp4);
+    if (i === null) return masterMp4; // silent or unmeasurable — leave it
+    const gain = clampDb(MUSIC_ONLY_TARGET_I - i, 0, 12);
+    if (gain < 1) return masterMp4;
+    const out = path.join(tempDir, `${jobId}-music-leveled.mp4`);
+    await new Promise((resolve, reject) => {
+      const proc = spawn("ffmpeg", [
+        "-y", "-hide_banner", "-nostats", "-i", masterMp4,
+        "-c:v", "copy",
+        "-af", `volume=${gain.toFixed(1)}dB,alimiter=limit=0.94:level=false`,
+        "-c:a", "aac", "-b:a", "192k",
+        out
+      ], { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      proc.stderr.on("data", (c) => { stderr += c.toString(); });
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} reject(new Error("leveling timeout")); }, 60000);
+      proc.on("close", (code) => { clearTimeout(timer); if (code === 0) resolve(); else reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-160)}`)); });
+      proc.on("error", (e) => { clearTimeout(timer); reject(e); });
+    });
+    console.info(`[voice] music-only master leveled ${i.toFixed(1)} → ~${MUSIC_ONLY_TARGET_I} LUFS (+${gain.toFixed(1)}dB static, peak-limited).`);
+    return out;
+  } catch (err) {
+    console.warn(`[voice] music-only leveling skipped (${err.message}).`);
+    return masterMp4;
+  }
+}
+
 // Measure both stems, return static makeup gains. Fail-open: unmeasurable
 // stems get 0 dB (bed) / +3 dB (voice) — roughly the old fixed-weights feel.
 async function computeStemGains(masterMp4, narrationTrackPath) {

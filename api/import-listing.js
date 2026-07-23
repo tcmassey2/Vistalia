@@ -243,13 +243,21 @@ function extractPagePhotos(html) {
     // Skip obvious thumbnails when a size hint is embedded in the URL.
     if (/cc_ft_(\d+)/.test(url) && Number(url.match(/cc_ft_(\d+)/)[1]) < 576) continue;
     if (/[-_](\d{2,3})x(\d{2,3})\./.test(url)) continue;
+    // v58.3: portal CDNs serve SITE ASSETS from the same hosts as listing
+    // photos — m74 shipped a scene animating the REDFIN LOGO (captioned
+    // "Living area"; QC passed it because the video faithfully matched its
+    // source "photo"). Listing photos live under known path prefixes; site
+    // chrome does not.
+    if (/zillowstatic\.com/i.test(url) && !/\/fp\//.test(url)) continue;
+    if (/cdn-redfin\.com/i.test(url) && !/\/photo\//i.test(url)) continue;
+    if (/logo|icon|sprite|badge|avatar|headshot|favicon|app-?store|play-?store|banner/i.test(url)) continue;
     found.add(url);
     if (found.size >= MAX_PHOTOS * 2) break;
   }
   // og:image as a floor — at least the hero photo on almost every portal.
   const og = text.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
     || text.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
-  if (og && /^https?:\/\//.test(og[1])) found.add(og[1]);
+  if (og && /^https?:\/\//.test(og[1]) && !/logo|icon|sprite|badge|favicon/i.test(og[1])) found.add(og[1]);
   return [...found].slice(0, MAX_PHOTOS);
 }
 

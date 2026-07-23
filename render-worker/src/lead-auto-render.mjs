@@ -145,7 +145,12 @@ async function processOne() {
   if (!Array.isArray(claimed) || claimed.length === 0) return;
 
   console.info(`[auto-render] processing lead ${lead.lead_id} (${lead.email}) — ${lead.listing_url}`);
-  const projectId = `lead-${String(lead.lead_id).slice(-10)}-${Date.now()}`;
+  // v58.3: MUST start with "project-" — import-listing validates
+  // /^project-[A-Za-z0-9-]{6,64}$/ and 400s anything else. The original
+  // "lead-…" ids made every auto-render import die in ~300ms (log:
+  // "failed, 0 photos" with a sub-second turnaround = validation reject,
+  // the proxy was never even reached).
+  const projectId = `project-lead-${String(lead.lead_id).slice(-10)}-${Date.now()}`;
 
   try {
     // 1. Import: address + facts + photos into THEIR storage.

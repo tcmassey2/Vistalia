@@ -35,12 +35,16 @@ const CANARY_PHOTOS = [
   "05-dining", "06-primary-bedroom", "07-primary-bath", "08-study",
   "09-courtyard", "10-pool-twilight", "11-ramada", "12-hallway"
 ].map((name, i) => {
-  const url = `${APP_URL}/showcase/photosets/p1-signature/${name}.png`;
+  // v58.3: showcase/photosets/**/*.png is GITIGNORED (107MB of masters) so
+  // those URLs 404 in production — the first live canary died on it, every
+  // scene "Download failed (404)". showcase/canary/*.jpg is the deployable
+  // web-weight copy (~9MB total, committed).
+  const url = `${APP_URL}/showcase/canary/${name}.jpg`;
   return {
     id: `canary-${String(i + 1).padStart(2, "0")}`,
     publicUrl: url,
     durableUrl: url,
-    fileName: `${name}.png`,
+    fileName: `${name}.jpg`,
     width: 2400,
     height: 1792,
     category: ""
