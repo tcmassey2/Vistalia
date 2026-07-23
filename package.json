@@ -5,6 +5,7 @@
   "description": "EstateMotion — Vercel-hosted landing + Vite/React app at /app, Render.com worker for video.",
   "scripts": {
     "build": "node scripts/verify-static-deploy.mjs",
-    "check:static": "node scripts/verify-static-deploy.mjs"
+    "check:static": "node scripts/verify-static-deploy.mjs",
+    "test:narration": "node tests/narration-regression.mjs"
   }
 }
