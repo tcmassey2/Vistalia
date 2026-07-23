@@ -66,6 +66,13 @@ async function getFalClient() {
 // on fal; veo3.1 (standard) exists but costs more than the $249-tier
 // COGS model assumes. FAL_VIDEO_MODEL env var still overrides.
 const DEFAULT_MODEL = "fal-ai/veo3.1/fast/image-to-video";
+
+// v60: shared negative-prompt list for models that support one (Kling V3).
+// Mirrors the fidelity suffix's bans in negative form — the bake-off ran
+// with exactly this list.
+const KLING_NEGATIVE_PROMPT =
+  "new objects, added furniture, removed furniture, morphing, warping, melting, " +
+  "texture boil, flickering, people, animals, text, captions, watermarks, logos";
 const DEFAULT_RESOLUTION = "1080p";
 const DEFAULT_DURATION = "6s";
 const DEFAULT_GENERATE_AUDIO = false;
@@ -377,11 +384,24 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
     };
   }
   if (m.includes("kling")) {
+    // v60: Kling V3 — the Jul 23 bake-off winner. On the hard set (12
+    // production failure scenes self-selected from the audit log) Kling V3
+    // Standard went 12/12 + 3/3 on a second seed while Veo went 9/12,
+    // re-failing its own production defects (vanished light fixture,
+    // missing beams, tree boil). Same QC judge customer renders face.
+    // $0.084/s vs Veo's ~$0.15/s → generation ~$4.50/render (was ~$8.10).
+    //
+    // V3 takes exact 1-second durations ("3".."15") — the "5"/"10"
+    // mapping below was Kling o3-era and would break our 4s/6s buckets.
+    // negative_prompt is the hallucination lever Veo never exposed.
+    // No aspect_ratio: V3 i2v follows the input photo's aspect, which
+    // carries more usable pixels into the 9:16 master than forced 16:9.
     return {
       prompt,
       image_url: imageUrl,
-      aspect_ratio: aspectRatio,
-      duration: seconds <= 5 ? "5" : "10"
+      duration: String(Math.min(15, Math.max(3, seconds))),
+      negative_prompt: KLING_NEGATIVE_PROMPT,
+      generate_audio: false
     };
   }
   if (m.includes("seedance")) {

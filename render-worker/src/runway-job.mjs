@@ -1176,7 +1176,12 @@ export async function renderRunwayJob(body, options = {}) {
     jobId,
     // v26.9: record the engine actually used (was hardcoded "runway", which
     // mislabeled every Veo render in the library + audit log).
-    engine: isVeo ? "veo" : "runway",
+    // v60: the fal path can now run non-Veo models via FAL_VIDEO_MODEL —
+    // derive the family from the model id actually used so certificate
+    // provenance stays truthful (kling renders must not claim "veo").
+    engine: isVeo
+      ? (String(clipResults?.[0]?.model || "").includes("kling") ? "kling" : "veo")
+      : "runway",
     upload,
     narration,
     scenes: scenesMeta
