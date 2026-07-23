@@ -106,14 +106,85 @@ const NEGATIVE_PROMPT =
   "texture boil, flickering, people, animals, text, captions, watermarks, logos";
 
 function promptFor(scene) {
-  const room = scene.roomType;
+  // Same room-class regexes as production's buildConstrainedVeoPrompt —
+  // hard-set roomTypes come straight from audit rows ("outdoor", "detail",
+  // "front"…) and must route the way production routed them.
+  const room = String(scene.roomType || "").toLowerCase();
   let base;
-  if (room === "pool") base = CONSTRAINED.pool;
-  else if (room === "exterior") base = CONSTRAINED.exterior;
-  else if (room === "kitchen") base = CONSTRAINED.kitchen;
-  else if (room === "bathroom") base = CONSTRAINED.generic;
+  if (/pool|spa/.test(room)) base = CONSTRAINED.pool;
+  else if (/exterior|backyard|outdoor|front|yard|patio/.test(room)) base = CONSTRAINED.exterior;
+  else if (/kitchen/.test(room)) base = CONSTRAINED.kitchen;
+  else if (/bath/.test(room)) base = CONSTRAINED.generic;
   else base = CINEMATIC;
   return base + FIDELITY_SUFFIX;
+}
+
+/* ── Hard set — self-assembled from production failures ──────────────────
+   The canary photos are AI-generated ideal shots; run 1 went 30/30 PASS
+   across every model — zero discrimination. The audit log records, per
+   scene, how hard Veo had to fight: attempts, engineUsed (photo_motion =
+   floored), sweepReplaced, fallbackReason. Scenes that needed retries or
+   floors ARE the hard set — real customer photos, selected by measured
+   failure, no curation bias. Photo URLs are re-signed fresh (audit may
+   hold expired signed links). */
+
+async function loadHardScenes(limit) {
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey) {
+    throw new Error("--set=hard needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (run this on the worker).");
+  }
+  const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
+  let rows = [];
+  for (const order of ["&order=created_at.desc", ""]) {
+    const r = await fetch(
+      `${supabaseUrl}/rest/v1/render_audit_log?select=job_id,scenes,listing_address&internal=not.is.true&limit=30${order}`,
+      { headers }
+    );
+    if (r.ok) { rows = await r.json().catch(() => []); break; }
+  }
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error("no audit rows found for hard set.");
+
+  const { createClient } = await import("@supabase/supabase-js");
+  const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const seen = new Set();
+  const hard = [];
+  for (const row of rows) {
+    for (const s of Array.isArray(row.scenes) ? row.scenes : []) {
+      const struggled = (Number(s.attempts) >= 2) || s.engineUsed === "photo_motion" ||
+        s.sweepReplaced === true || Boolean(s.fallbackReason);
+      if (!struggled || !s.photoUrl) continue;
+      // Dedupe on the storage object path (same photo, different tokens).
+      const m = String(s.photoUrl).match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/([^?]+)/);
+      const key = m ? `${m[1]}/${m[2]}` : s.photoUrl;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Re-sign storage URLs fresh; pass non-storage URLs through.
+      let imageUrl = s.photoUrl;
+      if (m) {
+        const { data, error } = await sb.storage.from(m[1]).createSignedUrl(decodeURIComponent(m[2]), 7 * 24 * 3600);
+        if (error || !data?.signedUrl) continue; // photo gone — skip
+        imageUrl = data.signedUrl;
+      }
+      hard.push({
+        name: `h${String(hard.length + 1).padStart(2, "0")}-${(s.roomType || "scene").replace(/[^a-z0-9]/gi, "")}`,
+        roomType: s.roomType || "",
+        index: hard.length,
+        imageUrl,
+        meta: {
+          jobId: row.job_id,
+          address: row.listing_address || "",
+          attempts: s.attempts ?? null,
+          engineUsed: s.engineUsed || "",
+          sweepReplaced: Boolean(s.sweepReplaced),
+          fallbackReason: s.fallbackReason || ""
+        }
+      });
+      if (hard.length >= limit) return hard;
+    }
+  }
+  if (hard.length === 0) throw new Error("audit rows contained no struggled scenes with photo URLs.");
+  return hard;
 }
 
 /* ── Candidate registry ──────────────────────────────────────────────────
@@ -176,13 +247,15 @@ const MODELS = {
 /* ── Small utils ─────────────────────────────────────────────────────── */
 
 function parseArgs(argv) {
-  const args = { full: false, dry: false, models: Object.keys(MODELS), scenes: null, out: null };
+  const args = { full: false, dry: false, models: Object.keys(MODELS), scenes: null, out: null, set: "canary", limit: 12 };
   for (const a of argv.slice(2)) {
     if (a === "--full") args.full = true;
     else if (a === "--dry") args.dry = true;
     else if (a.startsWith("--models=")) args.models = a.slice(9).split(",").map((s) => s.trim()).filter(Boolean);
     else if (a.startsWith("--scenes=")) args.scenes = a.slice(9).split(",").map((s) => s.trim()).filter(Boolean);
     else if (a.startsWith("--out=")) args.out = a.slice(6);
+    else if (a.startsWith("--set=")) args.set = a.slice(6);
+    else if (a.startsWith("--limit=")) args.limit = Math.max(1, Number(a.slice(8)) || 12);
   }
   return args;
 }
@@ -272,16 +345,34 @@ async function main() {
   const unknown = args.models.filter((k) => !MODELS[k]);
   if (unknown.length) console.warn(`unknown models ignored: ${unknown.join(", ")} (have: ${Object.keys(MODELS).join(", ")})`);
 
-  let scenes = args.full ? SCENES : SCENES.filter((s) => s.name === "04-kitchen");
-  if (args.scenes) scenes = SCENES.filter((s) => args.scenes.some((q) => s.name.includes(q)));
+  let scenes;
+  if (args.set === "hard") {
+    const all = await loadHardScenes(args.limit);
+    scenes = args.full ? all : all.slice(0, 1);
+  } else {
+    scenes = args.full ? SCENES : SCENES.filter((s) => s.name === "04-kitchen");
+  }
+  if (args.scenes) scenes = scenes.filter((s) => args.scenes.some((q) => s.name.includes(q)));
   if (scenes.length === 0) { console.error("no scenes selected"); process.exit(1); }
 
   const est = modelKeys.reduce((sum, k) => sum + MODELS[k].estPerScene * scenes.length, 0);
   console.log(`\n=== i2v bake-off ===`);
+  console.log(`set    : ${args.set}${args.set === "hard" ? " (production failure scenes, from audit log)" : ""}`);
   console.log(`models : ${modelKeys.map((k) => MODELS[k].label).join(" | ")}`);
-  console.log(`scenes : ${scenes.length} (${scenes.map((s) => s.name.slice(0, 2)).join(",")})`);
+  console.log(`scenes : ${scenes.length} (${scenes.map((s) => s.name.slice(0, 3)).join(",")})`);
   console.log(`judge  : ${qcEnabled() ? "production QC (frame-vs-photo)" : "DISABLED — no OPENAI/GEMINI key; eyeball-only"}`);
   console.log(`est    : ~$${est.toFixed(2)} fal spend\n`);
+  if (args.set === "hard") {
+    for (const s of scenes) {
+      console.log(`  ${s.name} · ${s.meta.address || s.meta.jobId} · veo needed: ${[
+        s.meta.attempts ? `${s.meta.attempts} attempts` : "",
+        s.meta.engineUsed === "photo_motion" ? "FLOORED" : "",
+        s.meta.sweepReplaced ? "sweep-replaced" : "",
+        s.meta.fallbackReason ? `(${String(s.meta.fallbackReason).slice(0, 60)})` : ""
+      ].filter(Boolean).join(" ")}`);
+    }
+    console.log("");
+  }
   if (args.dry) { console.log("(dry run — no API calls)"); return; }
   if (!process.env.FAL_KEY) { console.error("FAL_KEY not set."); process.exit(1); }
 
@@ -296,11 +387,14 @@ async function main() {
   for (const modelKey of modelKeys) {
     const model = MODELS[modelKey];
     console.log(`\n── ${model.label} (${model.endpoint}) ──`);
-    const frameDir = path.join(outDir, "frames", modelKey);
+    // Per-set frame dirs — canary and hard runs share the date dir and
+    // must not interleave their contact sheets.
+    const frameDir = path.join(outDir, "frames", `${args.set}-${modelKey}`);
     await fs.mkdir(frameDir, { recursive: true });
 
     await pMap(scenes, SCENE_CONCURRENCY, async (scene) => {
       const row = { model: modelKey, scene: scene.name, roomType: scene.roomType };
+      if (scene.meta) row.veoHistory = scene.meta;
       try {
         const gen = await generateOne(fal, modelKey, scene, outDir);
         row.latencySec = gen.latencyMs ? Math.round(gen.latencyMs / 1000) : null;
@@ -326,16 +420,16 @@ async function main() {
       rows.push(row);
     });
 
-    // Contact sheet: mid-frame of every scene, one image per model.
+    // Contact sheet: mid-frame of every scene, one image per model per set.
     await new Promise((resolve) => {
-      const proc = spawn("ffmpeg", ["-y", "-v", "error", "-framerate", "1", "-i", path.join(frameDir, "%02d.png"), "-vf", `tile=${Math.min(scenes.length, 6)}x${Math.ceil(scenes.length / 6)}`, "-frames:v", "1", path.join(outDir, `sheet-${modelKey}.png`)]);
+      const proc = spawn("ffmpeg", ["-y", "-v", "error", "-framerate", "1", "-i", path.join(frameDir, "%02d.png"), "-vf", `tile=${Math.min(scenes.length, 6)}x${Math.ceil(scenes.length / 6)}`, "-frames:v", "1", path.join(outDir, `sheet-${args.set}-${modelKey}.png`)]);
       proc.on("close", () => resolve());
       proc.on("error", () => resolve());
     });
   }
 
   /* Summary table */
-  const lines = ["# i2v bake-off results", "", `date: ${new Date().toISOString()} · scenes: ${scenes.length} · judge: ${qcEnabled() ? "production QC" : "NONE"}`, "",
+  const lines = ["# i2v bake-off results", "", `date: ${new Date().toISOString()} · set: ${args.set} · scenes: ${scenes.length} · judge: ${qcEnabled() ? "production QC" : "NONE"}`, "",
     "| model | QC pass | errors | avg latency | est $/scene | est $/9-scene render | clips |",
     "|---|---|---|---|---|---|---|"];
   for (const k of modelKeys) {
@@ -351,8 +445,8 @@ async function main() {
   for (const x of rows.filter((x) => (x.qcChecked && !x.qcPass) || x.error)) {
     lines.push(`- **${MODELS[x.model].label} / ${x.scene}**: ${x.error ? `ERROR ${x.error}` : x.qcReasons.join("; ")}`);
   }
-  await fs.writeFile(path.join(outDir, "SUMMARY.md"), lines.join("\n"));
-  await fs.writeFile(path.join(outDir, "results.json"), JSON.stringify({ scenes: scenes.map((s) => s.name), rows }, null, 2));
+  await fs.writeFile(path.join(outDir, `SUMMARY-${args.set}.md`), lines.join("\n"));
+  await fs.writeFile(path.join(outDir, `results-${args.set}.json`), JSON.stringify({ set: args.set, scenes: scenes.map((s) => s.name), rows }, null, 2));
   await fs.rm(path.join(outDir, "tmp"), { recursive: true, force: true }).catch(() => {});
   console.log(`\nDone. Results: ${outDir}\n${lines.slice(4, 6 + modelKeys.length).join("\n")}`);
 
@@ -364,7 +458,7 @@ async function main() {
       const { createClient } = await import("@supabase/supabase-js");
       const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
       const runId = path.basename(outDir);
-      const files = ["SUMMARY.md", "results.json", ...modelKeys.map((k) => `sheet-${k}.png`)];
+      const files = [`SUMMARY-${args.set}.md`, `results-${args.set}.json`, ...modelKeys.map((k) => `sheet-${args.set}-${k}.png`)];
       console.log("\nShareable links (7 days):");
       for (const f of files) {
         try {
