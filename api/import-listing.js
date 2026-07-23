@@ -253,6 +253,35 @@ function extractPagePhotos(html) {
   return [...found].slice(0, MAX_PHOTOS);
 }
 
+// v58.2: canonical Realtor.com links are ID-only
+// (/realestateandhomes-detail/M2202013685 — no address in the slug), so when
+// the URL parser comes up empty the page itself is the address source.
+// Portals ship schema.org JSON-LD (streetAddress/addressLocality/…) and an
+// og:title of the form "61 W Wilshire Dr, Phoenix, AZ 85003 …" — try both.
+export function extractAddressFromHtml(html) {
+  const text = String(html);
+  const grab = (key) => {
+    const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"]{2,80})"`));
+    return m ? m[1].trim() : "";
+  };
+  let line = grab("streetAddress");
+  let city = grab("addressLocality");
+  // Exactly two letters or nothing — "Arizona" must NOT become "AR"(kansas);
+  // long-form regions fall through to the og:title parse instead.
+  let state = (grab("addressRegion").match(/^[A-Za-z]{2}$/) || [""])[0].toUpperCase();
+  let zip = (grab("postalCode").match(/\d{5}/) || [""])[0];
+  if (!line || !city || !state) {
+    const t = text.match(/property=["']og:title["'][^>]*content=["']([^"']+)["']/i)
+      || text.match(/content=["']([^"']+)["'][^>]*property=["']og:title["']/i)
+      || text.match(/<title>([^<]+)<\/title>/i);
+    const m = t && t[1].match(/^\s*([0-9][^,<>]{2,60}?),\s*([A-Za-z .'-]{2,40}?),?\s+([A-Z]{2})[ ,]*(\d{5})/);
+    if (m) { line = m[1].trim(); city = m[2].trim(); state = m[3]; zip = m[4]; }
+  }
+  if (!line || !city || !state || !/\d/.test(line)) return null;
+  const display = [line, city, [state, zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  return { line, city, state, zip, display, query: [line, city, state, zip].filter(Boolean).join(" ") };
+}
+
 /* ============================================================
    4. Download → user's listing-photos storage
    ============================================================ */
@@ -351,10 +380,12 @@ export default async function handler(request, response) {
   }
 
   const warnings = [];
-  const address = parseAddressFromUrl(url);
+  const t0 = Date.now();
+  const host = parsedUrl.hostname.replace(/^www\./, "").toLowerCase();
+  let address = parseAddressFromUrl(url);
 
   // Facts + (possibly) licensed photos from RentCast.
-  const rc = address ? await rentcastFacts(address.query) : { facts: null, photos: [] };
+  let rc = address ? await rentcastFacts(address.query) : { facts: null, photos: [] };
 
   // Page photos — best-effort; portals often block datacenter fetches.
   let pagePhotoUrls = [];
@@ -374,16 +405,32 @@ export default async function handler(request, response) {
     const proxyKey = process.env.SCRAPER_API_KEY || "";
     let html = "";
     if (proxyKey) {
-      try {
-        const prox = await fetchWithTimeout(
-          `https://api.scraperapi.com/?api_key=${encodeURIComponent(proxyKey)}&url=${encodeURIComponent(url)}&render=true&country_code=us`,
-          { redirect: "follow" },
-          PROXY_PAGE_TIMEOUT_MS
-        );
-        if (prox.ok) html = await prox.text();
-        else warnings.push(`Photo proxy returned ${prox.status} — trying direct.`);
-      } catch {
-        warnings.push("Photo proxy timed out — trying direct.");
+      // v58.2: realtor.com never yields to the standard pool (Kasada), but
+      // its pages are SSR'd — so skip JS rendering there and escalate the
+      // proxy tier instead (premium 10cr → ultra_premium 30cr, mutually
+      // exclusive params per ScraperAPI docs). Zillow/Redfin stay on the
+      // proven render=true path (10cr). Each attempt gets a shorter budget
+      // so two tiers still fit the 120s function ceiling.
+      const tiers = /(^|\.)realtor\.com$/.test(host)
+        ? ["premium=true", "ultra_premium=true"]
+        : ["render=true"];
+      const perAttemptMs = tiers.length > 1 ? 35000 : PROXY_PAGE_TIMEOUT_MS;
+      for (const tier of tiers) {
+        try {
+          const prox = await fetchWithTimeout(
+            `https://api.scraperapi.com/?api_key=${encodeURIComponent(proxyKey)}&url=${encodeURIComponent(url)}&${tier}&country_code=us`,
+            { redirect: "follow" },
+            perAttemptMs
+          );
+          if (prox.ok) {
+            html = await prox.text();
+            if (html) break;
+          } else {
+            warnings.push(`Photo proxy (${tier.split("=")[0]}) returned ${prox.status}.`);
+          }
+        } catch {
+          warnings.push(`Photo proxy (${tier.split("=")[0]}) timed out.`);
+        }
       }
     }
     if (!html) {
@@ -398,6 +445,15 @@ export default async function handler(request, response) {
     if (html) {
       pagePhotoUrls = extractPagePhotos(html);
       if (pagePhotoUrls.length > 0) photoSource = proxyKey ? "listing_page_proxy" : "listing_page";
+      // v58.2: ID-only links (realtor.com M-ids) carry no address — pull it
+      // from the page markup, then backfill facts from RentCast.
+      if (!address) {
+        address = extractAddressFromHtml(html);
+        if (address) {
+          const late = await rentcastFacts(address.query);
+          rc = { facts: late.facts, photos: rc.photos };
+        }
+      }
     }
   }
 
@@ -421,7 +477,23 @@ export default async function handler(request, response) {
     }
   }
 
+  // v58.2: one structured line per import — Vercel logs are otherwise blind
+  // to WHY a portal produced zero photos (warnings only ship in the response
+  // body, which the UI drops). This is the black box recorder.
+  const logImport = (status) => console.log(JSON.stringify({
+    importListing: {
+      host,
+      status,
+      photoSource,
+      photos: stored.length,
+      address: address ? address.display : null,
+      warnings,
+      ms: Date.now() - t0
+    }
+  }));
+
   if (!address && stored.length === 0) {
+    logImport("not_found");
     return response.status(200).json({
       status: "not_found",
       message:
@@ -429,6 +501,7 @@ export default async function handler(request, response) {
     });
   }
 
+  logImport("ok");
   return response.status(200).json({
     status: "ok",
     address: address
