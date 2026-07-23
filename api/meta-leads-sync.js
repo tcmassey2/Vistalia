@@ -244,6 +244,7 @@ async function processLead({ lead, formId, supabaseUrl, serviceKey, summary }) {
       email,
       full_name: fields.fullName || null,
       licensed: fields.licensed,
+      listing_url: fields.listingUrl || null,
       raw: lead.field_data || null,
       created_time: lead.created_time || null
     })
@@ -345,7 +346,7 @@ function adminHeaders(serviceKey) {
    form builder: standard ones are lowercase ("email", "full_name"); custom
    multiple-choice questions arrive with the question text as the name. */
 function parseFieldData(fieldData) {
-  const out = { email: "", fullName: "", licensed: null };
+  const out = { email: "", fullName: "", licensed: null, listingUrl: "" };
   for (const f of Array.isArray(fieldData) ? fieldData : []) {
     const name = String(f?.name || "").toLowerCase();
     const value = Array.isArray(f?.values) ? String(f.values[0] || "") : "";
@@ -353,6 +354,16 @@ function parseFieldData(fieldData) {
     if (name === "email" || name.includes("email")) out.email = value;
     else if (name === "full_name" || name.includes("full name") || name === "name") out.fullName = value;
     else if (name.includes("licensed")) out.licensed = /^yes/i.test(value.trim());
+    // v57: the listing-link question ("link to your current listing").
+    // Only URLs qualify — the auto-render pass feeds api/import-listing,
+    // which is URL-based. A typed street address is kept in `raw` but
+    // doesn't trigger auto-render. Leads often paste without the scheme
+    // ("zillow.com/homedetails/…"), so a bare known-portal domain counts.
+    else if (name.includes("listing") || name.includes("property")) {
+      const v = value.trim();
+      if (/^https?:\/\/\S+$/i.test(v)) out.listingUrl = v;
+      else if (/^(www\.)?(zillow|redfin|realtor|homes|trulia|compass|kw|exp)\S*\.\S+/i.test(v)) out.listingUrl = `https://${v}`;
+    }
   }
   return out;
 }

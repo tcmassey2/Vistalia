@@ -302,7 +302,18 @@ export default async function handler(request, response) {
     response.setHeader("Allow", "POST");
     return response.status(405).json({ status: "failed", error: "Use POST." });
   }
-  const auth = await requireUser(request, response);
+  // v57: on-behalf import for the listing-link auto-render — the worker
+  // imports a lead's listing with the shared internal secret so photos
+  // land in the LEAD's storage under their projectId, exactly as if they
+  // had pasted the link themselves. No secret configured → no bypass.
+  const internalSecret = String(request.headers["x-internal-secret"] || "");
+  const onBehalfUserId =
+    !!process.env.CRON_SECRET && internalSecret === process.env.CRON_SECRET
+      ? String(request.body?.onBehalfOfUserId || "").trim()
+      : "";
+  const auth = onBehalfUserId
+    ? { ok: true, userId: onBehalfUserId }
+    : await requireUser(request, response);
   if (!auth.ok) return;
   const limited = await rateLimit(request, response, {
     bucket: "import-listing",

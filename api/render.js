@@ -386,8 +386,15 @@ async function enforceTierGuard(request, manifest) {
   // If Supabase isn't fully configured, allow the render (development / demo mode).
   if (!supabaseUrl || !anonKey || !serviceKey) return { ok: true };
 
+  // v57 (hoisted above the anonymous-engine gate — internal submissions
+  // carry no user Bearer token and must not be treated as anonymous):
+  const internalSecretEarly = String(request.headers["x-internal-secret"] || "");
+  const isOnBehalf =
+    !!process.env.CRON_SECRET && internalSecretEarly === process.env.CRON_SECRET &&
+    !!String(manifest?.project?.userId || "").trim();
+
   const auth = String(request.headers.authorization || "");
-  if (!auth.startsWith("Bearer ")) {
+  if (!auth.startsWith("Bearer ") && !isOnBehalf) {
     // Launch-audit fix: anonymous requests may ONLY use the free Remotion
     // (Ken Burns) engine. The old check blocked just "runway" — written
     // before the v26.3 engine rename — so an unauthenticated POST with
@@ -405,16 +412,27 @@ async function enforceTierGuard(request, manifest) {
     return { ok: true };
   }
 
-  const token = auth.slice(7);
-  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    headers: { apikey: anonKey, Authorization: `Bearer ${token}` }
-  });
-  if (!userRes.ok) {
-    return { ok: false, status: 401, error: "Authentication expired. Sign in again." };
+  // v57: on-behalf submission for the listing-link auto-render — the
+  // worker submits a lead's free video with the shared internal secret
+  // and the lead's userId (isOnBehalf computed above the anonymous gate).
+  // Everything downstream (tier state, watermark, 30s cap, usage
+  // accounting) runs EXACTLY as if the lead clicked Generate — that's the
+  // point of entering through this door instead of enqueueing directly.
+  let userId = "";
+  if (isOnBehalf) {
+    userId = String(manifest.project.userId).trim();
+  } else {
+    const token = auth.slice(7);
+    const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { apikey: anonKey, Authorization: `Bearer ${token}` }
+    });
+    if (!userRes.ok) {
+      return { ok: false, status: 401, error: "Authentication expired. Sign in again." };
+    }
+    const user = await userRes.json().catch(() => ({}));
+    userId = user?.id;
+    if (!userId) return { ok: false, status: 401, error: "Authentication invalid." };
   }
-  const user = await userRes.json().catch(() => ({}));
-  const userId = user?.id;
-  if (!userId) return { ok: false, status: 401, error: "Authentication invalid." };
 
   const stateRes = await fetch(`${supabaseUrl}/rest/v1/rpc/get_user_tier_state`, {
     method: "POST",

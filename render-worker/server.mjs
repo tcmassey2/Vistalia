@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { renderVistaliaJob } from "./src/render-job.mjs";
 import { runCanaryOnBoot } from "./src/canary.mjs";
+import { startAutoRenderClock } from "./src/lead-auto-render.mjs";
 import { renderRunwayJob } from "./src/runway-job.mjs";
 import { regenerateScene } from "./src/regenerate-job.mjs";
 
@@ -596,6 +597,9 @@ if (QUEUE_ENABLED) {
   // (fail-open, once per commit — see src/canary.mjs). Delayed so the
   // queue loop is live before the canary job lands in it.
   setTimeout(() => { runCanaryOnBoot(); }, 15_000).unref();
+  // v57: listing-link auto-render — one lead per tick (see
+  // src/lead-auto-render.mjs).
+  startAutoRenderClock();
 } else {
   console.info("[queue] pull-queue OFF (no Supabase env) — rendering inline.");
 }

@@ -327,7 +327,12 @@ export default async function handler(request, response) {
     !!process.env.CRON_SECRET &&
     String(request.headers["x-canary-secret"] || "") === process.env.CRON_SECRET;
   const auth = isCanary
-    ? { ok: true, userId: process.env.CANARY_USER_ID || null }
+    ? {
+        ok: true,
+        // v57: the auto-render pass plans on behalf of a lead — same
+        // secret, explicit user attribution via header.
+        userId: String(request.headers["x-on-behalf-user"] || "").trim() || process.env.CANARY_USER_ID || null
+      }
     : await requireUser(request, response);
   if (!auth.ok) return;
   if (!isCanary) {
