@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { renderVistaliaJob } from "./src/render-job.mjs";
+import { runCanaryOnBoot } from "./src/canary.mjs";
 import { renderRunwayJob } from "./src/runway-job.mjs";
 import { regenerateScene } from "./src/regenerate-job.mjs";
 
@@ -591,6 +592,10 @@ if (QUEUE_ENABLED) {
   setInterval(pollAndProcess, 2500).unref();
   setInterval(() => { sbRpc("requeue_stuck_render_jobs", { p_timeout_minutes: 20 }).catch(() => {}); }, 5 * 60 * 1000).unref();
   console.info(`[queue] pull-queue ON · worker=${WORKER_ID} · concurrency=${RENDER_CONCURRENCY}`);
+  // v56: first boot of a NEW deploy fires one internal canary render
+  // (fail-open, once per commit — see src/canary.mjs). Delayed so the
+  // queue loop is live before the canary job lands in it.
+  setTimeout(() => { runCanaryOnBoot(); }, 15_000).unref();
 } else {
   console.info("[queue] pull-queue OFF (no Supabase env) — rendering inline.");
 }
@@ -677,7 +682,10 @@ async function runRenderJob(jobId, body) {
       const notifyBase = process.env.APP_URL || "https://vistalia.ai";
       const userId = body?.manifest?.project?.userId || "";
       const mp4Url = publishedResult?.mp4Url || publishedResult?.masterUrl || "";
-      if (userId && mp4Url) {
+      // v56: canary renders notify the FOUNDER (no customer email), and
+      // may run without a userId at all.
+      const isInternal = body?.manifest?.internal === true;
+      if ((userId || isInternal) && mp4Url) {
         fetch(`${notifyBase}/api/notify-render-complete`, {
           method: "POST",
           headers: {
@@ -688,6 +696,7 @@ async function runRenderJob(jobId, body) {
             userId,
             jobId,
             mp4Url,
+            internal: isInternal,
             thumbnailUrl: publishedResult?.thumbnailUrl || "",
             listingTitle: body?.manifest?.project?.address || body?.manifest?.project?.title || "Your listing video"
           })

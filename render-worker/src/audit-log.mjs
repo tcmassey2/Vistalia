@@ -46,6 +46,9 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     // Migration 30 adds the column; insert retries without it (same
     // deploy-order resilience as certificate_token).
     master_clean_url: upload?.formats?.clean?.mp4Url || "",
+    // v56: canary + founder smoke-test renders are excluded from founder
+    // metrics (migration 33; same deploy-order retry as the columns above).
+    internal: manifest?.internal === true,
     thumbnail_url: upload?.thumbnailUrl || "",
     social_short_count: Array.isArray(upload?.socialShorts) ? upload.socialShorts.length : 0,
     formats_count: Object.keys(upload?.formats || {}).length || 1,
@@ -96,9 +99,9 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     });
     if (!res.ok) {
       const early = await res.text().catch(() => "");
-      if (/certificate_token|master_clean_url/i.test(early)) {
-        console.warn("[Vistalia audit-log] newer column missing (run migrations 29/30) — writing audit row without certificate_token/master_clean_url.");
-        const { certificate_token, master_clean_url, ...rest } = row;
+      if (/certificate_token|master_clean_url|internal/i.test(early)) {
+        console.warn("[Vistalia audit-log] newer column missing (run migrations 29/30/33) — writing audit row without certificate_token/master_clean_url/internal.");
+        const { certificate_token, master_clean_url, internal, ...rest } = row;
         res = await fetch(`${SUPABASE_URL}/rest/v1/render_audit_log`, {
           method: "POST",
           headers: {

@@ -32,6 +32,24 @@ export default async function handler(request, response) {
   const thumbnailUrl = String(body?.thumbnailUrl || "").trim();
   const listingTitle = String(body?.listingTitle || "Your listing video").trim();
 
+  // v56: canary renders notify the founder, never a customer — and may
+  // carry no userId. Handled before the customer path's requirements.
+  if (body?.internal === true) {
+    if (!jobId || !mp4Url) {
+      return response.status(400).json({ error: "jobId and mp4Url required." });
+    }
+    const to = process.env.FOUNDER_ALERT_EMAIL || process.env.EMAIL_REPLY_TO || "support@vistalia.ai";
+    const sent = await sendTransactionalEmail({
+      to,
+      subject: `[CANARY] render complete — ${jobId}`,
+      html: `<p>Canary render finished on the new deploy.</p>` +
+        `<p><a href="${mp4Url}">Watch the master</a> and gate it before real traffic hits this code.</p>` +
+        `<p style="color:#888;font-size:12px;">${listingTitle} · job ${jobId}</p>`,
+      tags: ["canary-complete"]
+    });
+    return response.status(sent?.ok ? 200 : 502).json({ status: sent?.ok ? "sent" : "failed", canary: true });
+  }
+
   if (!userId || !jobId || !mp4Url) {
     return response.status(400).json({ error: "userId, jobId, and mp4Url required." });
   }

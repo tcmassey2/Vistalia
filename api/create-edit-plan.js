@@ -319,14 +319,25 @@ export default async function handler(request, response) {
   // v26: auth + rate limit. This is the most expensive OpenAI call in the
   // product (Vision on up to 12 photos) and was previously open to anyone
   // with the URL.
-  const auth = await requireUser(request, response);
+  // v56: the render worker's canary calls this endpoint with a shared
+  // secret instead of a user JWT — one call per deploy, exercising the
+  // live verify/polish/floor chain before customers do. The secret is the
+  // existing CRON_SECRET; no secret configured → no bypass exists.
+  const isCanary =
+    !!process.env.CRON_SECRET &&
+    String(request.headers["x-canary-secret"] || "") === process.env.CRON_SECRET;
+  const auth = isCanary
+    ? { ok: true, userId: process.env.CANARY_USER_ID || null }
+    : await requireUser(request, response);
   if (!auth.ok) return;
-  const limited = await rateLimit(request, response, {
-    bucket: "edit-plan",
-    max: 20,
-    windowMs: 60 * 60 * 1000
-  });
-  if (limited) return;
+  if (!isCanary) {
+    const limited = await rateLimit(request, response, {
+      bucket: "edit-plan",
+      max: 20,
+      windowMs: 60 * 60 * 1000
+    });
+    if (limited) return;
+  }
 
   const body = parseBody(request.body);
   const rawPhotos = Array.isArray(body.photos) ? body.photos : [];

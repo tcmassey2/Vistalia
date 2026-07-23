@@ -64,8 +64,12 @@ export default async function handler(request, response) {
     count(`meta_leads?select=lead_id&emailed_at=not.is.null`),
     count(`meta_leads?select=lead_id&nudged_at=not.is.null`),
     count(`meta_leads?select=lead_id&user_created=is.true`),
-    count(`render_audit_log?select=job_id`),
-    count(`render_audit_log?select=job_id&created_at=gte.${enc}`),
+    // v56: canary + founder smoke-test renders (internal=true, migration
+    // 33) are excluded — ~100 pre-launch smoke tests inflating this count
+    // misdirected a whole funnel diagnosis. not.is.true also matches
+    // pre-migration nulls.
+    count(`render_audit_log?select=job_id&internal=not.is.true`),
+    count(`render_audit_log?select=job_id&internal=not.is.true&created_at=gte.${enc}`),
     count(`profiles?select=user_id`),
     count(`profiles?select=user_id&created_at=gte.${enc}`),
     count(`profiles?select=user_id&tier=in.(pro,studio)`),
@@ -161,7 +165,7 @@ export default async function handler(request, response) {
   try {
     const restHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
     const rows = await fetch(
-      `${supabaseUrl}/rest/v1/render_audit_log?select=job_id,agent_user_id,engine,listing_address,listing_city,project_title,master_mp4_url,thumbnail_url,formats_count,narration_applied,status,created_at&order=created_at.desc&limit=20`,
+      `${supabaseUrl}/rest/v1/render_audit_log?select=job_id,agent_user_id,engine,listing_address,listing_city,project_title,master_mp4_url,thumbnail_url,formats_count,narration_applied,status,created_at&internal=not.is.true&order=created_at.desc&limit=20`,
       { headers: restHeaders }
     ).then((r) => (r.ok ? r.json() : [])).catch(() => []);
 
