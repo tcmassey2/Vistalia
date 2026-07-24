@@ -286,6 +286,16 @@ function buildOpenAIRequest(photos) {
           additionalProperties: false,
           properties: {
             photoId: { type: "string", enum: photoIds },
+            // v62.5 HARD CONTENT GATE (the angry-customer class): is this an
+            // actual PHOTOGRAPH (or photoreal render) of the property, or a
+            // graphic? Floor plans, site plans, surveys, brochures, maps,
+            // and logos must NEVER appear as video scenes — this field is
+            // enforced in CODE below, immune to the inclusion default and
+            // the min-keep floor.
+            contentType: {
+              type: "string",
+              enum: ["property_photo", "floor_plan_or_site_plan", "document_or_brochure", "map", "other_graphic"]
+            },
             roomType: {
               type: "string",
               enum: ["exterior", "kitchen", "living", "bedroom", "bathroom", "outdoor", "amenity", "detail", "skip"]
@@ -309,7 +319,7 @@ function buildOpenAIRequest(photos) {
             // One-line reason for keep/reject (shown to the user).
             reason: { type: "string" }
           },
-          required: ["photoId", "roomType", "quality", "pickWorthiness", "isHero", "tourOrder", "reason"]
+          required: ["photoId", "contentType", "roomType", "quality", "pickWorthiness", "isHero", "tourOrder", "reason"]
         }
       }
     },
@@ -320,11 +330,13 @@ function buildOpenAIRequest(photos) {
     "You are a senior real-estate cinematographer + editor curating photos for a 60-90 second listing video.",
     "Two jobs: (1) score each photo for keep/reject, (2) assign a global tour order for the keepers.",
     "",
-    "INCLUSION DEFAULT: agents have already curated their upload; lean toward INCLUDING photos in the tour. Only reject if a photo is genuinely unusable. A typical listing should have 90%+ of uploads in the final cut. Aim to KEEP at least 80% of input photos, more for sets under 25.",
+    "FIRST, contentType — the absolute gate: for every image decide if it is an actual PHOTOGRAPH (or photoreal architectural rendering) of this property → 'property_photo', or a GRAPHIC: 'floor_plan_or_site_plan' (any architectural drawing, plat, survey, elevation sheet), 'document_or_brochure' (MLS sheets, flyers, text pages), 'map', or 'other_graphic' (logos, agent headshots, collages). Anything that is not 'property_photo' is ALWAYS rejected (tourOrder=0) — no other rule, default, or keep-target overrides this. A video scene animating a floor plan is a customer-facing defect.",
+    "",
+    "INCLUSION DEFAULT (applies ONLY to property_photo images): agents have already curated their upload; lean toward INCLUDING photos in the tour. Only reject if a photo is genuinely unusable. A typical listing should have 90%+ of uploads in the final cut. Aim to KEEP at least 80% of input photos, more for sets under 25.",
     "",
     "REJECT criteria (rare — set tourOrder=0 only when one of these clearly applies):",
+    "- Not a property_photo (see the contentType gate above — this one is mandatory, not rare).",
     "- Out-of-focus, severely underexposed, or unusable composition.",
-    "- Documents, floor plans, neighborhood maps, MLS sheets.",
     "- Photos that are clearly NOT this property (stock photos, neighborhood shots, etc.).",
     "- Two photos that are exactly the same shot (genuine duplicates from burst mode).",
     "- Severely cluttered or actively-staged-mid-shoot (people in frame, visible photographer reflection).",
@@ -410,6 +422,9 @@ function parseOpenAIScores(payload, originalPhotos) {
       .filter((row) => row?.photoId && byId.has(row.photoId))
       .map((row) => ({
         photoId: String(row.photoId),
+        // v62.5: absent/unknown contentType (older model output) counts as a
+        // photo — the gate must never reject on a missing field.
+        contentType: String(row.contentType || "property_photo").toLowerCase(),
         roomType: String(row.roomType || "skip").toLowerCase(),
         quality: clampNumber(row.quality, 0, 100),
         pickWorthiness: clampNumber(row.pickWorthiness, 0, 100),
@@ -423,9 +438,22 @@ function parseOpenAIScores(payload, originalPhotos) {
 }
 
 function pickAndOrder(scored) {
+  // Step 0 (v62.5): BANISH non-photos in CODE — floor plans, documents,
+  // maps, graphics. Unlike "skip" (quality judgment, floor may reclaim),
+  // banished entries are structurally ineligible: no ranking, no quota, no
+  // min-keep-floor reclamation, ever. This is the deterministic guarantee
+  // behind the prompt's contentType gate — the 40th St import shipped two
+  // floor-plan sheets as scenes 11/12 because the old floor logic could
+  // dip back into everything the model rejected.
+  const banished = scored.filter((r) => r.contentType && r.contentType !== "property_photo");
+  if (banished.length) {
+    console.info(`[curate] ${banished.length} non-photo image(s) banished: ${banished.map((b) => `${b.photoId}(${b.contentType})`).join(", ")}`);
+  }
+  const eligible = scored.filter((r) => !banished.includes(r));
+
   // Step 1: drop "skip" room types entirely — they're not part of any tour.
-  const valid = scored.filter((r) => r.roomType !== "skip");
-  const skipped = scored.filter((r) => r.roomType === "skip");
+  const valid = eligible.filter((r) => r.roomType !== "skip");
+  const skipped = eligible.filter((r) => r.roomType === "skip");
 
   // Step 2: sort by composite score = pickWorthiness * 0.7 + quality * 0.3.
   // Hero candidates get a +5 boost so they outrank merely-good photos.
@@ -462,7 +490,12 @@ function pickAndOrder(scored) {
   // already pre-curated their uploads — Troy reported the AI keeping only
   // 15 of 25 photos which produces a 50-60s video instead of the expected
   // 2 minutes. Force a floor of min(input, max(20, 80% of input)).
-  const inputCount = scored.length + skipped.length;
+  // v62.5: the floor counts only ELIGIBLE (property_photo) images — banished
+  // floor plans/documents must not inflate a floor that then forces
+  // marginal photos in to cover slots the graphics never deserved. (Also
+  // fixes a latent double-count: the old inputCount added `skipped` to a
+  // list that already contained it.)
+  const inputCount = eligible.length;
   const minKeepFloor = Math.min(
     TARGET_KEEP,
     Math.max(20, Math.floor(inputCount * 0.8))
@@ -545,9 +578,15 @@ function pickAndOrder(scored) {
       reason: r.reason || "Lower pick-worthiness than the chosen 24."
     }));
   const rejected = [
-    ...skipped.map((r) => ({
+    // v62.5: banished graphics lead the rejected list with an explicit
+    // content reason — these can NEVER be reclaimed by any floor.
+    ...banished.map((r) => ({
       photoId: r.photoId,
-      reason: r.reason || "AI marked this as not a tour-worthy room (paperwork, floor plan, etc.)."
+      reason: r.reason || `Not a property photo (${String(r.contentType).replace(/_/g, " ")}) — plans, documents, and maps never appear as video scenes.`
+    })),
+    ...skipped.filter((r) => !kept.has(r.photoId)).map((r) => ({
+      photoId: r.photoId,
+      reason: r.reason || "AI marked this as not a tour-worthy room."
     })),
     ...rejectedFromValid
   ];

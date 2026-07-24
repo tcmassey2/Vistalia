@@ -318,6 +318,11 @@ function extractPagePhotos(html) {
     if (/zillowstatic\.com/i.test(url) && !/\/fp\//.test(url)) continue;
     if (/cdn-redfin\.com/i.test(url) && !/\/photo\//i.test(url)) continue;
     if (/logo|icon|sprite|badge|avatar|headshot|favicon|app-?store|play-?store|banner/i.test(url)) continue;
+    // v62.5: non-photo listing media — floor plans, site plans, surveys,
+    // plats, brochures, elevation sheets — must never become video scenes
+    // (the angry-customer class). URL keywords are the free first net; the
+    // curation Vision pass (contentType gate) catches unlabeled ones.
+    if (/floor-?plan|site-?plan|survey|plat[-_.]|blueprint|brochure|flyer|elevation|schematic|diagram/i.test(url)) continue;
     const { best, key } = maximizePhotoUrl(url);
     if (!found.has(key)) {
       found.set(key, { url: best, fallbackUrl: best === url ? "" : url });
