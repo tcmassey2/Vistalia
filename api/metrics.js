@@ -164,8 +164,15 @@ export default async function handler(request, response) {
   let recent_renders = [];
   try {
     const restHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
+    // v60.6 (Troy: "make these show up in my founder portal"): the render
+    // LIBRARY now includes internal rows (canaries + founder smoke tests),
+    // labeled via the `internal` flag so the artifact can badge them. The
+    // funnel COUNTERS above still exclude internal — metrics integrity is
+    // unchanged; this is visibility, not attribution. Canary rows only
+    // exist when CANARY_USER_ID is set on the worker (audit table requires
+    // a real user id — migration 04 NOT NULL).
     const rows = await fetch(
-      `${supabaseUrl}/rest/v1/render_audit_log?select=job_id,agent_user_id,engine,listing_address,listing_city,project_title,master_mp4_url,thumbnail_url,formats_count,narration_applied,status,created_at&internal=not.is.true&order=created_at.desc&limit=20`,
+      `${supabaseUrl}/rest/v1/render_audit_log?select=job_id,agent_user_id,engine,listing_address,listing_city,project_title,master_mp4_url,thumbnail_url,formats_count,narration_applied,status,created_at,internal&order=created_at.desc&limit=24`,
       { headers: restHeaders }
     ).then((r) => (r.ok ? r.json() : [])).catch(() => []);
 
@@ -204,6 +211,10 @@ export default async function handler(request, response) {
       narrated: Boolean(r.narration_applied),
       status: r.status || "completed",
       created_at: r.created_at,
+      // v60.6: badge material for the portal — internal=true rows are
+      // canaries/smoke tests; the job_id prefix tells which.
+      internal: r.internal === true,
+      kind: r.internal === true ? (String(r.job_id || "").startsWith("canary-") ? "canary" : "internal") : "customer",
       error: ""
     }));
 

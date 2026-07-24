@@ -58,6 +58,13 @@
   .rcard .thumb .play span{width:38px;height:38px;border-radius:50%;background:rgba(11,11,13,.62);border:1px solid rgba(230,206,142,.55);display:grid;place-items:center;color:var(--gold-light);font-size:14px;padding-left:3px}
   .rcard .thumb .fail{position:absolute;top:6px;left:6px}
   .badge.fail{background:rgba(248,113,113,.15);color:var(--red);border:1px solid rgba(248,113,113,.4)}
+  /* v60.6: internal-render badges — canaries + smoke tests now surface here */
+  .badge.canary{background:rgba(230,206,142,.16);color:var(--gold-light);border:1px solid rgba(230,206,142,.5)}
+  .badge.internal{background:rgba(255,255,255,.06);color:var(--ink-muted);border:1px solid var(--edge)}
+  .rcard .thumb .kind{position:absolute;top:6px;right:6px}
+  .elab-note{font-size:12px;color:var(--ink-muted);margin:-4px 0 10px}
+  .rcard .thumb.lab{aspect-ratio:4/3;display:grid;place-items:center;color:var(--ink-muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .ydif{font-variant-numeric:tabular-nums;font-weight:700;color:var(--gold-light)}
   .rcard .rmeta{padding:8px 10px 10px}
   .rcard .rtitle{font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .rcard .rsub{font-size:10px;color:var(--ink-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -108,6 +115,12 @@
   <section>
     <h2>Render library</h2>
     <div id="renders" class="rlib"><div class="empty">—</div></div>
+  </section>
+
+  <section>
+    <h2>Engine lab</h2>
+    <div class="elab-note">Deploy canaries &amp; the Jul&nbsp;24 Kling motion probe. YDIF = motion energy: &asymp;0.7 is a still, &asymp;2.2 is healthy Veo-era motion. v2 is the language now shipping in production. New canaries appear in the library above automatically once CANARY_USER_ID is set on the worker.</div>
+    <div id="elab" class="rlib"><div class="empty">—</div></div>
   </section>
 
   <section>
@@ -191,9 +204,13 @@
       var lastLine=failed&&r.error
         ? '<div class="rsub" style="color:var(--red)">'+esc(r.error.slice(0,80))+'</div>'
         : '<div class="rsub">'+ago(r.created_at)+(r.narrated?' · narrated':'')+(r.engine?' · '+esc(r.engine):'')+'</div>';
+      // v60.6: canaries + founder smoke tests carry a corner badge so
+      // internal work is visible but never mistaken for a customer render.
+      var kind=r.kind==='canary'?'<span class="badge canary kind">Canary</span>'
+        :(r.internal?'<span class="badge internal kind">Internal</span>':'');
       return '<div class="rcard" data-i="'+i+'">'+
         '<div class="thumb">'+thumb+(r.mp4_url?'<div class="play"><span>▶</span></div>':'')+
-        (failed?'<span class="badge fail">'+esc(r.status)+'</span>':'')+
+        (failed?'<span class="badge fail">'+esc(r.status)+'</span>':'')+kind+
         '</div>'+
         '<div class="rmeta">'+
           '<div class="rtitle">'+esc(r.title)+'</div>'+
@@ -209,6 +226,43 @@
       };
     });
   }
+
+  // v60.6 Engine lab — static index of internal test media in the public
+  // generated-videos bucket. These predate CANARY_USER_ID (no audit rows),
+  // so they're pinned here by URL; future canaries flow into the library.
+  var LAB_BASE='https://nnxqibkinobloavvsbxe.supabase.co/storage/v1/object/public/generated-videos/';
+  var LAB=[
+    {t:'Canary — first Kling render',s:'Jul 23 · slideshow bug · YDIF 0.7–1.1',u:'canary-d223e2b6/runway/canary-d223e2b6-1784861199427/master.mp4',th:'canary-d223e2b6/runway/canary-d223e2b6-1784861199427/thumbnail.png',k:'canary'},
+    {t:'Canary — earlier auto-fire',s:'Jul 23 · same engine wiring',u:'canary-d223e2b6/runway/canary-d223e2b6-1784854455926/master.mp4',th:'canary-d223e2b6/runway/canary-d223e2b6-1784854455926/thumbnail.png',k:'canary'},
+    {t:'Great room · v1 control',s:'YDIF 2.29',u:'bakeoff/motion-probe/greatroom-v1ctl.mp4',k:'probe'},
+    {t:'Great room · v2 (shipped)',s:'YDIF 4.02',u:'bakeoff/motion-probe/greatroom-v2kling.mp4',k:'probe'},
+    {t:'Great room · v3 strong',s:'YDIF 9.96 · invented close-up',u:'bakeoff/motion-probe/greatroom-v3strong.mp4',k:'probe'},
+    {t:'Kitchen · v1 control',s:'YDIF 3.12',u:'bakeoff/motion-probe/kitchen-v1ctl.mp4',k:'probe'},
+    {t:'Kitchen · v2 (shipped)',s:'YDIF 3.58',u:'bakeoff/motion-probe/kitchen-v2kling.mp4',k:'probe'},
+    {t:'Kitchen · v3 strong',s:'YDIF 2.54',u:'bakeoff/motion-probe/kitchen-v3strong.mp4',k:'probe'},
+    {t:'Bedroom · v1 control',s:'YDIF 2.94',u:'bakeoff/motion-probe/bedroom-v1ctl.mp4',k:'probe'},
+    {t:'Bedroom · v2 (shipped)',s:'YDIF 2.68',u:'bakeoff/motion-probe/bedroom-v2kling.mp4',k:'probe'},
+    {t:'Bedroom · v3 strong',s:'YDIF 1.95',u:'bakeoff/motion-probe/bedroom-v3strong.mp4',k:'probe'},
+    {t:'Courtyard · v1 control',s:'YDIF 2.14',u:'bakeoff/motion-probe/courtyard-v1ctl.mp4',k:'probe'},
+    {t:'Courtyard · v2 (shipped)',s:'YDIF 3.06',u:'bakeoff/motion-probe/courtyard-v2kling.mp4',k:'probe'},
+    {t:'Courtyard · v3 strong',s:'YDIF 3.36',u:'bakeoff/motion-probe/courtyard-v3strong.mp4',k:'probe'}
+  ];
+  function renderLab(){
+    var el=document.getElementById('elab');
+    el.innerHTML=LAB.map(function(x,i){
+      var ydif=x.s.indexOf('YDIF')===0?'<span class="ydif">'+esc(x.s)+'</span>':esc(x.s);
+      var badge=x.k==='canary'?'<span class="badge canary kind">Canary</span>':'<span class="badge internal kind">Probe</span>';
+      var thumb=x.th?'<img src="'+LAB_BASE+x.th+'" alt="" loading="lazy">':'<span>tap to play</span>';
+      return '<div class="rcard" data-l="'+i+'">'+
+        '<div class="thumb'+(x.th?'':' lab')+'">'+thumb+'<div class="play"><span>▶</span></div>'+badge+'</div>'+
+        '<div class="rmeta"><div class="rtitle">'+esc(x.t)+'</div><div class="rsub">'+ydif+'</div></div>'+
+      '</div>';
+    }).join('');
+    Array.prototype.forEach.call(el.querySelectorAll('.rcard'),function(card){
+      card.onclick=function(){ var x=LAB[Number(card.getAttribute('data-l'))]; openPlayer(LAB_BASE+x.u, x.t, x.s); };
+    });
+  }
+  renderLab();
 
   var failures=0;
   function load(){
