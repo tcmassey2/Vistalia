@@ -1520,7 +1520,11 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
       resolution,
       sceneIndex,
       photoId: scene.photoId,
-      tempDir
+      tempDir,
+      // v61: attempt 1 runs the lively bold camera language; constrained
+      // retries (the ladder's 2nd attempt) drop to the steady suffix so
+      // de-escalation is real. Troy: "the first one can be more lively."
+      motionStyle: (constrained || strictConstrained) ? "steady" : "bold"
     }),
     new Promise((_, reject) => {
       attemptDeadline = setTimeout(() => {

@@ -94,6 +94,18 @@ const KLING_MOTION_SUFFIX =
   " Slow, steady cinematic dolly-in on a motorized slider, perfectly " +
   "stabilized tripod-grade movement, smooth gliding camera with natural " +
   "perspective parallax, no handheld shake, luxury real-estate cinematography.";
+// v61 (Troy: "Make the prompts more aggressive... the whole point of the
+// 2nd render attempt is to then use the constrained prompt. The first one
+// can be more lively"): the conservative stack was Veo damage control.
+// Kling attempt 1 now uses the probe's v3-class energy (avg 4.45, one
+// overreach outlier that QC caught in testing — which is the ladder doing
+// its job); constrained retries keep the steady suffix so attempt 2 is a
+// genuine de-escalation.
+const KLING_MOTION_BOLD =
+  " Confident cinematic camera move: a smooth swift dolly glide forward" +
+  " and gently arcing sideways through the space toward the scene's focal" +
+  " point, pronounced natural perspective parallax, motorized-slider" +
+  " stability, no handheld shake, dynamic luxury real-estate film energy.";
 const KLING_NEGATIVE_EXTRA =
   ", handheld camera shake, camera bounce, bobbing, walking motion, jittery footage";
 const DEFAULT_RESOLUTION = "1080p";
@@ -155,7 +167,10 @@ export async function generateVeoClip({
   model = process.env.FAL_VIDEO_MODEL || DEFAULT_MODEL,
   resolution = process.env.FAL_RESOLUTION || DEFAULT_RESOLUTION,
   generateAudio = toBool(process.env.FAL_GENERATE_AUDIO, DEFAULT_GENERATE_AUDIO),
-  safetyTolerance = process.env.FAL_SAFETY || DEFAULT_SAFETY
+  safetyTolerance = process.env.FAL_SAFETY || DEFAULT_SAFETY,
+  // v61: "bold" = first-attempt language (lively camera; the QC ladder is
+  // the net), "steady" = constrained-retry language (calm, stabilized).
+  motionStyle = "bold"
 }) {
   if (!process.env.FAL_KEY) {
     const err = new Error(
@@ -228,7 +243,8 @@ export async function generateVeoClip({
     durationEnum,
     resolution,
     generateAudio,
-    safetyTolerance
+    safetyTolerance,
+    motionStyle
   });
 
   // v26.11 FIX: fal.subscribe() has NO internal deadline. If fal's queue stalls
@@ -393,7 +409,7 @@ export async function runVeoSmokeTest({ imageUrl, prompt, aspectRatio, duration,
 //   seedance:      prompt, image_url, duration "5|10", resolution
 // Unknown families get the minimal universal pair + aspect/duration in
 // the most common shape, which is also the safest default.
-function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, resolution, generateAudio, safetyTolerance }) {
+function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, resolution, generateAudio, safetyTolerance, motionStyle = "bold" }) {
   const m = String(model || "").toLowerCase();
   const seconds = parseInt(durationEnum, 10) || 6;
 
@@ -425,8 +441,9 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
     // probe's head-2.8s slice (what production ships after trim) measured
     // a healthy 2.01-2.97. Cost: +$0.084/scene ≈ +$1/render. The motion
     // suffix rides every Kling prompt; negative_prompt keeps the bans.
+    const motion = motionStyle === "steady" ? KLING_MOTION_SUFFIX : KLING_MOTION_BOLD;
     return {
-      prompt: prompt + KLING_MOTION_SUFFIX,
+      prompt: prompt + motion,
       image_url: imageUrl,
       duration: String(Math.min(15, Math.max(4, seconds))),
       negative_prompt: KLING_NEGATIVE_PROMPT + KLING_NEGATIVE_EXTRA,
