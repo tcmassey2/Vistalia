@@ -122,29 +122,35 @@ const KLING_MOTION_STRICT =
 // overreach outlier that QC caught in testing — which is the ladder doing
 // its job); constrained retries keep the steady suffix so attempt 2 is a
 // genuine de-escalation.
-// v62.2 (Troy, post-m81: "Turn up the prompts more. Make the motion more
-// aggressive. Instead of gimbal thing smooth drone footage"): rung 1 asks
-// for genuine aerial-cinematography energy — real travel, a wide banking
-// arc, rooms flowing past the lens — and smoothness comes from the PROMPT
-// (drone/rail language), not the vidstab gimbal pass (now default-off in
-// runway-job; KLING_STABILIZE=1 restores it if walk-tremor returns).
-// Probe context: v2-class language averaged YDIF 3.34, v3strong-class 4.45
-// with one invention outlier — which is the QC ladder's job to catch; the
-// steady/strict retry rungs below are unchanged, so de-escalation is real.
+// v62.11 REVERTED TO THE v61 TEXT (Troy: "Tone the prompts back down to
+// what they were for the spanish listing, the new prompts ruined our
+// pipeline"). This exact string produced the Spanish colonial master —
+// the best render the pipeline has ever made: QC 9/9 first-pass, sweep
+// 0 flagged, 0 floors, [motion] median 2.13, and Troy's own verdict.
+//
+// What v62.2 traded and why it lost: asking for "real speed" and a wide
+// banking arc raised raw motion to a 3.61 median, but on the 40th St
+// desert exteriors it drove TEXTURE BOIL that hard-failed QC on 3 of 9
+// scenes — all three ended up on deterministic homography floors, which
+// is LESS motion than the calm prompt would have delivered, plus flat
+// artifact-y footage. Aggressive prompting is a losing trade whenever the
+// QC ladder converts overreach into floors. Motion belongs to the calm
+// glide; keep it.
 const KLING_MOTION_BOLD =
-  " Bold cinematic drone shot: the camera flies forward through the space" +
-  " with confident purpose, sweeping through a wide banking arc that" +
-  " pulls the room past the lens and reveals layer after layer of depth," +
-  " strong perspective parallax, covering real distance like polished" +
-  " aerial cinematography on an invisible rail — buttery smooth, perfectly" +
-  " fluid, zero shake, every surface and plant crisp and stable, luxury" +
-  " real-estate film with genuine kinetic energy.";
+  " Cinematic drone-style camera: a smooth confident glide forward through" +
+  " the space, gently arcing to reveal depth toward the scene's focal point," +
+  " pronounced natural perspective parallax, floating steadicam grace," +
+  " perfectly stabilized, no handheld shake, dynamic luxury real-estate" +
+  " film energy.";
+// v62.11: the v60.9 shake bans are exactly what the Spanish render shipped
+// with. The v62.7 boil bans stay — a NEGATIVE prompt can only subtract
+// artifacts, never motion, and these name the precise failure the 40th St
+// render hit. Set KLING_BOIL_BANS=0 to get the Spanish string byte-exact.
 const KLING_NEGATIVE_EXTRA =
   ", handheld camera shake, camera bounce, bobbing, walking motion, jittery footage" +
-  // v62.7 (40th St: 3 exterior scenes hard-failed QC with "texture boil",
-  // even on the steady retry — desert foliage + CGI-render vegetation is
-  // where i2v models shimmer): the boil ban rides Kling's strongest lever.
-  ", texture boil, shimmering foliage, crawling textures, flickering leaves, warping vegetation, boiling surfaces";
+  (String(process.env.KLING_BOIL_BANS || "1") === "0"
+    ? ""
+    : ", texture boil, shimmering foliage, crawling textures, flickering leaves, warping vegetation, boiling surfaces");
 const DEFAULT_RESOLUTION = "1080p";
 const DEFAULT_DURATION = "6s";
 const DEFAULT_GENERATE_AUDIO = false;
