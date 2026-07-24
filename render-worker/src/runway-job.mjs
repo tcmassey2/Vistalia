@@ -314,11 +314,30 @@ function buildSceneMatchCorrections(stats) {
   const refY = med([...stats.values()].map((s) => s.y));
   const refSat = med([...stats.values()].map((s) => s.sat));
   const out = new Map();
+  // v62.9 DEADBAND (40th St "the quality is awful"): the old rule pulled
+  // EVERY scene toward the global median at 0.9 strength, ±11.5 luma each
+  // way — so a tonally varied photoset (noon exterior + dusk + dark
+  // interior) got its range eaten from both ends. Measured on that render:
+  // 9 scenes landed inside an 8-luma band (85-93) where the good Spanish
+  // render breathes 25 (91-116, hero beat at 116). Flat = lifeless; the
+  // twilight shot is SUPPOSED to be darker than the noon shot.
+  // Now: scenes within the deadband are left ALONE (that's cinematography,
+  // not error), and only the excess beyond it is corrected, partially. The
+  // pass keeps its original job — catching a genuinely mismatched clip —
+  // without laundering the set's intentional dynamic range.
+  const DEADBAND_Y = 18;      // luma levels of legitimate variety, untouched
+  const MATCH_STRENGTH = 0.55; // of the excess, not of the whole delta
+  const DEADBAND_SAT = 0.12;   // ±12% saturation variety is intentional too
+  let corrected = 0;
   for (const [idx, s] of stats) {
-    const bRaw = ((refY - s.y) / 255) * 0.9;
-    const b = Math.max(-0.045, Math.min(0.045, bRaw));
-    const satRaw = s.sat > 1 ? refSat / s.sat : 1;
-    const satF = Math.max(0.94, Math.min(1.06, satRaw));
+    const dY = refY - s.y;
+    const excessY = Math.sign(dY) * Math.max(0, Math.abs(dY) - DEADBAND_Y);
+    const bRaw = (excessY / 255) * MATCH_STRENGTH;
+    const b = Math.max(-0.030, Math.min(0.030, bRaw));
+    const satRatio = s.sat > 1 ? refSat / s.sat : 1;
+    const satF = Math.abs(satRatio - 1) <= DEADBAND_SAT
+      ? 1
+      : Math.max(0.94, Math.min(1.06, 1 + (satRatio - 1) * MATCH_STRENGTH));
     const bStr = Math.abs(b) >= 0.008 ? b.toFixed(4) : null;
     const satStr = Math.abs(satF - 1) >= 0.02 ? satF.toFixed(3) : null;
     if (!bStr && !satStr) continue;
@@ -326,7 +345,14 @@ function buildSceneMatchCorrections(stats) {
     if (bStr) parts.push(`brightness=${bStr}`);
     if (satStr) parts.push(`saturation=${satStr}`);
     out.set(idx, `eq=${parts.join(":")}`);
+    corrected++;
   }
+  const ys = [...stats.values()].map((s) => s.y);
+  console.info(
+    `[finish] tone-match: source luma spread ${Math.round(Math.min(...ys))}-${Math.round(Math.max(...ys))} ` +
+    `(median ${Math.round(refY)}) — ${corrected}/${stats.size} scenes outside the ±${DEADBAND_Y} deadband corrected, ` +
+    `${stats.size - corrected} left at their natural tone.`
+  );
   return out;
 }
 
@@ -1945,7 +1971,9 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       sceneTones = await probeSceneTones(clipResults);
       toneMatchMap = buildSceneMatchCorrections(sceneTones);
       if (toneMatchMap.size > 0) {
-        console.info(`[finish] tone-leveling ${toneMatchMap.size}/${clipResults.length} scenes toward the render median (style=${finishStyle}).`);
+        console.info(`[finish] tone-matching ${toneMatchMap.size}/${clipResults.length} outlier scenes (style=${finishStyle}) — see the deadband line above for what was preserved.`);
+      } else if (sceneTones.size > 0) {
+        console.info(`[finish] tone-match: no scene outside the deadband (style=${finishStyle}) — the set's natural tonal range ships intact.`);
       }
     } catch { toneMatchMap = new Map(); sceneTones = new Map(); }
   }
