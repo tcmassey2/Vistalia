@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
-import { fetchLibrary, sendDesktopLink, importListing } from "../lib/api";
+import { fetchLibrary, sendDesktopLink, importListing, curatePhotos } from "../lib/api";
 import { buildSamplePhotos, SAMPLE_LISTING, SAMPLE_PROJECT_TITLE } from "../lib/samples";
 import type { LibraryEntry, Photo } from "../lib/types";
 import { engineLabel } from "../lib/engine-labels";
@@ -267,6 +267,30 @@ function ImportListingBand() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // v62.4 progress: the import now runs three real client-side phases
+  // (server import → dimension probe → AI curation), each up to tens of
+  // seconds — a silent spinner read as "hung". The bar eases toward each
+  // phase's ceiling (always moving, never claiming done) and jumps on real
+  // phase boundaries.
+  const [progress, setProgress] = useState(0);
+  const [phaseLabel, setPhaseLabel] = useState("");
+  const progressRef = useRef(0);
+  const timerRef = useRef<number | null>(null);
+
+  const stopTicker = () => {
+    if (timerRef.current !== null) { window.clearInterval(timerRef.current); timerRef.current = null; }
+  };
+  const setPct = (v: number) => { progressRef.current = v; setProgress(v); };
+  const startPhase = (label: string, ceiling: number) => {
+    setPhaseLabel(label);
+    stopTicker();
+    timerRef.current = window.setInterval(() => {
+      const cur = progressRef.current;
+      const next = Math.min(ceiling, cur + Math.max(0.12, (ceiling - cur) * 0.055));
+      setPct(next);
+    }, 250);
+  };
+  useEffect(() => stopTicker, []);
 
   const probeDims = (src: string) =>
     new Promise<{ width: number; height: number }>((resolve) => {
@@ -283,6 +307,8 @@ function ImportListingBand() {
     if (!trimmed || busy) return;
     setBusy(true);
     setError("");
+    setPct(3);
+    startPhase("Reading the listing page…", 52);
     try {
       const projectId = `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const result = await importListing(trimmed, projectId);
@@ -295,6 +321,8 @@ function ImportListingBand() {
         return;
       }
       const imported = result.photos || [];
+      setPct(56);
+      startPhase(`Preparing ${imported.length} photo${imported.length === 1 ? "" : "s"}…`, 64);
       const dims = await Promise.all(imported.map((p) => probeDims(p.publicUrl)));
       const photos: Photo[] = imported.map((p, i) => ({
         id: `imported-${projectId}-${i}`,
@@ -309,6 +337,43 @@ function ImportListingBand() {
         order: i,
         uploadedAt: new Date().toISOString()
       }));
+
+      // v62.4 DIVERSITY PASS (Troy: "It imports the same photo several
+      // times. There needs to be diversity."): portal galleries repeat
+      // near-identical shots (builder renders, burst angles) that URL-level
+      // dedupe can't see. The long-orphaned /api/curate-photos endpoint is
+      // exactly this filter — Vision scores every photo, drops lookalikes,
+      // caps per-room counts, and returns a professional tour order.
+      // Fail-open at every exit: any non-ok status keeps ALL imported
+      // photos exactly as before.
+      let finalPhotos = photos;
+      let curatedNote = "";
+      if (photos.length >= 8) {
+        setPct(66);
+        startPhase("Hand-picking the most diverse shots…", 93);
+        try {
+          const cur = await curatePhotos({
+            photos: photos.map((p) => ({ id: p.id, durableUrl: p.durableUrl, fileName: p.fileName }))
+          });
+          if (cur.status === "ok" && Array.isArray(cur.curated) && cur.curated.length >= 6) {
+            const byId = new Map(photos.map((p) => [p.id, p]));
+            const picked = [...cur.curated]
+              .sort((a, b) => a.order - b.order)
+              .map((c, i) => {
+                const p = byId.get(c.photoId);
+                return p ? { ...p, order: i } : null;
+              })
+              .filter((p): p is Photo => Boolean(p));
+            if (picked.length >= 6) {
+              finalPhotos = picked;
+              curatedNote = ` — kept the ${picked.length} most diverse in tour order`;
+            }
+          }
+        } catch { /* curation is a bonus, never a blocker */ }
+      }
+
+      setPct(96);
+      setPhaseLabel("Opening your project…");
       const addr = result.address;
       const facts = result.facts || {};
       beginImportedProject({
@@ -322,17 +387,21 @@ function ImportListingBand() {
           baths: facts.baths != null ? String(facts.baths) : "",
           squareFeet: facts.sqft != null ? String(facts.sqft) : ""
         },
-        photos
+        photos: finalPhotos
       });
+      setPct(100);
       setToast(
-        photos.length > 0
-          ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"} — review the order and render.`
+        finalPhotos.length > 0
+          ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote} — review and render.`
           : "Listing details imported — add your photos and render."
       );
     } catch {
       setError("Import failed — try again or start manually.");
     } finally {
+      stopTicker();
       setBusy(false);
+      setPct(0);
+      setPhaseLabel("");
     }
   };
 
@@ -360,6 +429,17 @@ function ImportListingBand() {
           {busy ? "Importing…" : "Import listing"}
         </button>
       </div>
+      {busy && (
+        <div className="mt-3" aria-live="polite">
+          <div className="h-1.5 rounded-full bg-surface-input overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gold transition-[width] duration-300 ease-out"
+              style={{ width: `${Math.round(progress)}%` }}
+            />
+          </div>
+          <p className="text-xs text-ink-muted mt-1.5">{phaseLabel}</p>
+        </div>
+      )}
       {error && <p className="text-xs text-red-300 mt-2">{error}</p>}
     </div>
   );

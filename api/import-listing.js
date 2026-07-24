@@ -21,6 +21,7 @@
 //     the same {userId}/projects/{projectId}/ path the normal uploader
 //     uses, so downstream (render, regen, QC) sees no difference.
 
+import { createHash } from "node:crypto";
 import { requireUser } from "./_lib/auth.js";
 import { rateLimit } from "./_lib/rate-limit.js";
 
@@ -244,35 +245,52 @@ const PHOTO_CDN_RE =
    The download step tries `best` and falls back to the original URL, so a
    CDN that rejects the rewrite costs nothing but one extra fetch. */
 export function maximizePhotoUrl(url) {
+  // v62.4 KEY HARDENING (Troy's 40th St smoke test: "It imports the same
+  // photo several times"): the v62.3 key kept the file EXTENSION and full
+  // path, so Zillow's habit of embedding every shot as BOTH .jpg and .webp
+  // (and under multiple size/crop names) sailed straight through dedupe —
+  // the gallery filled with identical pairs. Identity is now the CDN's own
+  // PHOTO ID wherever one exists in the URL, and extension-blind everywhere.
+  const noExt = (s) => s.replace(/\.(?:jpe?g|webp|png)$/i, "");
   try {
-    // Zillow + Trulia (same CDN family): -cc_ft_<w> crops and
-    // *_scaled_within_<w>_<h> variants — 1536 is the top public tier.
+    // Zillow + Trulia (same CDN family): /fp/<hash>-<variant>.<ext> — the
+    // hash IS the photo. -cc_ft_<w> crops and *_scaled_within_<w>_<h>
+    // variants all resolve to it; 1536 is the top public tier.
     if (/zillowstatic\.com|trulia\.com/i.test(url)) {
       const best = url
         .replace(/-cc_ft_\d+/g, "-cc_ft_1536")
         .replace(/scaled_within_\d+_\d+/g, "scaled_within_1536_1152");
-      const key = url.replace(/-cc_ft_\d+/g, "").replace(/scaled_within_\d+_\d+/g, "").split("?")[0];
+      const hash = url.match(/\/fp\/([a-f0-9]{12,})/i);
+      const key = hash
+        ? `zw:${hash[1]}`
+        : noExt(url.replace(/-cc_ft_\d+/g, "").replace(/scaled_within_\d+_\d+/g, "").split("?")[0]);
       return { best, key };
     }
     // Redfin: gallery embeds /mbphoto/…/genMid.<MLS>_<n>.jpg (~733px);
-    // the full-size original lives at /bigphoto/…/<MLS>_<n>.jpg.
+    // the full-size original lives at /bigphoto/…/<MLS>_<n>.jpg. Identity
+    // is the MLS_<n> core, tier- and extension-blind.
     if (/cdn-redfin\.com/i.test(url)) {
       const best = url.replace(/\/mbphoto\//i, "/bigphoto/").replace(/genMid\./i, "");
-      const key = url.replace(/\/(?:mb|big)photo\//i, "/photo-tier/").replace(/genMid\./i, "").split("?")[0];
+      const key = "rf:" + noExt(
+        url.replace(/\/(?:mb|big)photo\//i, "/photo-tier/").replace(/genMid\./i, "").split("?")[0]
+      );
       return { best, key };
     }
-    // Realtor.com (rdcpix is a resizer): ?w= caps the width — ask for 2048
-    // and the CDN serves up to the original's size. Path is the identity.
+    // Realtor.com (rdcpix is a resizer): <hash><letter>-m<id><sizeLetter>
+    // — hash + m-id is the photo; the trailing letter and ?w= are tiers.
     if (/rdcpix\.com/i.test(url)) {
       const [path, query = ""] = url.split("?");
       const params = query.split("&").filter((p) => p && !/^(w|width|h|height)=/i.test(p));
       params.unshift("w=2048");
-      return { best: `${path}?${params.join("&")}`, key: path };
+      const id = path.match(/rdcpix\.com\/([a-z0-9]+?)[a-z]?-m(\d+)/i);
+      const key = id ? `rdc:${id[1]}-m${id[2]}` : noExt(path);
+      return { best: `${path}?${params.join("&")}`, key };
     }
-    // homes.com and anything else: strip width/height query limiters.
+    // homes.com and anything else: strip width/height query limiters;
+    // identity = path without extension.
     const [path, query = ""] = url.split("?");
     const params = query.split("&").filter((p) => p && !/^(w|width|h|height)=/i.test(p));
-    return { best: params.length ? `${path}?${params.join("&")}` : path, key: path };
+    return { best: params.length ? `${path}?${params.join("&")}` : path, key: noExt(path) };
   } catch {
     return { best: url, key: url };
   }
@@ -374,7 +392,10 @@ async function fetchImageBuffer(photoUrl) {
 }
 
 // photo: { url, fallbackUrl } (v62.3) or a plain string URL (RentCast path).
-async function storePhoto(photo, userId, projectId, index) {
+// seenHashes (v62.4): shared per-import Set of content SHA-256s — the last
+// net under the URL-key dedupe. Two URLs the key logic can't relate that
+// serve byte-identical files still resolve to ONE stored photo.
+async function storePhoto(photo, userId, projectId, index, seenHashes) {
   const supabaseUrl = process.env.SUPABASE_URL || "";
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   if (!supabaseUrl || !serviceKey) throw new Error("storage not configured");
@@ -394,6 +415,14 @@ async function storePhoto(photo, userId, projectId, index) {
     }
   }
   if (!buf) throw lastErr || new Error("no candidates");
+  if (seenHashes) {
+    const sha = createHash("sha256").update(buf).digest("hex");
+    if (seenHashes.has(sha)) {
+      console.log(`[import] photo ${index + 1}: byte-identical to an earlier photo — skipped.`);
+      throw new Error("duplicate-bytes");
+    }
+    seenHashes.add(sha);
+  }
   const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg";
   const fileName = `imported-${String(index + 1).padStart(2, "0")}.${ext}`;
   const bucket = process.env.LISTING_PHOTOS_BUCKET || "listing-photos";
@@ -550,11 +579,12 @@ export default async function handler(request, response) {
   const stored = [];
   if (pagePhotoUrls.length > 0 && auth.userId) {
     const queue = [...pagePhotoUrls.entries()];
+    const seenHashes = new Set(); // v62.4 byte-identity net across this import
     const workers = Array.from({ length: 6 }, async () => {
       while (queue.length > 0) {
         const [i, photoUrl] = queue.shift();
         try {
-          stored.push({ order: i, ...(await storePhoto(photoUrl, auth.userId, projectId, i)) });
+          stored.push({ order: i, ...(await storePhoto(photoUrl, auth.userId, projectId, i, seenHashes)) });
         } catch { /* skip failed photo */ }
       }
     });
