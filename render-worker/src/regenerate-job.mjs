@@ -197,6 +197,14 @@ export async function regenerateScene(body, options = {}) {
   if (manifest?.skipNarration || manifest?.regenSkipNarration) {
     console.info("[regen] narration skipped via manifest flag.");
   } else {
+    // v62 KNOWN SEAM: a voice-first original (manifest.narration present) is
+    // re-voiced here via the legacy aligned path — the original stem is not
+    // persisted, and re-performing it would re-cut a grid the existing clips
+    // no longer match. Scene-locked and correct, but the read's character
+    // may differ from the original master. Revisit if regen volume grows.
+    if (manifest?.narration?.monologue) {
+      console.warn("[regen] original render was VOICE-FIRST — regen re-voices via the legacy aligned path (stem not persisted).");
+    }
     options.onProgress?.({ phase: "Re-applying narration", progress: 74 });
     const NARRATION_TIME_BUDGET_MS = 120 * 1000;
     try {

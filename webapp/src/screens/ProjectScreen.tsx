@@ -2371,6 +2371,11 @@ function RenderControls() {
         // v32: one continuous voiceover script for the whole tour — the
         // worker synthesizes it in a single TTS pass (no per-scene chops).
         narrationScript: (planResult.editPlan as any).narrationScript || "",
+        // v62 VOICE-FIRST: monologue + sentence→photo mapping. The worker
+        // performs this before generating a single clip and cuts the scene
+        // grid to the voice. Null-safe: pre-v62 plans simply omit it and
+        // the worker runs the legacy voice path.
+        narration: (planResult.editPlan as any).narration || null,
         musicMood: planResult.editPlan.musicMood,
         // Music selector: explicit track filename overrides the style
         // default in the worker's pickMusicUrl. Resolved here so the

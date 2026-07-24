@@ -26,6 +26,16 @@
 //                          fal-ai/kling-video/o3/standard/image-to-video
 //                          fal-ai/luma-dream-machine/ray-2/image-to-video
 //                          fal-ai/bytedance/seedance/v1/pro/image-to-video
+//                        v62.1 KLING 1080p: Kling has NO resolution param on
+//                        any endpoint — the TIER is the resolution knob
+//                        (standard ≈ 0.92MP/720p-class pixel budget shaped
+//                        to the input photo's aspect; pro ≈ 1080p-class).
+//                        To enable 1080p, flip the env to the pro sibling:
+//                          fal-ai/kling-video/v3/pro/image-to-video
+//                        ($0.112/s audio-off vs ~$0.084/s standard). The
+//                        kling branch below sends BOTH image_url (o3 shape)
+//                        and start_image_url (v3/pro shape) so the flip is
+//                        env-only — no code change, instant rollback.
 //   FAL_RESOLUTION     - "720p" or "1080p" (default "1080p")
 //   FAL_DURATION       - "4s" | "6s" | "8s" (default "6s"; our scenes
 //                        are 5s and Veo only does 4/6/8 — round up)
@@ -470,9 +480,17 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
     }
     return {
       prompt: klingPrompt,
+      // v62.1: the o3 endpoints take `image_url`, the v3/pro endpoints take
+      // `start_image_url` — send BOTH so FAL_VIDEO_MODEL can flip between
+      // standard (≈720p-class) and v3 pro (≈1080p-class) with no code
+      // change. fal silently ignores unknown fields on this family (the
+      // kling3std916 probe proved it: aspect_ratio was ignored, no 422).
       image_url: imageUrl,
+      start_image_url: imageUrl,
       duration: String(Math.min(15, Math.max(4, seconds))),
       negative_prompt: KLING_NEGATIVE_PROMPT + KLING_NEGATIVE_EXTRA,
+      // Explicit false on every tier — v3/pro defaults generate_audio:true
+      // and audio-on billing is 1.5x ($0.168/s vs $0.112/s on pro).
       generate_audio: false
     };
   }
@@ -494,29 +512,36 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
   // stitch pipeline upscales every clip to the 1080x1920 master regardless, so
   // generating 6s scenes at 720p costs us nothing visible. Only honor a 1080p
   // request when the scene is genuinely 8s.
-  const veoResolution = durationEnum === "8s" ? resolution : "720p";
+  // v62: durationEnum now carries EXACT seconds (e.g. "9s") for Kling's
+  // voice-first asks — the Veo family snaps to its own 4s/6s/8s enum HERE,
+  // at the only layer that actually has the enum constraint.
+  const veoEnum = secondsToEnum(seconds);
+  const veoResolution = veoEnum === "8s" ? resolution : "720p";
   return {
     prompt,
     image_url: imageUrl,
     aspect_ratio: aspectRatio,
-    duration: durationEnum,
+    duration: veoEnum,
     resolution: veoResolution,
     generate_audio: generateAudio,
     safety_tolerance: safetyTolerance
   };
 }
 
-// Convert a numeric or string seconds value to fal.ai's enum.
-// fal.ai Veo 3 Fast only supports "4s" | "6s" | "8s". Pick the
-// next-largest bucket so we never undershoot what the manifest asked for.
+// Normalize a numeric or "Ns" string to exact whole seconds, clamped to the
+// widest range any engine accepts (4..15 — Kling V3's span; the Veo branch
+// snaps to its 4s/6s/8s enum inside buildModelInput).
+// v62 ROOT-CAUSE NOTE: this function used to snap EVERYTHING to the Veo
+// enum, so a Kling "9s"/"10s" voice-first ask was silently flattened to
+// "8s" — the clip came back 8s while clip.duration claimed up to 10, and
+// the stitcher would have walked off the end of the media. Exact seconds
+// pass through now; only the Veo family quantizes, where it must.
 function normalizeDuration(raw) {
-  if (typeof raw === "string" && /^\d+s$/.test(raw)) {
-    const n = parseInt(raw, 10);
-    return secondsToEnum(n);
-  }
-  const n = Number(raw);
+  const n = typeof raw === "string" && /^\d+s?$/.test(raw.trim())
+    ? parseInt(raw, 10)
+    : Number(raw);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_DURATION;
-  return secondsToEnum(n);
+  return `${Math.min(15, Math.max(4, Math.round(n)))}s`;
 }
 
 function secondsToEnum(n) {

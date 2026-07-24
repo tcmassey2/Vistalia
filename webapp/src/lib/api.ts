@@ -129,6 +129,15 @@ export interface RenderManifest {
   // v32: one continuous voiceover script for the whole tour — synthesized in
   // a single TTS pass by the worker (replaces per-scene line scheduling).
   narrationScript?: string;
+  // v62 VOICE-FIRST: the Director's monologue + sentence→photo mapping. The
+  // worker performs this FIRST (expressive ElevenLabs pass) and derives the
+  // scene-timing grid from the word timestamps — scenes flex to the voice.
+  narration?: {
+    monologue: string;
+    direction?: string;
+    sentences: Array<{ text: string; photos: string[] }>;
+    source?: string;
+  } | null;
   // The Remotion composition reads listing facts from manifest.project to
   // populate address overlays, lower-third price card, and the EndCard.
   // Keep these fields populated; missing values render as blank slots.

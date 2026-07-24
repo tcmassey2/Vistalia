@@ -1188,3 +1188,146 @@ async function pMap(items, fn, { concurrency = 4 } = {}) {
   await Promise.all(workers);
   return results;
 }
+
+/* ============================================================
+   v62 — VOICE-FIRST mix (the inversion's back half)
+   ============================================================
+   The narration stem already EXISTS (synthesized + aligned at the front of
+   the job by voice-first.mjs, before any clip was generated) and the scene
+   grid was derived FROM it — so this step is pure assembly: lay the one
+   stem at its offset, duck the bed under sentence spans, burn word-synced
+   captions, stem-normalize, mix. There is no per-line placement, no
+   atempo, no TRIM, no fit ladder — none of it is needed when the picture
+   was cut to the voice. Fail posture: throw → the caller falls back to the
+   legacy applyVoiceNarration (per-scene lines still ride the manifest).
+*/
+export async function applyVoiceFirstMix({
+  masterMp4, voiceFirst, photoScenes, sceneDurationsByPhoto,
+  crossfadeOverlapSec = 0, tempDir, jobId, onProgress,
+  captionsEnabled = true, captionsVariant = "luxury"
+}) {
+  const { grid, audioPath, captionWords, sentences } = voiceFirst || {};
+  if (!grid || !audioPath) throw new Error("voice-first mix called without a prepared stem");
+
+  // Reality check: the grid promised a timeline; the rendered clips deliver
+  // one. They must agree (floors/regens render at exact grid durations, so
+  // drift ≈ 0; a real mismatch means scenes changed shape mid-job).
+  let actualVisible = 0;
+  for (const sc of photoScenes) {
+    const d = sceneDurationsByPhoto && sc.photoId ? Number(sceneDurationsByPhoto[sc.photoId]) : 0;
+    const dur = d > 0 ? d : Number(sc.duration || 3) + crossfadeOverlapSec;
+    actualVisible += Math.max(0.8, dur - crossfadeOverlapSec);
+  }
+  const drift = actualVisible - grid.videoEndSec;
+  console.info(`[voice-first] timeline check: grid ${grid.videoEndSec.toFixed(2)}s vs rendered ${actualVisible.toFixed(2)}s (drift ${drift >= 0 ? "+" : ""}${drift.toFixed(2)}s)`);
+  if (Math.abs(drift) > 1.0) {
+    throw new Error(`voice-first timeline drift ${drift.toFixed(2)}s exceeds 1.0s — scene shapes changed after the grid was cut`);
+  }
+
+  // v34.2-style outro grace: the master continues ~0.5s of crossfade into
+  // the brand card; the stem may breathe into that fade, never over the
+  // standing card.
+  const GRACE_SEC = 0.8;
+  const trackPadSec = actualVisible + GRACE_SEC;
+
+  // ── Narration track: ONE stem, one placement ──────────────────────────
+  onProgress?.({ phase: "Placing narration", fraction: 0.3 });
+  const offset = Number(grid.narrationOffsetSec) || 0;
+  const headTrim = Math.max(0, -offset);          // aligner said speech starts late
+  const delayMs = Math.round(Math.max(0, offset) * 1000);
+  const chain = [
+    headTrim > 0 ? `atrim=start=${headTrim.toFixed(3)}` : null,
+    "asetpts=PTS-STARTPTS",
+    "afade=t=in:st=0:d=0.04",
+    delayMs > 0 ? `adelay=${delayMs}|${delayMs}` : null,
+    `apad=whole_dur=${Math.round(trackPadSec * 1000)}ms`,
+    `atrim=duration=${trackPadSec.toFixed(2)}`
+  ].filter(Boolean).join(",");
+  const narrationTrackPath = path.join(tempDir, `${jobId}-vf-track.mp3`);
+  await runFFmpeg([
+    "-y", "-threads", "1",
+    "-i", audioPath,
+    "-af", chain,
+    "-c:a", "libmp3lame", "-b:a", "128k",
+    "-t", String(trackPadSec),
+    narrationTrackPath
+  ], { timeoutMs: 120000, label: "voice:first-track" });
+
+  // ── Word-synced captions (no trim path exists — every word is audible) ─
+  let captionsAssPath = null;
+  let captionsSquareAssPath = null;
+  if (captionsEnabled && Array.isArray(captionWords) && captionWords.length) {
+    try {
+      captionsAssPath = path.join(tempDir, `${jobId}-captions-v.ass`);
+      captionsSquareAssPath = path.join(tempDir, `${jobId}-captions-sq.ass`);
+      await fs.writeFile(captionsAssPath, buildCaptionsAss({ words: captionWords, playW: 1080, playH: 1920, variant: captionsVariant }));
+      await fs.writeFile(captionsSquareAssPath, buildCaptionsAss({ words: captionWords, playW: 1080, playH: 1080, variant: captionsVariant }));
+      console.info(`[captions] ${captionWords.length} words → ${path.basename(captionsAssPath)} (voice-first, skin=${captionsVariant})`);
+    } catch (err) {
+      console.warn(`[captions] build failed open (${err.message}) — shipping without captions.`);
+      captionsAssPath = null;
+      captionsSquareAssPath = null;
+    }
+  }
+
+  // ── Duck windows: sentence spans (merged across short breaths) ────────
+  const spans = (grid.sentenceSpansSec || []).filter(Boolean)
+    .map((s) => [Math.max(0, s.start - 0.1), Math.min(trackPadSec, s.end + 0.15)])
+    .sort((a, b) => a[0] - b[0]);
+  const duckWindows = [];
+  for (const w of spans) {
+    const prev = duckWindows[duckWindows.length - 1];
+    if (prev && w[0] - prev[1] < 0.8) prev[1] = Math.max(prev[1], w[1]);
+    else duckWindows.push([...w]);
+  }
+  const volumeExpr = buildDuckVolumeExpr(duckWindows);
+
+  onProgress?.({ phase: "Mixing narration with music", fraction: 0.75 });
+  // Distinct filename from the legacy paths' `${jobId}-narrated.mp4`: when
+  // this mix loses the caller's 2-min Promise.race, its orphaned ffmpeg
+  // keeps writing — it must never scribble over the file the legacy
+  // fallback then produces and the upload stage reads.
+  const mixedMp4 = path.join(tempDir, `${jobId}-vf-narrated.mp4`);
+  const masterHasAudio = await detectAudioStream(masterMp4);
+  if (masterHasAudio) {
+    const vf = captionsAssPath
+      ? [`[0:v:0]subtitles='${subtitlesFilterPath(captionsAssPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'[vout];`, "[vout]", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19"]]
+      : ["", "0:v:0", ["-c:v", "copy"]];
+    const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
+    const masterDurSec = await probeAudioDuration(masterMp4);
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", masterMp4, "-i", narrationTrackPath,
+      "-filter_complex",
+      vf[0] + buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb, masterDurSec),
+      "-map", vf[1], "-map", "[aout]",
+      ...vf[2], "-c:a", "aac", "-b:a", "192k",
+      "-shortest", mixedMp4
+    ], { timeoutMs: captionsAssPath ? 240000 : 90000, label: "voice:first-final-mix" });
+  } else {
+    const vf = captionsAssPath
+      ? [`[0:v:0]subtitles='${subtitlesFilterPath(captionsAssPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'[vout];`, "[vout]", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19"]]
+      : ["", "0:v:0", ["-c:v", "copy"]];
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", masterMp4, "-i", narrationTrackPath,
+      "-filter_complex", vf[0] + (await voiceOnlyAudioFilter(narrationTrackPath)),
+      "-map", vf[1], "-map", "[aout]",
+      ...vf[2], "-c:a", "aac", "-b:a", "192k",
+      "-shortest", mixedMp4
+    ], { timeoutMs: captionsAssPath ? 240000 : 60000, label: "voice:first-mix-narration-only" });
+  }
+
+  await fs.unlink(audioPath).catch(() => {});
+  await fs.unlink(narrationTrackPath).catch(() => {});
+
+  return {
+    masterMp4: mixedMp4,
+    narrationApplied: true,
+    voiceFirst: true,
+    voiceId: voiceFirst.voiceId,
+    narrationLineCount: (sentences || []).length,
+    captionsApplied: Boolean(captionsAssPath),
+    captionsSquareAssPath
+  };
+}

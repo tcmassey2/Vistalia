@@ -407,11 +407,13 @@ export default async function handler(request, response) {
   if (!process.env.OPENAI_API_KEY) {
     const reason = "Motion Director unavailable: missing OPENAI_API_KEY.";
     logMotionDirector("warn", "fallback reason", { category: "missing_openai_api_key", reason, validPhotoCount: photos.length });
+    const noKeyPlan = deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec });
+    if (includeNarration) attachNarration(noKeyPlan, null, { targetDurationSec }); // v62: stock lines → narration object
     response.status(200).json({
       status: "fallback",
       reason,
       errorCategory: "missing_openai_api_key",
-      editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec })
+      editPlan: noKeyPlan
     });
     return;
   }
@@ -425,11 +427,13 @@ export default async function handler(request, response) {
         reason,
         invalidPhotos: urlCheck.invalidPhotos
       });
+      const badUrlPlan = deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec });
+      if (includeNarration) attachNarration(badUrlPlan, null, { targetDurationSec }); // v62: stock lines → narration object
       response.status(200).json({
         status: "fallback",
         reason,
         errorCategory: "inaccessible_image_url",
-        editPlan: deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec })
+        editPlan: badUrlPlan
       });
       return;
     }
@@ -589,16 +593,20 @@ export default async function handler(request, response) {
 
     if (!parsed) {
       logMotionDirector("error", "All Motion Director attempts failed; fallback used", lastFailure);
+      const fallbackPlan = await enrichFallbackPlan(
+        deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }),
+        photos,
+        { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }
+      );
+      // v62: even blackout fallbacks ship a narration object (derived from
+      // the stock lines) so the worker's voice-first grid still runs.
+      if (includeNarration) attachNarration(fallbackPlan, null, { targetDurationSec });
       response.status(200).json({
         status: "fallback",
         reason: lastFailure.reason,
         errorCategory: lastFailure.category,
         requestId: lastFailure.requestId,
-        editPlan: await enrichFallbackPlan(
-          deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }),
-          photos,
-          { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }
-        )
+        editPlan: fallbackPlan
       });
       return;
     }
@@ -631,6 +639,11 @@ export default async function handler(request, response) {
     // hard rule that it may not add any feature the verified lines don't
     // already contain. No images in, so it cannot re-hallucinate the rooms.
     await polishNarrationFlow(normalizedPlan, { listingDetails, selectedStyle });
+    // v62 VOICE-FIRST: attach the validated narration object LAST — after
+    // verify-repair and polish — so its derived fallback reads the REPAIRED
+    // lines, not the raw ones. The Director's own narration passes through
+    // untouched when structurally valid.
+    if (includeNarration) attachNarration(normalizedPlan, parsed?.narration, { targetDurationSec });
     // v32 observability: make the continuous script's presence LOUD in the
     // function logs — its absence was silent for a full smoke-test round.
     console.info(
@@ -715,12 +728,18 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   // line; the AI is asked to vary length and cadence so it doesn't sound
   // monotonous.
   const narrationTargetCount = targetSceneCount;
-  // v32: the PRIMARY narration deliverable is one continuous script; the
-  // per-scene lines are kept for single-scene regen and as a fallback.
-  const scriptWordTarget = Math.round(clampedDuration * 1.7);
+  // v62 VOICE-FIRST: the monologue is the PRIMARY narration deliverable and
+  // the SPINE of the video — the worker performs it first (one expressive
+  // ElevenLabs pass) and derives scene timing from its word timestamps, so
+  // sentence-length constraints and window-sizing rules no longer apply to
+  // it. Word budget anchors to Troy's spec: 70-85 words at the 30s target,
+  // scaled linearly. Per-scene lines are kept for regen + the legacy path.
+  const monologueTarget = Math.round((clampedDuration / 30) * 77.5);
+  const monologueMin = Math.round(monologueTarget * 0.9);
+  const monologueMax = Math.round(monologueTarget * 1.1);
   const narrationGuidance = includeNarration
     ? [
-        `MOST IMPORTANT: also return a top-level field "narrationScript" — ONE continuous spoken voiceover for the ENTIRE tour. LENGTH IS A HARD REQUIREMENT: between ${Math.round(scriptWordTarget * 0.85)} and ${Math.round(scriptWordTarget * 1.1)} words — count them. A script shorter than ${Math.round(scriptWordTarget * 0.85)} words is WRONG and leaves most of the video silent. Write flowing spoken prose in the same order as the scenes: open by naming the property, give every major space its moment with natural transitions ("Through the entry…", "Out back…"), close with a brief call to action (keep just the final sentence under 8 words). No scene numbers, no headings, no stage directions — only words to be read aloud, as one connected piece. SCENE-SYNC DISCIPLINE (v50.3, non-negotiable): each sentence must FINISH while its own scene is still on screen — size every sentence to its scene's seconds at ~2 words/sec, and NEVER let a sentence about one space still be playing when a different room appears (a bathroom sentence narrating the patio is the exact defect this rule exists to kill). Prefer two short sentences over one long one; never describe two different rooms in one sentence; never mention a space before its scene arrives. THE OPENER MUST FIT ITS SCENE: if the full address is too long for scene 1's seconds, use the short street form ("Welcome to Hawks Nest Lane" not the full unit-numbered address) — a chopped first sentence ruins the whole video. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
+        `MOST IMPORTANT — THE SPOKEN TOUR (v62): also return a top-level object "narration". The voiceover is now the SPINE of the video — scene timing is derived FROM the voice, so your sentences are never cut, sped up, or squeezed; write to sound good, not to fit windows. narration.monologue: ONE continuous spoken tour, ${monologueMin}-${monologueMax} words (count them). Voice it like a great human tour guide on a first walkthrough: conversational register, contractions ("it's", "you'll"), varied sentence lengths, zero brochure clichés (never "boasts", "nestled", "oasis", "dream home", "must-see"). ARC, in order: (1) HOOK — open on the property's single most arresting fact or feeling; (2) WALK-THROUGH — move through the photos in their exact scene order, giving each major space one natural moment with real connective transitions; (3) LIFESTYLE CLOSE — one sentence on what living here feels like; (4) CTA — final sentence under 8 words. EXPRESSIVE DELIVERY: place 2-5 bracketed audio tags — e.g. [warm], [pause], [excited], [softly] — immediately before the phrases they color. Tags are delivery directions, never spoken words; never place one mid-word. narration.direction: a short performance note for the voice (e.g. "warm, unhurried tour guide — proud of the home, never salesy"). narration.sentences: the SAME monologue split into its sentences IN ORDER — each item's "text" is the exact sentence WITHOUT any tags, and "photos" lists the photoIds that sentence covers, in scene order. RULES: every scene's photoId appears exactly once across all sentences, in the same order as the scenes array; a sentence may cover 1-3 photos; use photos: [] for a sentence that keeps lingering on the previous photo (hero shots, the close). The sentence texts joined with single spaces must EXACTLY equal the monologue with all [tags] removed. Never mention a space before its photo arrives. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. SELL THE SPACE, NOT THE STAGING (v34.4): never describe movable furniture or decor — sofas, tables, chairs, beds, rugs, lamps, art, plants. The furniture leaves with the seller; buyers are buying light, space, views, ceilings, windows, flooring, and finishes (cabinetry, counters, fireplaces, and built-ins are part of the home — those are fine). "A glass table sits beside the window" → "Expansive windows frame the red-rock views". CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
         // v40.1: style-aware narration tone (master-21: MLS Clean shipped
@@ -1400,6 +1419,154 @@ function enforceScriptFloor(script, scenes, targetDurationSec) {
   return joinedWords >= 8 ? joined : script;
 }
 
+/* ============================================================
+   v62 — VOICE-FIRST narration attachment
+   ============================================================
+   The worker's voice-first engine (render-worker/src/voice-first.mjs)
+   performs plan.narration.monologue FIRST and derives scene timing from
+   the word timestamps — so this object is the spine of the whole render.
+   attachNarration runs LAST (after verify-repair + polish) and guarantees
+   the plan ALWAYS ships a structurally valid narration object:
+
+     1. Director-authored narration that validates → ships as written.
+     2. Structural failure (bad mapping / no sentences / text divergence
+        beyond tags) → derived narration: the repaired+polished per-scene
+        lines become the sentences (each line covering its scene plus any
+        following silent scenes — the same flowing-window shape the legacy
+        mixer uses), joined as the monologue. Grounded, full-coverage,
+        expressive-tag-free — a competent tour even in this degraded mode.
+
+   Soft problems (word budget off, missing contractions, cliché verbs) are
+   WARN-only: the voice-first grid is structurally safe at any length, and
+   content quality is gated by the canary + Troy's ear, not a rejector.
+*/
+function stripNarrationAudioTags(text) {
+  return String(text || "").replace(/\[[^\][\n]{1,40}\]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
+  const scenes = (plan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
+  const sceneOrderById = new Map(scenes.map((s, i) => [String(s.photoId), i]));
+  const monologueTarget = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+
+  const deriveFromLines = (reason) => {
+    const sentences = [];
+    let current = null;
+    for (const s of scenes) {
+      const line = String(s.narrationLine || "").trim();
+      if (line) {
+        current = { text: /[.!?]$/.test(line) ? line : `${line}.`, photos: [String(s.photoId)] };
+        sentences.push(current);
+      } else if (current) {
+        current.photos.push(String(s.photoId)); // silent scene rides the previous sentence
+      } else {
+        current = { text: "", photos: [String(s.photoId)] }; // leading silent scenes join sentence 1
+        sentences.push(current);
+      }
+    }
+    // A leading empty-text slot merges into the first real sentence.
+    while (sentences.length > 1 && !sentences[0].text) {
+      sentences[1].photos = [...sentences[0].photos, ...sentences[1].photos];
+      sentences.shift();
+    }
+    const usable = sentences.filter((s) => s.text);
+    if (!usable.length) {
+      console.warn(`[plan] narration DERIVE FAILED (${reason}; no per-scene lines either) — plan ships without narration; worker runs the legacy path.`);
+      return null;
+    }
+    const monologue = usable.map((s) => s.text).join(" ");
+    console.warn(`[plan] narration derived from per-scene lines (${reason}) — ${monologue.split(/\s+/).length} words / ${usable.length} sentences.`);
+    return { monologue, direction: "warm, unhurried tour guide — proud of the home, never salesy", sentences: usable, source: "derived-from-lines" };
+  };
+
+  let narration = null;
+  const candidate = rawNarration && typeof rawNarration === "object" ? rawNarration : null;
+  if (candidate && typeof candidate.monologue === "string" && Array.isArray(candidate.sentences) && candidate.sentences.length >= 2) {
+    const errors = [];
+    const warnings = [];
+    const sentences = candidate.sentences
+      .map((s) => ({
+        text: cleanText(String(s?.text || ""), 300),
+        photos: (Array.isArray(s?.photos) ? s.photos : []).map(String).filter((id) => sceneOrderById.has(id))
+      }))
+      .filter((s) => s.text);
+    if (sentences.length < 2) errors.push("fewer than 2 usable sentences");
+    if (sentences.length && !sentences[0].photos.length) errors.push("sentence 1 has no photos");
+
+    // Mapping: every scene exactly once, ascending in scene order.
+    const seenOrd = new Set();
+    let lastOrd = -1;
+    let orderOk = true;
+    for (const s of sentences) {
+      for (const id of s.photos) {
+        const ord = sceneOrderById.get(id);
+        if (seenOrd.has(ord) || ord < lastOrd) orderOk = false;
+        seenOrd.add(ord);
+        lastOrd = Math.max(lastOrd, ord);
+      }
+    }
+    if (!orderOk) errors.push("photo mapping repeats or breaks scene order");
+    const missing = scenes.filter((_, i) => !seenOrd.has(i)).length;
+    if (missing > Math.ceil(scenes.length * 0.4)) {
+      errors.push(`${missing}/${scenes.length} scenes unmapped`);
+    } else if (missing > 0) {
+      warnings.push(`${missing} unmapped scene(s) — worker lingers the nearest preceding sentence over them`);
+    }
+
+    // Transcript integrity: sentence join == de-tagged monologue.
+    const joined = sentences.map((s) => s.text).join(" ").replace(/\s+/g, " ").trim();
+    const stripped = stripNarrationAudioTags(candidate.monologue);
+    if (joined !== stripped) {
+      // Tolerate pure punctuation/space drift; reject real divergence.
+      const normalize = (t) => t.toLowerCase().replace(/[^a-z0-9']+/gi, " ").replace(/\s+/g, " ").trim();
+      if (normalize(joined) === normalize(stripped)) {
+        warnings.push("monologue/sentences differ only in punctuation — shipping as written");
+      } else {
+        errors.push("sentence texts do not reconstruct the monologue (forced alignment would degrade)");
+      }
+    }
+
+    const wordCount = stripped.split(/\s+/).filter(Boolean).length;
+    if (wordCount < Math.round(monologueTarget * 0.6) || wordCount > Math.round(monologueTarget * 1.6)) {
+      warnings.push(`monologue ${wordCount} words vs ~${monologueTarget} target`);
+    }
+    if (!/\b\w+'(s|re|ll|ve|t|d)\b/i.test(stripped)) warnings.push("no contractions — register may read formal");
+    if (/\b(boasts?|nestled|oasis|dream home|must[- ]see)\b/i.test(stripped)) warnings.push("brochure cliché detected");
+
+    for (const w of warnings) console.warn(`[plan] narration warning: ${w}`);
+    if (errors.length) {
+      narration = deriveFromLines(errors.join("; "));
+    } else {
+      narration = {
+        monologue: candidate.monologue.trim(),
+        direction: cleanText(String(candidate.direction || "warm, unhurried tour guide"), 200),
+        sentences,
+        source: "director"
+      };
+    }
+  } else if (candidate) {
+    narration = deriveFromLines("narration object malformed");
+  } else {
+    narration = deriveFromLines("narration object absent");
+  }
+
+  if (narration) {
+    plan.narration = narration;
+    // Old-worker compat: narrationScript mirrors the clean monologue.
+    plan.narrationScript = stripNarrationAudioTags(narration.monologue);
+    const tagCount = (narration.monologue.match(/\[[^\][\n]{1,40}\]/g) || []).length;
+    console.info(
+      `[plan] narration (v62): source=${narration.source}, ` +
+      `${plan.narrationScript.split(/\s+/).length} words / ${narration.sentences.length} sentences / ${tagCount} expressive tags, ` +
+      `direction="${narration.direction}"`
+    );
+    narration.sentences.forEach((s, i) => {
+      console.info(`[plan] narration s${i + 1} [${s.photos.join(",") || "linger"}]: "${s.text}"`);
+    });
+  }
+  return plan;
+}
+
 // v33.3: map classify-image categories → scene roomTypes. Categories come
 // from a dedicated one-photo-per-call vision pass, so when present they
 // outrank the Motion Director's roomType guess.
@@ -1440,14 +1607,41 @@ function editPlanSchema(photoIds, targetSceneCount, { includeNarration = false }
       exportFormat: { type: "string" },
       selectedStyle: { type: "string" },
       musicMood: { type: "string" },
-      // v32 continuous narration: ONE flowing voiceover for the whole tour.
-      // ROOT-CAUSE NOTE (round-5 smoke test): this field was instructed in
-      // the prompt but MISSING from this strict schema — strict structured
-      // outputs cannot return unlisted properties, so the model never
-      // produced it and the mixer silently fell back to the per-line path.
-      // Schema is the contract; prompt text alone is dead letter.
+      // v62 VOICE-FIRST narration: monologue + sentence→photo mapping.
+      // (Replaces the v32 narrationScript field — that one was voided by
+      // the worker post-v34.1; normalize still emits a narrationScript
+      // string derived from the monologue for old-worker compat.)
+      // ROOT-CAUSE NOTE (round-5 smoke test, still true): strict structured
+      // outputs cannot return unlisted properties — the schema IS the
+      // contract; prompt text alone is dead letter.
       ...(includeNarration ? {
-        narrationScript: { type: ["string", "null"], maxLength: 1400 }
+        narration: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            monologue: { type: "string", maxLength: 1600 },
+            direction: { type: "string", maxLength: 200 },
+            sentences: {
+              type: "array",
+              minItems: 2,
+              maxItems: 24,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  text: { type: "string", maxLength: 300 },
+                  photos: {
+                    type: "array",
+                    maxItems: 4,
+                    items: { type: "string", enum: photoIds }
+                  }
+                },
+                required: ["text", "photos"]
+              }
+            }
+          },
+          required: ["monologue", "direction", "sentences"]
+        }
       } : {}),
       introCard: {
         type: "object",
@@ -1514,7 +1708,7 @@ function editPlanSchema(photoIds, targetSceneCount, { includeNarration = false }
       }
     },
     required: includeNarration
-      ? ["heroPhotoId", "exportFormat", "selectedStyle", "musicMood", "narrationScript", "introCard", "outroCard", "scenes"]
+      ? ["heroPhotoId", "exportFormat", "selectedStyle", "musicMood", "narration", "introCard", "outroCard", "scenes"]
       : ["heroPhotoId", "exportFormat", "selectedStyle", "musicMood", "introCard", "outroCard", "scenes"]
   };
 }
@@ -2044,7 +2238,10 @@ function normalizeEditPlan(plan, photos, context) {
     // grounded, always full-coverage. Loud in the logs either way.
     narrationScript: enforceScriptFloor(
       cleanText(
-        plan.narrationScript || "",
+        // v62: the schema no longer requests narrationScript — mirror the
+        // monologue here so the floor sees a full-length script instead of
+        // WARN-logging "UNDER FLOOR (0 words)" on every healthy plan.
+        plan.narrationScript || (plan.narration?.monologue ? stripNarrationAudioTags(plan.narration.monologue) : ""),
         Math.max(400, Math.round((Number(context.targetDurationSec) || 30) * 2.2 * 7))
       ),
       scenes,

@@ -159,6 +159,9 @@ function buildCanaryManifest(editPlan, commit) {
     introCard: editPlan.introCard,
     outroCard: editPlan.outroCard,
     narrationScript: editPlan.narrationScript || "",
+    // v62 VOICE-FIRST: the canary is the deploy gate for the inversion —
+    // it must carry the monologue so [voice-first] lines appear in its log.
+    narration: editPlan.narration || null,
     musicMood: editPlan.musicMood,
     musicTrack: "luxury-poradovskyi.mp3",
     skipMusic: false,

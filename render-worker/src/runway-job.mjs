@@ -19,7 +19,8 @@ import { createClient } from "@supabase/supabase-js";
 // v35: deriveAspectVariants retired — square is recomposed from source clips
 // (see the variants block below); wide is retired until per-aspect generation
 // ships. aspect-variants.mjs stays in tree for the future Formats pack.
-import { applyVoiceNarration, probeAudioDuration, levelMusicOnlyMaster } from "./voice-mixer.mjs";
+import { applyVoiceNarration, applyVoiceFirstMix, probeAudioDuration, levelMusicOnlyMaster } from "./voice-mixer.mjs";
+import { resolveVoiceId } from "./voices.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
 import { renderHomographyDrift } from "./homography-drift.mjs";
 import { CAPTIONS_FONTS_DIR } from "./captions.mjs";
@@ -399,7 +400,69 @@ export async function renderRunwayJob(body, options = {}) {
     throw new Error("Runway render manifest has no photo scenes.");
   }
 
-  options.onProgress?.({ phase: "Submitting Runway clips", progress: 6, scenesTotal: photoScenes.length });
+  // ── v62 VOICE-FIRST (the inversion) ──────────────────────────────────
+  // The narration is performed FIRST — one expressive ElevenLabs pass on the
+  // Director's monologue — and its word timestamps become the scene grid:
+  // every scene's duration below derives from the voice, and the mix step at
+  // 80% just lays the already-recorded stem. atempo/TRIM/2-line-collapse
+  // (m80) are structurally impossible on this path. Fail-open everywhere:
+  // any failure here (missing narration object, ElevenLabs down, degenerate
+  // grid) leaves durations untouched and the legacy per-line → aligned
+  // machinery runs at its old pipeline position, exactly as before.
+  // Kill switch: VOICE_FIRST=0.
+  let voiceFirst = null;
+  if (
+    isVeo && // legacy Runway engine quantizes clips to 5/10s — grid durations would be discarded
+    String(process.env.VOICE_FIRST || "1") !== "0" &&
+    !manifest?.skipNarration &&
+    manifest?.narration?.monologue
+  ) {
+    try {
+      options.onProgress?.({ phase: "Recording narration", progress: 7 });
+      const { prepareVoiceFirst } = await import("./voice-first.mjs");
+      voiceFirst = await prepareVoiceFirst({
+        manifest, photoScenes, tempDir, jobId, resolveVoice: resolveVoiceId,
+        // Scene ceiling follows the engine's clip ceiling: Kling asks are
+        // exact seconds up to 10 (9.5 visible); the Veo rollback path keeps
+        // its 8s bucket cap (7.5 visible) — the grid must never promise a
+        // scene the engine can't deliver.
+        maxSceneVisible: /kling/i.test(process.env.FAL_VIDEO_MODEL || "") ? 9.5 : 7.5
+      });
+      if (voiceFirst?.grid?.stats?.droppedPhotos?.length) {
+        // Degenerate narration (fallback-class monologue too thin for the
+        // photo count). Dropping customer photos is the legacy path's call,
+        // not ours — discard the stem and let the old machinery run.
+        console.warn(`[voice-first] grid dropped ${voiceFirst.grid.stats.droppedPhotos.length} photos (degenerate narration) — reverting to legacy voice path.`);
+        voiceFirst = null;
+      }
+      if (voiceFirst) {
+        const gridScenes = voiceFirst.grid.scenes;
+        if (gridScenes.length !== photoScenes.length) {
+          console.warn(`[voice-first] grid has ${gridScenes.length} scenes for ${photoScenes.length} photos — reverting to legacy voice path.`);
+          voiceFirst = null;
+        } else {
+          for (let i = 0; i < photoScenes.length; i++) {
+            const gs = gridScenes[i];
+            const old = Number(photoScenes[i].duration) || 0;
+            photoScenes[i].duration = gs.duration;
+            photoScenes[i].voiceFirstDuration = gs.duration;
+            if (Math.abs(old - gs.duration) > 0.05) {
+              console.info(`[voice-first] scene ${i + 1} duration ${old ? old.toFixed(2) : "?"}s → ${gs.duration.toFixed(2)}s (voice grid)`);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[voice-first] preparation failed (${err.message}) — legacy voice path will run.`);
+      voiceFirst = null;
+    }
+  } else if (String(process.env.VOICE_FIRST || "1") === "0") {
+    console.info("[voice-first] disabled via VOICE_FIRST=0 — legacy voice path.");
+  } else if (!manifest?.narration?.monologue && !manifest?.skipNarration) {
+    console.info("[voice-first] manifest carries no narration.monologue (pre-v62 plan) — legacy voice path.");
+  }
+
+  options.onProgress?.({ phase: "Submitting Runway clips", progress: 10, scenesTotal: photoScenes.length });
 
   const concurrency = Math.min(
     Number(process.env.RUNWAY_CONCURRENCY || DEFAULT_CONCURRENCY),
@@ -963,9 +1026,51 @@ export async function renderRunwayJob(body, options = {}) {
   // narration. Bypassable entirely via manifest.skipNarration: true.
   options.onProgress?.({ phase: "Adding voice narration", progress: 80 });
   let narration = { narrationApplied: false, reason: "skipped" };
+  // v62: a scene dropped mid-generation (v34.6 terminal) shortens the video
+  // after the voice grid was cut — the stem would desync from the drop point
+  // on. Rare (floor-of-the-floor only); the honest move is the legacy path,
+  // which re-derives timing from the scenes that actually exist.
+  if (voiceFirst && droppedScenes.length > 0) {
+    console.warn(`[voice-first] ${droppedScenes.length} scene(s) dropped after the grid was cut — reverting to legacy voice path (per-scene lines).`);
+    voiceFirst = null;
+  }
   if (manifest?.skipNarration) {
     console.info("[runway] skipNarration=true on manifest — skipping voice step.");
-  } else {
+  } else if (voiceFirst) {
+    const NARRATION_TIME_BUDGET_MS = 120 * 1000;
+    try {
+      const actualDurationsByPhoto = {};
+      for (const c of clipResults) {
+        if (c && c.photoId) actualDurationsByPhoto[c.photoId] = Number(c.duration) || 0;
+      }
+      narration = await Promise.race([
+        applyVoiceFirstMix({
+          masterMp4: finalMp4,
+          voiceFirst,
+          photoScenes,
+          sceneDurationsByPhoto: actualDurationsByPhoto,
+          crossfadeOverlapSec: manifest?.runwayConfig?.useCrossfades !== false ? 0.5 : 0,
+          captionsEnabled: manifest?.captionsEnabled !== false,
+          captionsVariant: /social|upbeat|modern|viral/i.test(
+            `${manifest?.musicMood || ""} ${manifest?.selectedStyle || ""}`
+          ) ? "bold" : "luxury",
+          tempDir,
+          jobId,
+          onProgress: (info) => {
+            options.onProgress?.({ phase: info.phase, progress: 80 + Math.floor((info.fraction || 0) * 4) });
+          }
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Voice-first mix exceeded 2-minute time budget")), NARRATION_TIME_BUDGET_MS)
+        )
+      ]);
+    } catch (err) {
+      console.warn(`[voice-first] mix failed (${err.message}) — falling back to legacy voice path.`);
+      voiceFirst = null;
+      narration = { narrationApplied: false, reason: err.message || "voice_first_mix_failed" };
+    }
+  }
+  if (!manifest?.skipNarration && !narration.narrationApplied && !voiceFirst) {
     const NARRATION_TIME_BUDGET_MS = 120 * 1000; // 2 minutes hard cap
     try {
       // v26.9 reliability: pass the ACTUAL per-scene clip durations (keyed by
@@ -1023,6 +1128,7 @@ export async function renderRunwayJob(body, options = {}) {
   // silently failing into a fallback cost multiple smoke tests to detect.
   console.info(
     `[voice] PATH USED: ${
+      narration.voiceFirst ? "VOICE-FIRST (v62 — scene grid derived from the narration)" :
       narration.aligned ? "ALIGNED (sentence↔scene locked)" :
       narration.continuous ? "WHOLE-SCRIPT (should be impossible post-v34.1)" :
       narration.narrationApplied ? "PER-LINE (scene-locked fallback)" :
@@ -1264,7 +1370,7 @@ export async function renderRunwayJob(body, options = {}) {
     formats: upload.formats,
     socialShorts: upload.socialShorts,
     narration: narration.narrationApplied
-      ? { applied: true, voiceId: narration.voiceId, lineCount: narration.narrationLineCount }
+      ? { applied: true, voiceId: narration.voiceId, lineCount: narration.narrationLineCount, voiceFirst: Boolean(narration.voiceFirst) }
       : { applied: false, reason: narration.reason },
     scenesGenerated: clipResults.length,
     sceneClips: clipResults.map((c) => ({
@@ -1503,11 +1609,17 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   const XFADE_COMP_SEC = 0.5;
   const useXfade = manifest?.runwayConfig?.useCrossfades !== false;
   const snappedDur = Number(scene.duration) > 0 ? Number(scene.duration) : 6;
-  const targetDuration = clamp(useXfade ? snappedDur + XFADE_COMP_SEC : snappedDur, 1.6, 8);
+  // v62: Kling V3 takes EXACT 1-second durations, and voice-first grids run
+  // scenes up to 9.5s visible (9.5 + 0.5 xfade = a 10s ask). The old 8s cap
+  // and 4/6/8 bucketing are Veo-shaped (fal enum "4s|6s|8s", 1080p pinned to
+  // 8s) — keep them byte-identical on the Veo/rollback path.
+  const klingExact = /kling/i.test(process.env.FAL_VIDEO_MODEL || "");
+  const targetDuration = clamp(useXfade ? snappedDur + XFADE_COMP_SEC : snappedDur, 1.6, klingExact ? 10 : 8);
   const resolution = process.env.FAL_RESOLUTION || "720p";
   // Smallest fal duration bucket that covers what we'll actually keep.
   // 1080p only exists at 8s on fal — pin the bucket there on rollback.
-  const bucketSec = resolution === "1080p" ? 8
+  const bucketSec = klingExact ? Math.min(10, Math.max(4, Math.ceil(targetDuration)))
+    : resolution === "1080p" ? 8
     : targetDuration <= 4 ? 4
     : targetDuration <= 6 ? 6
     : 8;
