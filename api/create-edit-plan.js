@@ -512,6 +512,81 @@ export default async function handler(request, response) {
       }
     }
 
+    // v61.3 (Troy, during the Jul 24 OpenAI "Elevated Error Rates" incident:
+    // "Gemini should be the fallback if OpenAI fails"): before surrendering
+    // to the deterministic template, replay the SAME director prompt through
+    // Gemini. The prompt is derived 1:1 from buildOpenAIRequest (no second
+    // prompt to maintain); photos are fetched and inlined because Gemini
+    // cannot fetch arbitrary HTTP URLs. Uses the proven QC transport
+    // (GEMINI_API_MODE=vertex -> aiplatform, else generativelanguage), the
+    // v45.5 thinking-budget-0 lesson, and the same validateEditPlan gate —
+    // a Gemini plan that fails validation still falls through to the
+    // template exactly as before. Skipped silently when GEMINI_API_KEY is
+    // not configured on Vercel.
+    if (!parsed && process.env.GEMINI_API_KEY) {
+      try {
+        const vp = visionAttempts[visionAttempts.length - 1];
+        const oaiBody = buildOpenAIRequest({ allPhotos: photos, visionPhotos: vp, listingDetails, selectedStyle, exportFormat, engine, brandKit, includeNarration, targetDurationSec });
+        const texts = [];
+        const imageUrls = [];
+        for (const msg of oaiBody.input || []) {
+          const content = Array.isArray(msg.content) ? msg.content : [];
+          for (const part of content) {
+            if (part.type === "input_text" && part.text) texts.push(part.text);
+            if (part.type === "input_image" && part.image_url) imageUrls.push(part.image_url);
+          }
+        }
+        const parts = [{ text: texts.join("\n\n") + "\n\nRespond with ONLY the JSON object — no markdown fences, no commentary." }];
+        let inlinedBytes = 0;
+        for (const url of imageUrls) {
+          if (inlinedBytes > 15 * 1024 * 1024) break; // Vertex inline ceiling headroom
+          try {
+            const imgRes = await fetchWithTimeout(url, {}, 10000);
+            if (!imgRes.ok) continue;
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            inlinedBytes += buf.length;
+            const mime = buf[0] === 0x89 && buf[1] === 0x50 ? "image/png" : "image/jpeg";
+            parts.push({ inline_data: { mime_type: mime, data: buf.toString("base64") } });
+          } catch { /* skip unfetchable photo — validation still runs on all */ }
+        }
+        const gModel = process.env.GEMINI_DIRECTOR_MODEL || "gemini-2.5-flash";
+        const vertex = String(process.env.GEMINI_API_MODE || "").toLowerCase() === "vertex";
+        const gUrl = vertex
+          ? `https://aiplatform.googleapis.com/v1/publishers/google/models/${gModel}:generateContent`
+          : `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent`;
+        const gRes = await fetchWithTimeout(gUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: 0 } }
+          })
+        }, Number(process.env.GEMINI_MOTION_DIRECTOR_TIMEOUT_MS || 45000));
+        const gPayload = await gRes.json().catch(() => ({}));
+        if (gRes.ok) {
+          const raw = String(gPayload?.candidates?.[0]?.content?.parts?.map((pt) => pt.text || "").join("") || "");
+          const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+          let candidate = null;
+          try { candidate = JSON.parse(cleaned); } catch { /* falls through to template */ }
+          if (candidate) {
+            const gValidation = validateEditPlan(candidate, photos);
+            if (gValidation.valid) {
+              parsed = candidate;
+              logMotionDirector("info", `Gemini failover succeeded (${gModel}, ${parts.length - 1} photos inlined) — OpenAI was down, template avoided`, {
+                sceneCount: parsed.scenes?.length || 0, heroPhotoId: parsed.heroPhotoId
+              });
+            } else {
+              logMotionDirector("warn", "Gemini failover plan failed validation; template next", { reason: gValidation.error });
+            }
+          }
+        } else {
+          logMotionDirector("warn", `Gemini failover HTTP ${gRes.status}; template next`, { body: JSON.stringify(gPayload).slice(0, 200) });
+        }
+      } catch (gemErr) {
+        logMotionDirector("warn", `Gemini failover threw ${gemErr.name || "Error"}; template next`, { message: gemErr.message || "" });
+      }
+    }
+
     if (!parsed) {
       logMotionDirector("error", "All Motion Director attempts failed; fallback used", lastFailure);
       response.status(200).json({
