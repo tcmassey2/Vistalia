@@ -166,6 +166,35 @@ function ffFilterSet() {
   return _ffFilterSetPromise;
 }
 
+// v60.5: mean inter-frame luma delta (signalstats YDIF) of a clip — the
+// slideshow guard's yardstick. ~0.7 = deterministic floor / near-still,
+// ≈2.2 = healthy Veo-era motion. Downscaled to 270x480 first so a 2.8s
+// clip costs well under a second. Resolves NaN on any failure; callers
+// treat this as telemetry, never as a gate that can kill a render.
+function measureClipMotion(file, { timeoutMs = 20000 } = {}) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn("ffprobe", [
+        "-v", "error",
+        "-f", "lavfi", "-i", `movie=${file},scale=270:480,signalstats`,
+        "-show_entries", "frame_tags=lavfi.signalstats.YDIF",
+        "-of", "csv=p=0"
+      ], { stdio: ["ignore", "pipe", "ignore"] });
+      let out = "";
+      proc.stdout.on("data", (d) => { out += d; });
+      const finish = () => {
+        const xs = out.trim().split("\n").map(Number).filter(Number.isFinite);
+        resolve(xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
+      };
+      proc.on("close", finish);
+      proc.on("error", () => resolve(NaN));
+      setTimeout(() => { try { proc.kill(); } catch {} }, timeoutMs);
+    } catch {
+      resolve(NaN);
+    }
+  });
+}
+
 // Map the customer-facing style name onto a finishing personality.
 function resolveFinishStyle(manifest) {
   if (manifest?.runwayConfig?.complianceMode) return "mls";
@@ -1804,12 +1833,23 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   const cornerOverlayY = 24;
 
   const normalizedClips = [];
+  // v60.5 slideshow guard: motion energy per raw engine clip, measured and
+  // logged. The first Kling canary shipped near-still clips and PASSED every
+  // gate — QC and the sweep score fidelity, and stillness is maximally
+  // faithful. Motion is now a first-class, numbered log line per render.
+  const motionStats = [];
   // Per-clip granular progress so the bar visibly moves through this step
   // instead of sitting at 76%. We split the 76→80 range across the clips.
   const NORMALIZE_PROGRESS_START = 76;
   const NORMALIZE_PROGRESS_RANGE = 4;
   for (let i = 0; i < clipResults.length; i++) {
     const clip = clipResults[i];
+    // Measure the RAW engine output (pre-grade, pre-title-card) so the
+    // number reflects what the model generated, not our filters. Fail-open.
+    try {
+      const ydif = await measureClipMotion(clip.clipPath);
+      if (Number.isFinite(ydif)) motionStats.push({ scene: clip.sceneIndex + 1, ydif, engine: clip.engineUsed || "" });
+    } catch { /* motion telemetry must never block a render */ }
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
     // v28: trim the 8s native-1080p Veo clip back to its intended length here —
     // free, since this normalize pass already re-encodes. Guarded so a missing
@@ -1937,6 +1977,22 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       progress: NORMALIZE_PROGRESS_START + Math.floor(((i + 1) / clipResults.length) * NORMALIZE_PROGRESS_RANGE)
     });
   }
+  // v60.5 slideshow guard report — the canary gate reads these lines.
+  // Reference points: healthy Veo-era master ≈2.2, deterministic floor
+  // ≈0.7, the "absolutely terrible" Kling canary ran 0.70-1.13.
+  if (motionStats.length) {
+    for (const m of motionStats) {
+      console.log(`[motion] scene ${m.scene} YDIF=${m.ydif.toFixed(2)}${m.engine && m.engine !== "veo" ? ` (${m.engine})` : ""}`);
+    }
+    const sorted = motionStats.map((m) => m.ydif).sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const dead = motionStats.filter((m) => m.ydif < 1.0).length;
+    console.log(`[motion] summary — median YDIF ${median.toFixed(2)}, scenes<1.0: ${dead}/${motionStats.length} (≈2.2 healthy, ≈0.7 floor, <1.0 slideshow-suspect)`);
+    if (median < 1.3) {
+      console.warn(`[motion] ALERT: median ${median.toFixed(2)} < 1.3 — this render will read as a photo slideshow. Check engine duration/prompt wiring (v60.5) before shipping.`);
+    }
+  }
+
   // Clean up the corner headshot asset — every normalize call already
   // consumed it. Keeping it around just hogs disk.
   if (cornerHeadshotPath) await fs.unlink(cornerHeadshotPath).catch(() => {});

@@ -73,6 +73,20 @@ const DEFAULT_MODEL = "fal-ai/veo3.1/fast/image-to-video";
 const KLING_NEGATIVE_PROMPT =
   "new objects, added furniture, removed furniture, morphing, warping, melting, " +
   "texture boil, flickering, people, animals, text, captions, watermarks, logos";
+// v60.5: Kling obeys the Veo fidelity suffix's "completely static scene"
+// LITERALLY — the first Kling canary shipped near-still clips (YDIF
+// 0.70-1.13 vs the Veo hero's 2.18; a deterministic floor measures 0.72)
+// and Troy called it "absolutely terrible". The Jul 24 motion probe
+// (12 gens, 4 scenes x 3 prompt variants) proved two levers: duration
+// "4" instead of the "3" floor (even the unchanged control moved at 2.62
+// avg once given 4s) and an explicit camera instruction (probe variant
+// v2: 3.34 avg, fidelity intact on all 4 scenes; v3 "strong" hit 9.96 on
+// one scene but traveled into an invented fireplace close-up — too hot).
+// This suffix is v2's tested language, appended AFTER the fidelity
+// suffix so the safety bans stay in force.
+const KLING_MOTION_SUFFIX =
+  " Slow, steady cinematic dolly-in, smooth gliding camera with natural " +
+  "perspective parallax, luxury real-estate cinematography.";
 const DEFAULT_RESOLUTION = "1080p";
 const DEFAULT_DURATION = "6s";
 const DEFAULT_GENERATE_AUDIO = false;
@@ -396,10 +410,16 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
     // negative_prompt is the hallucination lever Veo never exposed.
     // No aspect_ratio: V3 i2v follows the input photo's aspect, which
     // carries more usable pixels into the 9:16 master than forced 16:9.
+    // v60.5: duration floor is 4, not 3 — at Kling's 3s minimum the clip
+    // never leaves its motion ramp (the whole canary read as a slideshow);
+    // at 4s even the conservative prompt moves at Veo-hero level, and the
+    // probe's head-2.8s slice (what production ships after trim) measured
+    // a healthy 2.01-2.97. Cost: +$0.084/scene ≈ +$1/render. The motion
+    // suffix rides every Kling prompt; negative_prompt keeps the bans.
     return {
-      prompt,
+      prompt: prompt + KLING_MOTION_SUFFIX,
       image_url: imageUrl,
-      duration: String(Math.min(15, Math.max(3, seconds))),
+      duration: String(Math.min(15, Math.max(4, seconds))),
       negative_prompt: KLING_NEGATIVE_PROMPT,
       generate_audio: false
     };
