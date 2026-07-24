@@ -552,6 +552,25 @@ async function pollAndProcess() {
       // runner — runRenderJob would dispatch a full render AND refund a
       // credit on failure that regen never charged.
       const isRegen = Boolean(claimed.manifest?.__regen);
+      // v60.8 CANARY COMMIT GUARD (Jul 24 incident: the 35d8305 deploy's
+      // canary was claimed at 09:38:00 by the DRAINING old instance — old
+      // code, so the deploy gate would have validated the wrong build —
+      // and SIGTERM'd one second later, parking the canary for the 20-min
+      // stuck-reaper window). A canary's job_id embeds the commit it must
+      // validate (canary-<sha8>-<ts>). If that sha isn't OURS, release the
+      // claim untouched and let the right instance take it: requeue is
+      // cheap, an old-code gate is worthless, and a during-drain claim is
+      // a coin-flip SIGTERM.
+      const canaryCommit = /^canary-([0-9a-f]{8})-/.exec(String(claimed.job_id || ""))?.[1];
+      const ourCommit = String(process.env.RENDER_GIT_COMMIT || "").slice(0, 8);
+      if (canaryCommit && ourCommit && canaryCommit !== ourCommit) {
+        console.warn(`[queue] canary ${claimed.job_id} targets commit ${canaryCommit} but this instance runs ${ourCommit} — releasing claim for the right instance.`);
+        await fetch(`${SUPABASE_URL}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(claimed.job_id)}`, {
+          method: "PATCH", headers: { ...sbHeaders, Prefer: "return=minimal" },
+          body: JSON.stringify({ status: "queued", claimed_at: null })
+        }).catch(() => { /* stuck reaper redelivers after 20 min either way */ });
+        break;
+      }
       // v50.1 IDEMPOTENT CLAIM GUARD (Jul 18 incident: one job rendered 3×,
       // customer emailed 2×, ~2 renders of fal spend wasted). If the audit
       // row says this job already delivered, re-assert the terminal status
