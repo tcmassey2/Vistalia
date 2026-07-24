@@ -442,8 +442,20 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
     // a healthy 2.01-2.97. Cost: +$0.084/scene ≈ +$1/render. The motion
     // suffix rides every Kling prompt; negative_prompt keeps the bans.
     const motion = motionStyle === "steady" ? KLING_MOTION_SUFFIX : KLING_MOTION_BOLD;
+    // v61.1: Kling rejects prompts over 2500 chars (fal 422 string_too_long).
+    // The Director's scene text + fidelity suffix + bold suffix overflowed on
+    // 5/9 canary scenes — each 422 burned a retry and silently DE-ESCALATED
+    // the scene to the steady prompt, quietly undoing v61's boldness. Keep
+    // the head (scene description) and the tail (motion language); the
+    // fidelity boilerplate in the middle is exactly what negative_prompt
+    // already enforces on Kling, so it is the right thing to sacrifice.
+    let klingPrompt = prompt + motion;
+    if (klingPrompt.length > 2500) {
+      klingPrompt = prompt.slice(0, 2500 - motion.length - 1).trimEnd() + " " + motion.trimStart();
+      console.warn(`[veo] kling prompt trimmed ${(prompt + motion).length}->${klingPrompt.length} chars (2500 cap) — fidelity clauses ride the negative prompt.`);
+    }
     return {
-      prompt: prompt + motion,
+      prompt: klingPrompt,
       image_url: imageUrl,
       duration: String(Math.min(15, Math.max(4, seconds))),
       negative_prompt: KLING_NEGATIVE_PROMPT + KLING_NEGATIVE_EXTRA,
