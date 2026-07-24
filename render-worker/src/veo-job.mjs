@@ -90,10 +90,21 @@ const KLING_NEGATIVE_PROMPT =
 // the rig explicitly and ban the shake in the negative prompt; the
 // worker-side vidstab gimbal pass (runway-job v60.9) catches whatever
 // language doesn't.
+// v61.2 three-rung Kling motion ladder (Troy: "great drone video footage
+// almost, but avoid ken burns fallbacks"). Rung 1 flies, rung 2 calms,
+// rung 3 barely breathes — but ALL THREE are real moving shots, so a QC
+// failure de-escalates instead of dying into a floor. The Veo constrained
+// templates are no longer used on Kling (runway-job v61.2).
 const KLING_MOTION_SUFFIX =
-  " Slow, steady cinematic dolly-in on a motorized slider, perfectly " +
-  "stabilized tripod-grade movement, smooth gliding camera with natural " +
-  "perspective parallax, no handheld shake, luxury real-estate cinematography.";
+  " Controlled cinematic camera: one slow, smooth, perfectly stabilized " +
+  "dolly push straight toward the scene's focal point, modest travel, no " +
+  "arcing, no lateral drift, gentle natural perspective parallax only, " +
+  "tripod-grade steadiness, calm luxury real-estate cinematography.";
+const KLING_MOTION_STRICT =
+  " Minimal cinematic camera: a single very slow, short, perfectly straight " +
+  "and level push-in, only a small fraction of travel, absolutely " +
+  "stabilized, no rotation, no arc, no drift, no lateral movement, the " +
+  "scene otherwise perfectly still, museum-grade calm.";
 // v61 (Troy: "Make the prompts more aggressive... the whole point of the
 // 2nd render attempt is to then use the constrained prompt. The first one
 // can be more lively"): the conservative stack was Veo damage control.
@@ -102,10 +113,11 @@ const KLING_MOTION_SUFFIX =
 // its job); constrained retries keep the steady suffix so attempt 2 is a
 // genuine de-escalation.
 const KLING_MOTION_BOLD =
-  " Confident cinematic camera move: a smooth swift dolly glide forward" +
-  " and gently arcing sideways through the space toward the scene's focal" +
-  " point, pronounced natural perspective parallax, motorized-slider" +
-  " stability, no handheld shake, dynamic luxury real-estate film energy.";
+  " Cinematic drone-style camera: a smooth confident glide forward through" +
+  " the space, gently arcing to reveal depth toward the scene's focal point," +
+  " pronounced natural perspective parallax, floating steadicam grace," +
+  " perfectly stabilized, no handheld shake, dynamic luxury real-estate" +
+  " film energy.";
 const KLING_NEGATIVE_EXTRA =
   ", handheld camera shake, camera bounce, bobbing, walking motion, jittery footage";
 const DEFAULT_RESOLUTION = "1080p";
@@ -441,7 +453,9 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
     // probe's head-2.8s slice (what production ships after trim) measured
     // a healthy 2.01-2.97. Cost: +$0.084/scene ≈ +$1/render. The motion
     // suffix rides every Kling prompt; negative_prompt keeps the bans.
-    const motion = motionStyle === "steady" ? KLING_MOTION_SUFFIX : KLING_MOTION_BOLD;
+    const motion = motionStyle === "strict" ? KLING_MOTION_STRICT
+      : motionStyle === "steady" ? KLING_MOTION_SUFFIX
+      : KLING_MOTION_BOLD;
     // v61.1: Kling rejects prompts over 2500 chars (fal 422 string_too_long).
     // The Director's scene text + fidelity suffix + bold suffix overflowed on
     // 5/9 canary scenes — each 422 burned a retry and silently DE-ESCALATED

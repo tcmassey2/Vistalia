@@ -1437,9 +1437,20 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
 
   // Prompt priority: explicit veoPrompt from a v26 edit plan → legacy
   // runwayPrompt (older plans; plain text, works on Veo) → constrained.
-  const basePrompt = constrained
+  // v61.2 (Troy: "Make the 2nd prompt more constrained but not as far as
+  // the veo one was. The 3rd a harsher constrain... great drone footage,
+  // avoid ken burns fallbacks"): on Kling, retries KEEP the planned scene
+  // description — the Veo constrained templates encode near-static language
+  // ("about 6% total travel") that Kling obeys literally, which made rung 2
+  // as dead as the slideshow bug. The ladder now de-escalates through the
+  // MOTION SUFFIX alone (bold drone glide -> steady push -> minimal push,
+  // see veo-job KLING_MOTION_*), so every rung stays a real moving shot
+  // and the floor is reserved for true failures. Veo keeps its templates.
+  const klingLadder = String(process.env.FAL_VIDEO_MODEL || "").toLowerCase().includes("kling");
+  const plannedPrompt = scene.veoPrompt || scene.veo_prompt || scene.runwayPrompt || scene.runway_prompt || buildConstrainedVeoPrompt(scene);
+  const basePrompt = constrained && !klingLadder
     ? buildConstrainedVeoPrompt(scene, { strict: strictConstrained })
-    : (scene.veoPrompt || scene.veo_prompt || scene.runwayPrompt || scene.runway_prompt || buildConstrainedVeoPrompt(scene));
+    : plannedPrompt;
   // v28: exteriors are where Veo morphs worst — it "animates" foliage under any
   // camera move (leaves rippling, branches growing/regenerating). For outdoor
   // scenes, append an explicit foliage lock + minimal-motion bias on top of the
@@ -1524,7 +1535,7 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
       // v61: attempt 1 runs the lively bold camera language; constrained
       // retries (the ladder's 2nd attempt) drop to the steady suffix so
       // de-escalation is real. Troy: "the first one can be more lively."
-      motionStyle: (constrained || strictConstrained) ? "steady" : "bold"
+      motionStyle: strictConstrained ? "strict" : constrained ? "steady" : "bold"
     }),
     new Promise((_, reject) => {
       attemptDeadline = setTimeout(() => {
