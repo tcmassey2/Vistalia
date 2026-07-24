@@ -386,9 +386,37 @@ export async function qcMasterSceneCheck({ masterPath, startSec, endSec, sourceI
       );
       frames.push(framePath);
     }
+    // v60.7: compare against the SAME 9:16 window the master actually
+    // ships, not the full photo. Every clip is cover-cropped to 1080x1920
+    // (Kling native-aspect output loses ~58% of a 4:3 photo's width), so
+    // objects near the photo's left/right edges exist in the photo but
+    // CANNOT appear in any faithful frame. The sweep floored exactly that
+    // class two canaries running ("light fixture right of the door
+    // missing", "windows on the left missing") — wrongful floors on
+    // QC-passed scenes. Centered cover-crop matches the normalize math
+    // for real listing photos (the per-room vertical bias only engages
+    // when post-scale height exceeds the frame — not the case here).
+    // Fail-open: any error → compare against the full photo as before.
+    let compareUrl = sourceImageUrl;
+    try {
+      const srcRes = await fetch(sourceImageUrl);
+      if (srcRes.ok) {
+        const srcBuf = Buffer.from(await srcRes.arrayBuffer());
+        const rawPath = path.join(tempDir, `sweep-src-${String(sceneIndex).padStart(3, "0")}.img`);
+        const cropPath = path.join(tempDir, `sweep-srccrop-${String(sceneIndex).padStart(3, "0")}.jpg`);
+        await fs.writeFile(rawPath, srcBuf);
+        await runFFmpeg(
+          ["-y", "-i", rawPath, "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,scale=512:-2", "-q:v", "5", cropPath],
+          { timeoutMs: 20000, label: `sweep:srccrop-${sceneIndex}` }
+        );
+        const cropB64 = (await fs.readFile(cropPath)).toString("base64");
+        compareUrl = `data:image/jpeg;base64,${cropB64}`;
+        await fs.unlink(rawPath).catch(() => {});
+      }
+    } catch { /* fall back to the uncropped photo */ }
     return await runQcInspection({
       frames,
-      sourceImageUrl,
+      sourceImageUrl: compareUrl,
       sceneIndex,
       roomType,
       logTag: "sweep",

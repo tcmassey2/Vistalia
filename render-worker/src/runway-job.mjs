@@ -898,8 +898,27 @@ export async function renderRunwayJob(body, options = {}) {
           // asymmetry flips: a floored good scene is acceptable; a shipped
           // hallucination is not. MAX_SWEEP_REPLACEMENTS still caps blast
           // radius if the VLM has a bad day.
-          const hard = verdict.checked ? verdict.reasons : [];
+          let hard = verdict.checked ? verdict.reasons : [];
           if (!verdict.checked) sweepFailOpen += 1;
+          // v60.7: the v50d address title card is burned into the FIRST
+          // scene by design. The sweep flagged its text as an artifact on
+          // three straight canaries ("Text overlay '1000 CANARY COURT…' is
+          // not in the original photo" — correct observation, wrong
+          // verdict) and floored a healthy opener each time. When the
+          // title intro is active, text flags on scene 1 are expected;
+          // object/motion flags stay hard.
+          if (
+            (clip.sceneIndex ?? i) === 0 &&
+            manifest?.disableAddressCard !== true &&
+            String(process.env.FINISH_TITLE || "1") !== "0" &&
+            hard.length > 0
+          ) {
+            const kept = hard.filter((r) => !/text/i.test(String(r)));
+            if (kept.length !== hard.length) {
+              console.info(`[sweep] scene ${(clip.sceneIndex ?? i) + 1}: text flag ignored — address title card is intentional (${hard.length - kept.length} reason${hard.length - kept.length === 1 ? "" : "s"} dropped).`);
+            }
+            hard = kept;
+          }
           if (hard.length > 0) sweepFlagged.push({ index: i, clip, scene, reasons: hard });
           // Gentle pacing — sequential + spaced keeps us clear of rate
           // limits. v43.1: 250→600ms; m29's sweep hit 429 on most scenes
@@ -1987,9 +2006,17 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     const sorted = motionStats.map((m) => m.ydif).sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
     const dead = motionStats.filter((m) => m.ydif < 1.0).length;
-    console.log(`[motion] summary — median YDIF ${median.toFixed(2)}, scenes<1.0: ${dead}/${motionStats.length} (≈2.2 healthy, ≈0.7 floor, <1.0 slideshow-suspect)`);
+    // v60.7: label which pass this is. The stitch runs once pre-sweep and
+    // again after floor replacements — only the SECOND pass measures what
+    // the customer receives. The fdc8e72 canary logged a proud 2.38
+    // pre-sweep while the shipped master (3 floors + damped constrained
+    // scenes) sat near the ALERT line; never let the first number stand
+    // alone again.
+    const postSweep = clipResults.some((c) => c.sweepReplaced);
+    const passLabel = postSweep ? "SHIPPED (post-sweep re-stitch)" : "pre-sweep";
+    console.log(`[motion] summary [${passLabel}] — median YDIF ${median.toFixed(2)}, scenes<1.0: ${dead}/${motionStats.length} (≈2.2 healthy, ≈0.7 floor, <1.0 slideshow-suspect)`);
     if (median < 1.3) {
-      console.warn(`[motion] ALERT: median ${median.toFixed(2)} < 1.3 — this render will read as a photo slideshow. Check engine duration/prompt wiring (v60.5) before shipping.`);
+      console.warn(`[motion] ALERT: median ${median.toFixed(2)} < 1.3 — this ${postSweep ? "SHIPPED master" : "render"} will read as a photo slideshow. Check engine duration/prompt wiring (v60.5) and the sweep floor count before shipping.`);
     }
   }
 
@@ -3330,7 +3357,17 @@ function decideUseKenBurns(scene, guardLevel) {
   //     never trips on a normal listing — would need multi-category
   //     keyword stacking PLUS aggressive motion. The goal is at most
   //     ONE fallback per typical listing (the kitchen).
-  if (room === "kitchen") {
+  // v60.7: the kitchen-always + v49 constrained-first blocks below are
+  // VEO floor-rate policy (541 Veo scenes, Jul 17). Kling is a different
+  // animal: it went 15/15 on the hard set (audit-selected VEO failures,
+  // kitchens included) and obeys restraint language literally — on the
+  // fdc8e72 canary the constrained-first rooms ran at HALF the motion of
+  // planned prompts (1.22-1.28 vs 2.4-3.4 YDIF) for zero fidelity gain
+  // (QC passed 9/9 either way). On Kling, planned prompts run first;
+  // the rotational-object lock, strict mode, risk≥90, complianceMode,
+  // and QC-fail constrained RETRIES all remain in force.
+  const klingEngine = String(process.env.FAL_VIDEO_MODEL || "").toLowerCase().includes("kling");
+  if (!klingEngine && room === "kitchen") {
     return { useKenBurns: true, risk, reason: `kitchen always falls back (risk ${risk})` };
   }
   // v49 FLOOR-RATE DATA (Jul 17 2026, 541 scenes / 14 days of production):
@@ -3342,7 +3379,7 @@ function decideUseKenBurns(scene, guardLevel) {
   // (fewer retries), faster, and ships MORE real Veo motion, not less —
   // kitchens are the proof. Bedrooms earn it for patterned bedding/artwork
   // (the m48 "morphing pillows" class); amenity for gym/pool-room mirrors.
-  if (room === "bathroom" || room === "bedroom" || room === "amenity") {
+  if (!klingEngine && (room === "bathroom" || room === "bedroom" || room === "amenity")) {
     return { useKenBurns: true, risk, reason: `${room} constrained-first (v49 floor-rate data; risk ${risk})` };
   }
   if (risk >= 90) {
