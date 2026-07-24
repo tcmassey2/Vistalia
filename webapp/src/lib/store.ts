@@ -585,6 +585,15 @@ export const useStore = create<AppState>((set, get) => ({
     // this live). Persist at the setter choke point: write once when a real
     // jobId appears, clear on terminal/null. The jobId-change guard keeps
     // the 350ms phase-creep ticks from hammering localStorage.
+    // v62.8: carry the project scope across updates that omit it (status
+    // polls and phase-creep ticks spread server responses that don't echo
+    // projectId — same clobber class as the v34.4 engine fix).
+    if (job && !job.projectId) {
+      const prev = get().renderJob;
+      if (prev?.projectId && (!job.jobId || job.jobId === prev.jobId)) {
+        job = { ...job, projectId: prev.projectId };
+      }
+    }
     try {
       const prev = get().renderJob;
       const ACTIVE_KEY = "vistalia.active-render.v1";
@@ -593,7 +602,7 @@ export const useStore = create<AppState>((set, get) => ({
       } else if (job.jobId && job.jobId !== prev?.jobId) {
         localStorage.setItem(
           ACTIVE_KEY,
-          JSON.stringify({ jobId: job.jobId, engine: job.engine || null, startedAt: Date.now() })
+          JSON.stringify({ jobId: job.jobId, projectId: job.projectId || null, engine: job.engine || null, startedAt: Date.now() })
         );
       }
     } catch {

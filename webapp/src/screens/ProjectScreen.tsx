@@ -2244,7 +2244,10 @@ function RenderControls() {
   const [paywallReason, setPaywallReason] = useState<string>("");
 
   const isRendering = renderJob?.status === "queued" || renderJob?.status === "rendering";
-  const isComplete = renderJob?.status === "completed" && renderJob.mp4Url;
+  // v62.8: a render belongs to the project that started it — never let
+  // another project's job drive this page's completed state.
+  const jobIsMine = !renderJob?.projectId || renderJob.projectId === projectId;
+  const isComplete = jobIsMine && renderJob?.status === "completed" && renderJob.mp4Url;
   const canRender = photos.length >= 3 && !isRendering;
 
   const generate = async () => {
@@ -2259,6 +2262,7 @@ function RenderControls() {
     // frame they click, and the bar starts ticking forward right away.
     setRenderJob({
       jobId: "",
+      projectId, // v62.8: scope this render to the project that started it
       status: "queued",
       phase: "Directing your tour",
       progress: 2,
@@ -2440,6 +2444,7 @@ function RenderControls() {
       });
       setRenderJob({
         jobId: submitted.jobId || "",
+        projectId, // v62.8
         status: submitted.status,
         phase: submitted.phase || "Queued for render",
         progress: Math.max(15, Number(submitted.progress) || 15),
@@ -2510,7 +2515,7 @@ function RenderControls() {
     try {
       const raw = localStorage.getItem("vistalia.active-render.v1");
       if (!raw) return;
-      const saved = JSON.parse(raw) as { jobId?: string; engine?: string; startedAt?: number };
+      const saved = JSON.parse(raw) as { jobId?: string; projectId?: string; engine?: string; startedAt?: number };
       const ageMs = Date.now() - (saved.startedAt || 0);
       // 35 min = worker's 25-min overall cap + polling slack. Older = stale key.
       if (!saved.jobId || ageMs > 35 * 60 * 1000) {
@@ -2519,6 +2524,7 @@ function RenderControls() {
       }
       setRenderJob({
         jobId: saved.jobId,
+        projectId: saved.projectId, // v62.8: refresh-resume keeps the scope
         status: "rendering",
         phase: "Reconnecting to your render",
         progress: 15,
@@ -2582,6 +2588,9 @@ function RenderControls() {
         setRenderJob({
           ...status,
           jobId,
+          // v62.8: the status endpoint doesn't echo projectId either — same
+          // clobber class as `engine` below. Keep the submit-time stamp.
+          projectId: useStore.getState().renderJob?.projectId || projectId,
           progress: safeProgress,
           phase: safePhase,
           // v34.4: the status endpoint doesn't echo `engine`, so spreading
@@ -2754,6 +2763,7 @@ function RenderStatusPanel() {
   const renderJob = useStore((s) => s.renderJob);
   const goToScreen = useStore((s) => s.goToScreen);
   const projectTitle = useStore((s) => s.projectTitle);
+  const currentProjectId = useStore((s) => s.projectId);
 
   // v2.1: one-time confetti reward when a render lands successfully. Keyed on
   // jobId so it fires once per finished video, not on every re-render.
@@ -2767,6 +2777,14 @@ function RenderStatusPanel() {
   }, [doneJobId]);
 
   if (!renderJob) return null;
+
+  // v62.8 THE WRONG-VIDEO BUG (Jul 24, "night and day"): two renders in
+  // flight — the Spanish colonial finished last and hijacked the global
+  // render slot, so the 40th St page played AND downloaded the other
+  // project's video under the 40th St filename (byte-identical sha256
+  // proved it). This panel only speaks for the project that started the
+  // job; another project's render is invisible here.
+  if (renderJob.projectId && currentProjectId && renderJob.projectId !== currentProjectId) return null;
 
   // Render completed but no master MP4 URL — a storage/delivery hiccup on
   // our side. Launch sweep: the old panel walked CUSTOMERS through the

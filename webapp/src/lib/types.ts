@@ -177,6 +177,11 @@ export interface SocialShortClip {
 
 export interface RenderJobStatus {
   jobId: string;
+  // v62.8: the render slot in the store is GLOBAL — without this field, two
+  // renders in flight let one project's page play (and download, under its
+  // own filename) the OTHER project's finished video. Stamped at submit,
+  // carried through every poll; display components gate on it.
+  projectId?: string;
   status: "queued" | "rendering" | "completed" | "failed";
   phase: string;
   progress: number;
