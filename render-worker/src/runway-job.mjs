@@ -1895,7 +1895,12 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // intentional dolly. Floors/regen clips skip; KLING_STABILIZE=0 kills;
     // any failure ships the unstabilized clip (fail-open).
     const klingClip = String(process.env.FAL_VIDEO_MODEL || "").toLowerCase().includes("kling");
-    if (klingClip && !clip.fallback && !clip.usedPhotoMotionFloor && !clip.preNormalized && String(process.env.KLING_STABILIZE || "1") !== "0") {
+    // v61.4: the post-sweep re-stitch runs this loop AGAIN on clips whose
+    // clipPath was already swapped to the stabilized file — ffmpeg then
+    // refuses input==output ("cannot edit in-place") and logs 9 scary-but-
+    // harmless errors per re-stitch. Already-stabilized clips skip.
+    const alreadyStabilized = /\bstab-\d{3}\.mp4$/.test(String(clip.clipPath || ""));
+    if (klingClip && !alreadyStabilized && !clip.fallback && !clip.usedPhotoMotionFloor && !clip.preNormalized && String(process.env.KLING_STABILIZE || "1") !== "0") {
       const trfPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.trf`);
       const stabPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
       try {
