@@ -476,12 +476,24 @@ function pickAndOrder(scored) {
   }
 
   // Step 4: top-up — if quotas didn't fill TARGET_KEEP slots (some rooms had
-  // 0 photos), fill remaining slots with the next best regardless of room.
+  // 0 photos), fill remaining slots with the next best.
+  // v62.12 (Troy, "another rough render"): this loop used to ignore room
+  // type ENTIRELY, which made the quotas above meaningless on any photoset
+  // smaller than TARGET_KEEP — every leftover photo got kept no matter what
+  // it was. The 40th St gallery is ~12 usable photos, almost all the same
+  // facade, so the video shipped 8 near-identical exteriors in a row and
+  // the narration had nothing to describe but stone and windows. Top-up now
+  // honors a RELAXED quota (2x base), so one room type can still stretch
+  // when it's most of what exists, but can never take the whole tour.
+  const relaxed = (roomType) => Math.max(2, (ROOM_QUOTAS[roomType] ?? 0) * 2);
   if (kept.size < TARGET_KEEP) {
     for (const r of ranked) {
       if (kept.size >= TARGET_KEEP) break;
       if (kept.has(r.photoId)) continue;
+      if ((ROOM_QUOTAS[r.roomType] ?? 0) === 0) continue;
+      if (perRoomCount[r.roomType] >= relaxed(r.roomType)) continue;
       kept.set(r.photoId, r);
+      perRoomCount[r.roomType]++;
     }
   }
 
@@ -504,10 +516,15 @@ function pickAndOrder(scored) {
   if (kept.size < minKeepFloor) {
     // Fill from the rest of the ranked list (skipping already-kept and
     // the model-flagged 'skip' room types that are clearly garbage).
+    // v62.12: the floor also honors the relaxed quota — a thin, one-note
+    // gallery should yield a SHORTER tour, not a monotonous one. Padding
+    // to a word count with eight views of the same wall is the defect.
     for (const r of ranked) {
       if (kept.size >= minKeepFloor) break;
       if (kept.has(r.photoId)) continue;
+      if (perRoomCount[r.roomType] >= relaxed(r.roomType)) continue;
       kept.set(r.photoId, r);
+      perRoomCount[r.roomType] = (perRoomCount[r.roomType] || 0) + 1;
     }
     // If we STILL haven't hit the floor, dip into the 'skip' bucket as a
     // last resort. Better to include a marginally-bad photo than ship a
@@ -561,6 +578,33 @@ function pickAndOrder(scored) {
         return composite(b) - composite(a);
       });
     if (heroPick) orderedKept.unshift(heroPick);
+  }
+
+  // v62.12 ANTI-MONOTONY: the system prompt has always said "avoid 3+
+  // consecutive shots of the same room type" and nothing ever enforced it.
+  // The 40th St tour shipped eight exteriors back to back because the model
+  // ordered them that way. Break runs by pulling the nearest different-room
+  // scene forward — a stable, minimal reshuffle that leaves the opener, the
+  // closer, and the overall tour arc intact.
+  const MAX_RUN = 2;
+  for (let i = 0; i < orderedKept.length; i++) {
+    if (i < MAX_RUN) continue;
+    const run = orderedKept.slice(i - MAX_RUN, i);
+    if (!run.every((r) => r.roomType === orderedKept[i].roomType)) continue;
+    // this would be a 3rd in a row — find the next scene of another type
+    const swapAt = orderedKept.findIndex((r, j) => j > i && r.roomType !== orderedKept[i].roomType);
+    if (swapAt === -1) break; // nothing left to interleave with — genuinely one-note
+    const [moved] = orderedKept.splice(swapAt, 1);
+    orderedKept.splice(i, 0, moved);
+  }
+  {
+    const comp = {};
+    for (const r of orderedKept) comp[r.roomType] = (comp[r.roomType] || 0) + 1;
+    const top = Object.entries(comp).sort((a, b) => b[1] - a[1])[0];
+    console.info(`[curate] tour composition: ${Object.entries(comp).map(([k, v]) => `${k} ${v}`).join(", ")} (${orderedKept.length} scenes).`);
+    if (top && top[1] / orderedKept.length > 0.6) {
+      console.warn(`[curate] THIN GALLERY: ${top[1]}/${orderedKept.length} scenes are "${top[0]}" — this listing's photos can't carry a varied tour; the narration will have little to describe.`);
+    }
   }
 
   // Step 6: emit the response shape the frontend wants.
