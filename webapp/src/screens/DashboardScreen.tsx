@@ -292,13 +292,42 @@ function ImportListingBand() {
   };
   useEffect(() => stopTicker, []);
 
-  const probeDims = (src: string) =>
-    new Promise<{ width: number; height: number }>((resolve) => {
+  // v62.6: probe dimensions AND paper-likeness in one decode. Floor plans,
+  // site plans, and document sheets are overwhelmingly white paper — a
+  // near-white pixel fraction over half the frame at 48×48 is decisive,
+  // deterministic, and free, catching the colored-site-plan class that
+  // low-detail Vision misreads as an "aerial rendering". Real photos —
+  // even bright white kitchens — rarely exceed ~35% near-white; plans run
+  // 55-85%. Fail-open: any canvas/CORS error reports paperLike=false.
+  const probePhoto = (src: string) =>
+    new Promise<{ width: number; height: number; paperLike: boolean }>((resolve) => {
       const img = new Image();
-      const done = (w: number, h: number) => resolve({ width: w || 1024, height: h || 1365 });
-      const timer = setTimeout(() => done(0, 0), 8000);
-      img.onload = () => { clearTimeout(timer); done(img.naturalWidth, img.naturalHeight); };
-      img.onerror = () => { clearTimeout(timer); done(0, 0); };
+      img.crossOrigin = "anonymous";
+      const done = (w: number, h: number, paperLike: boolean) =>
+        resolve({ width: w || 1024, height: h || 1365, paperLike });
+      const timer = setTimeout(() => done(0, 0, false), 8000);
+      img.onload = () => {
+        clearTimeout(timer);
+        let paperLike = false;
+        try {
+          const S = 48;
+          const canvas = document.createElement("canvas");
+          canvas.width = S;
+          canvas.height = S;
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, S, S);
+            const d = ctx.getImageData(0, 0, S, S).data;
+            let white = 0;
+            for (let i = 0; i < d.length; i += 4) {
+              if (d[i] > 228 && d[i + 1] > 228 && d[i + 2] > 228) white++;
+            }
+            paperLike = white / (S * S) > 0.5;
+          }
+        } catch { /* tainted canvas or decode issue → treat as a photo */ }
+        done(img.naturalWidth, img.naturalHeight, paperLike);
+      };
+      img.onerror = () => { clearTimeout(timer); done(0, 0, false); };
       img.src = src;
     });
 
@@ -323,20 +352,30 @@ function ImportListingBand() {
       const imported = result.photos || [];
       setPct(56);
       startPhase(`Preparing ${imported.length} photo${imported.length === 1 ? "" : "s"}…`, 64);
-      const dims = await Promise.all(imported.map((p) => probeDims(p.publicUrl)));
-      const photos: Photo[] = imported.map((p, i) => ({
-        id: `imported-${projectId}-${i}`,
-        fileName: p.fileName,
-        publicUrl: p.publicUrl,
-        durableUrl: p.publicUrl,
-        storagePath: p.storagePath,
-        bucket: p.bucket,
-        width: dims[i].width,
-        height: dims[i].height,
-        size: p.size,
-        order: i,
-        uploadedAt: new Date().toISOString()
-      }));
+      const probes = await Promise.all(imported.map((p) => probePhoto(p.publicUrl)));
+      // v62.6: paper-like sheets (floor plans, site plans, documents) are
+      // dropped HERE, deterministically, before curation ever sees them —
+      // "we can't pull anything that is not actual photos of the house."
+      const planDropped = imported.filter((_, i) => probes[i].paperLike).length;
+      if (planDropped > 0) {
+        console.info(`[import] dropped ${planDropped} plan/document image(s) — paper-white background detected.`);
+      }
+      const photos: Photo[] = imported
+        .map((p, i) => ({ p, probe: probes[i], i }))
+        .filter(({ probe }) => !probe.paperLike)
+        .map(({ p, probe }, i) => ({
+          id: `imported-${projectId}-${i}`,
+          fileName: p.fileName,
+          publicUrl: p.publicUrl,
+          durableUrl: p.publicUrl,
+          storagePath: p.storagePath,
+          bucket: p.bucket,
+          width: probe.width,
+          height: probe.height,
+          size: p.size,
+          order: i,
+          uploadedAt: new Date().toISOString()
+        }));
 
       // v62.4 DIVERSITY PASS (Troy: "It imports the same photo several
       // times. There needs to be diversity."): portal galleries repeat
@@ -390,9 +429,12 @@ function ImportListingBand() {
         photos: finalPhotos
       });
       setPct(100);
+      const planNote = planDropped > 0
+        ? ` (${planDropped} plan/document sheet${planDropped === 1 ? "" : "s"} excluded)`
+        : "";
       setToast(
         finalPhotos.length > 0
-          ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote} — review and render.`
+          ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote}${planNote} — review and render.`
           : "Listing details imported — add your photos and render."
       );
     } catch {

@@ -331,6 +331,7 @@ function buildOpenAIRequest(photos) {
     "Two jobs: (1) score each photo for keep/reject, (2) assign a global tour order for the keepers.",
     "",
     "FIRST, contentType — the absolute gate: for every image decide if it is an actual PHOTOGRAPH (or photoreal architectural rendering) of this property → 'property_photo', or a GRAPHIC: 'floor_plan_or_site_plan' (any architectural drawing, plat, survey, elevation sheet), 'document_or_brochure' (MLS sheets, flyers, text pages), 'map', or 'other_graphic' (logos, agent headshots, collages). Anything that is not 'property_photo' is ALWAYS rejected (tourOrder=0) — no other rule, default, or keep-target overrides this. A video scene animating a floor plan is a customer-facing defect.",
+    "PLAN-DETECTION CARE: COLORED site plans and landscape plans — top-down orthographic drawings on white/paper backgrounds, even with rendered pools, lawns, furniture symbols, or room fills — are 'floor_plan_or_site_plan', NOT photos and NOT aerial views. A real aerial photo has terrain, shadows, and perspective; a drawing has uniform paper background and drafted line work. When an image is a straight-down diagram of the whole property, it is a plan.",
     "",
     "INCLUSION DEFAULT (applies ONLY to property_photo images): agents have already curated their upload; lean toward INCLUDING photos in the tour. Only reject if a photo is genuinely unusable. A typical listing should have 90%+ of uploads in the final cut. Aim to KEEP at least 80% of input photos, more for sets under 25.",
     "",
