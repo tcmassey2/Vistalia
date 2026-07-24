@@ -122,12 +122,22 @@ const KLING_MOTION_STRICT =
 // overreach outlier that QC caught in testing — which is the ladder doing
 // its job); constrained retries keep the steady suffix so attempt 2 is a
 // genuine de-escalation.
+// v62.2 (Troy, post-m81: "Turn up the prompts more. Make the motion more
+// aggressive. Instead of gimbal thing smooth drone footage"): rung 1 asks
+// for genuine aerial-cinematography energy — real travel, a wide banking
+// arc, rooms flowing past the lens — and smoothness comes from the PROMPT
+// (drone/rail language), not the vidstab gimbal pass (now default-off in
+// runway-job; KLING_STABILIZE=1 restores it if walk-tremor returns).
+// Probe context: v2-class language averaged YDIF 3.34, v3strong-class 4.45
+// with one invention outlier — which is the QC ladder's job to catch; the
+// steady/strict retry rungs below are unchanged, so de-escalation is real.
 const KLING_MOTION_BOLD =
-  " Cinematic drone-style camera: a smooth confident glide forward through" +
-  " the space, gently arcing to reveal depth toward the scene's focal point," +
-  " pronounced natural perspective parallax, floating steadicam grace," +
-  " perfectly stabilized, no handheld shake, dynamic luxury real-estate" +
-  " film energy.";
+  " Bold cinematic drone shot: the camera flies forward through the space" +
+  " with real speed and purpose, sweeping through a wide banking arc that" +
+  " pulls the room past the lens and reveals layer after layer of depth," +
+  " strong perspective parallax, covering serious distance like polished" +
+  " aerial cinematography on an invisible rail — buttery smooth, perfectly" +
+  " fluid, zero shake, luxury real-estate film with genuine kinetic energy.";
 const KLING_NEGATIVE_EXTRA =
   ", handheld camera shake, camera bounce, bobbing, walking motion, jittery footage";
 const DEFAULT_RESOLUTION = "1080p";

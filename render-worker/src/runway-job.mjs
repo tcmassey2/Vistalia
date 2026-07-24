@@ -2012,7 +2012,15 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // refuses input==output ("cannot edit in-place") and logs 9 scary-but-
     // harmless errors per re-stitch. Already-stabilized clips skip.
     const alreadyStabilized = /\bstab-\d{3}\.mp4$/.test(String(clip.clipPath || ""));
-    if (klingClip && !alreadyStabilized && !clip.fallback && !clip.usedPhotoMotionFloor && !clip.preNormalized && String(process.env.KLING_STABILIZE || "1") !== "0") {
+    // v62.2: gimbal pass DEFAULT-OFF (Troy: "Instead of gimbal thing smooth
+    // drone footage") — smoothing=35 + optzoom was flattening the bold
+    // rung's intentional swoops into sterile stabilized footage, and the
+    // v62.2 prompt now owns smoothness (drone-on-a-rail language). The
+    // v60.9 walk-tremor risk this pass existed for returns with it off:
+    // if bounce reappears (slit-scan check: crop=4:ih:iw/2:0,tile=Nx1,
+    // sawtooth on horizontal edges = tremor), set KLING_STABILIZE=1 on the
+    // worker env — the whole pass is preserved behind that flag.
+    if (klingClip && !alreadyStabilized && !clip.fallback && !clip.usedPhotoMotionFloor && !clip.preNormalized && String(process.env.KLING_STABILIZE || "0") === "1") {
       const trfPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.trf`);
       const stabPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
       try {
