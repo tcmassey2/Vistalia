@@ -10,6 +10,24 @@ export default async function handler(request, response) {
     return;
   }
 
+  // v60.2 MAINTENANCE MODE (engine-swap window): MAINTENANCE_MODE=true in
+  // Vercel env blocks all NEW customer renders with an honest 503. GET
+  // status polls stay live (in-flight renders finish and deliver), and
+  // internal-secret callers bypass (the canary must keep validating
+  // deploys during the window). Toggle off: remove the env var + redeploy.
+  if (
+    request.method === "POST" &&
+    String(process.env.MAINTENANCE_MODE || "").toLowerCase() === "true" &&
+    !(process.env.CRON_SECRET && String(request.headers["x-internal-secret"] || "") === process.env.CRON_SECRET)
+  ) {
+    return response.status(503).json({
+      maintenance: true,
+      error:
+        "Vistalia is briefly down for scheduled maintenance — rendering is paused and will be back shortly. " +
+        "Your photos, projects, and finished videos are safe."
+    });
+  }
+
   // Rate-limit the POST submit path. 10 renders per hour per user is well
   // above any honest workflow (a 24-scene Cinematic AI render takes 3-5 min,
   // so 10 in an hour means hammering Generate constantly) but a reasonable

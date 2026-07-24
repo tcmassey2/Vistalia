@@ -27,6 +27,21 @@ export default async function handler(request, response) {
     return;
   }
 
+  // v60.2: same maintenance gate as /api/render — scene regens spend fal
+  // credits too. See render.js for semantics.
+  if (
+    request.method === "POST" &&
+    String(process.env.MAINTENANCE_MODE || "").toLowerCase() === "true" &&
+    !(process.env.CRON_SECRET && String(request.headers["x-internal-secret"] || "") === process.env.CRON_SECRET)
+  ) {
+    return response.status(503).json({
+      maintenance: true,
+      error:
+        "Vistalia is briefly down for scheduled maintenance — rendering is paused and will be back shortly. " +
+        "Your photos, projects, and finished videos are safe."
+    });
+  }
+
   if (request.method !== "POST") {
     response.status(405).json({
       status: "failed",
