@@ -231,8 +231,57 @@ async function rentcastFacts(query) {
 const PHOTO_CDN_RE =
   /https:\/\/(?:photos\.zillowstatic\.com|ssl\.cdn-redfin\.com|ap\.rdcpix\.com|images\.homes\.com|photos\.trulia\.com)[^\s"'\\)]+?\.(?:jpe?g|webp|png)/gi;
 
+/* v62.3 MAX-RES PHOTO UPGRADE — the render is only as sharp as its inputs,
+   and on the Kling v3 pro (1080p-class) tier the imported photo is the
+   quality ceiling of the whole master. Portal pages embed MID-TIER gallery
+   URLs (Zillow cc_ft_576-1152, Redfin genMid ≈733px, rdcpix ?w=480-1024);
+   the full-size variant is one deterministic URL rewrite away on every
+   major CDN. Each rewrite returns:
+     best — the max-res URL to fetch first
+     key  — a size-agnostic identity, so the SAME photo embedded at several
+            tiers (Zillow gallery JSON does this) dedupes to ONE photo
+            instead of flooding the 24-photo cap with duplicates.
+   The download step tries `best` and falls back to the original URL, so a
+   CDN that rejects the rewrite costs nothing but one extra fetch. */
+export function maximizePhotoUrl(url) {
+  try {
+    // Zillow + Trulia (same CDN family): -cc_ft_<w> crops and
+    // *_scaled_within_<w>_<h> variants — 1536 is the top public tier.
+    if (/zillowstatic\.com|trulia\.com/i.test(url)) {
+      const best = url
+        .replace(/-cc_ft_\d+/g, "-cc_ft_1536")
+        .replace(/scaled_within_\d+_\d+/g, "scaled_within_1536_1152");
+      const key = url.replace(/-cc_ft_\d+/g, "").replace(/scaled_within_\d+_\d+/g, "").split("?")[0];
+      return { best, key };
+    }
+    // Redfin: gallery embeds /mbphoto/…/genMid.<MLS>_<n>.jpg (~733px);
+    // the full-size original lives at /bigphoto/…/<MLS>_<n>.jpg.
+    if (/cdn-redfin\.com/i.test(url)) {
+      const best = url.replace(/\/mbphoto\//i, "/bigphoto/").replace(/genMid\./i, "");
+      const key = url.replace(/\/(?:mb|big)photo\//i, "/photo-tier/").replace(/genMid\./i, "").split("?")[0];
+      return { best, key };
+    }
+    // Realtor.com (rdcpix is a resizer): ?w= caps the width — ask for 2048
+    // and the CDN serves up to the original's size. Path is the identity.
+    if (/rdcpix\.com/i.test(url)) {
+      const [path, query = ""] = url.split("?");
+      const params = query.split("&").filter((p) => p && !/^(w|width|h|height)=/i.test(p));
+      params.unshift("w=2048");
+      return { best: `${path}?${params.join("&")}`, key: path };
+    }
+    // homes.com and anything else: strip width/height query limiters.
+    const [path, query = ""] = url.split("?");
+    const params = query.split("&").filter((p) => p && !/^(w|width|h|height)=/i.test(p));
+    return { best: params.length ? `${path}?${params.join("&")}` : path, key: path };
+  } catch {
+    return { best: url, key: url };
+  }
+}
+
 function extractPagePhotos(html) {
-  const found = new Set();
+  // key → { url: maxResUrl, fallbackUrl: originalUrl } in first-seen order
+  // (gallery order matters — it becomes the upload/scene order).
+  const found = new Map();
   // Portals embed the full gallery in JSON script blobs with escaped
   // slashes ("https:\/\/photos...") — the visible <img> tags are only the
   // first few. Unescape before matching so we see the whole gallery.
@@ -251,14 +300,23 @@ function extractPagePhotos(html) {
     if (/zillowstatic\.com/i.test(url) && !/\/fp\//.test(url)) continue;
     if (/cdn-redfin\.com/i.test(url) && !/\/photo\//i.test(url)) continue;
     if (/logo|icon|sprite|badge|avatar|headshot|favicon|app-?store|play-?store|banner/i.test(url)) continue;
-    found.add(url);
+    const { best, key } = maximizePhotoUrl(url);
+    if (!found.has(key)) {
+      found.set(key, { url: best, fallbackUrl: best === url ? "" : url });
+    }
     if (found.size >= MAX_PHOTOS * 2) break;
   }
   // og:image as a floor — at least the hero photo on almost every portal.
   const og = text.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
     || text.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
-  if (og && /^https?:\/\//.test(og[1]) && !/logo|icon|sprite|badge|favicon/i.test(og[1])) found.add(og[1]);
-  return [...found].slice(0, MAX_PHOTOS);
+  if (og && /^https?:\/\//.test(og[1]) && !/logo|icon|sprite|badge|favicon/i.test(og[1])) {
+    const { best, key } = maximizePhotoUrl(og[1]);
+    if (!found.has(key)) found.set(key, { url: best, fallbackUrl: best === og[1] ? "" : og[1] });
+  }
+  const photos = [...found.values()].slice(0, MAX_PHOTOS);
+  const upgraded = photos.filter((p) => p.fallbackUrl).length;
+  if (upgraded > 0) console.log(`[import] photo max-res upgrade: ${upgraded}/${photos.length} URLs rewritten to full-size tiers.`);
+  return photos;
 }
 
 // v58.2: canonical Realtor.com links are ID-only
@@ -294,13 +352,11 @@ export function extractAddressFromHtml(html) {
    4. Download → user's listing-photos storage
    ============================================================ */
 
-async function storePhoto(photoUrl, userId, projectId, index) {
-  const supabaseUrl = process.env.SUPABASE_URL || "";
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!supabaseUrl || !serviceKey) throw new Error("storage not configured");
+// Fetch one image URL (direct, then one proxy retry) → validated Buffer.
+// v58: some portal CDNs referer-check direct image GETs — one proxy retry
+// (no rendering, cheap credit) before giving up on the photo.
+async function fetchImageBuffer(photoUrl) {
   let r = await fetchWithTimeout(photoUrl, { headers: BROWSER_HEADERS }, PHOTO_TIMEOUT_MS).catch(() => null);
-  // v58: some portal CDNs referer-check direct image GETs — one proxy retry
-  // (no rendering, cheap credit) before giving up on the photo.
   if ((!r || !r.ok) && process.env.SCRAPER_API_KEY) {
     r = await fetchWithTimeout(
       `https://api.scraperapi.com/?api_key=${encodeURIComponent(process.env.SCRAPER_API_KEY)}&url=${encodeURIComponent(photoUrl)}`,
@@ -314,6 +370,30 @@ async function storePhoto(photoUrl, userId, projectId, index) {
   const buf = Buffer.from(await r.arrayBuffer());
   if (buf.length < 8 * 1024) throw new Error("too small");
   if (buf.length > MAX_PHOTO_BYTES) throw new Error("too large");
+  return { buf, type };
+}
+
+// photo: { url, fallbackUrl } (v62.3) or a plain string URL (RentCast path).
+async function storePhoto(photo, userId, projectId, index) {
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey) throw new Error("storage not configured");
+  const candidates = typeof photo === "string"
+    ? [photo]
+    : [photo.url, photo.fallbackUrl].filter(Boolean);
+  let buf = null;
+  let type = "";
+  let lastErr = null;
+  for (let c = 0; c < candidates.length; c++) {
+    try {
+      ({ buf, type } = await fetchImageBuffer(candidates[c]));
+      if (c > 0) console.log(`[import] photo ${index + 1}: max-res URL failed (${lastErr?.message}) — original tier used.`);
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!buf) throw lastErr || new Error("no candidates");
   const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg";
   const fileName = `imported-${String(index + 1).padStart(2, "0")}.${ext}`;
   const bucket = process.env.LISTING_PHOTOS_BUCKET || "listing-photos";
@@ -399,7 +479,8 @@ export default async function handler(request, response) {
   let pagePhotoUrls = [];
   let photoSource = "none";
   if (rc.photos.length > 0) {
-    pagePhotoUrls = rc.photos.slice(0, MAX_PHOTOS);
+    // Licensed media is typically full-size already — no rewrite, no fallback.
+    pagePhotoUrls = rc.photos.slice(0, MAX_PHOTOS).map((u) => ({ url: u, fallbackUrl: "" }));
     photoSource = "licensed_listing_data";
   } else {
     // v58 (live 3-portal test, Jul 23): direct fetches are dead on every
