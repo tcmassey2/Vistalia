@@ -418,6 +418,25 @@ export async function generateVeoClip({
    runVeoSmokeTest — POST /test/veo handler helper.
    One image + one prompt → one local clip path.
    ================================================================= */
+// v62.10: push a prepared image into fal's own storage and return its URL.
+// Used by the delivery-aspect source prep so Kling generates natively in
+// the shape we ship. Returns null (never throws) so callers fail open to
+// the original photo URL.
+export async function uploadImageToFal(buffer, fileName = "source.jpg") {
+  try {
+    const fal = await getFalClient();
+    if (!fal?.storage?.upload) return null;
+    const blob = new Blob([buffer], { type: "image/jpeg" });
+    // The SDK accepts a File when available (keeps the extension), Blob otherwise.
+    const file = typeof File === "function" ? new File([blob], fileName, { type: "image/jpeg" }) : blob;
+    const url = await fal.storage.upload(file);
+    return typeof url === "string" && /^https?:\/\//.test(url) ? url : null;
+  } catch (err) {
+    console.warn(`[veo] fal storage upload failed (${err.message || err}) — original photo URL will be used.`);
+    return null;
+  }
+}
+
 export async function runVeoSmokeTest({ imageUrl, prompt, aspectRatio, duration, model, tempDir }) {
   return generateVeoClip({
     imageUrl,

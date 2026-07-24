@@ -1569,8 +1569,42 @@ const VEO_FIDELITY_SUFFIX =
 // downstream is untouched.
 export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false } = {}) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
-  const imageUrl = pickImageUrl(scene, photo);
+  let imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Scene ${sceneIndex + 1} (${scene.photoId}) missing durable image URL.`);
+
+  // ── v62.10 VERTICAL SOURCE — the "it looks 480p" fix ────────────────
+  // Kling i2v has no aspect_ratio control: it returns a clip shaped like
+  // the INPUT PHOTO (probe kling3std916 proved the param is ignored). We
+  // were feeding it the full LANDSCAPE listing photo, so it spent its
+  // whole ~0.92MP budget on a wide frame — then normalize scaled that up
+  // ~2.4x to cover 1080x1920 and threw away ~60% of the width. The shipped
+  // frame came from roughly a 440x780 slice: sub-480p, upscaled. Measured
+  // on the 40th St master, detail died above ~270px of real information.
+  // Fix: crop the photo to the delivery aspect BEFORE generation. Same
+  // composition (normalize's centered crop was already the shipped frame),
+  // but Kling now spends every generated pixel on the frame we keep —
+  // ~2.7x more real pixels in the visible area, and near-native on pro.
+  // Fail-open at every step: any error keeps today's exact behavior.
+  const wantsVerticalSource =
+    /kling/i.test(process.env.FAL_VIDEO_MODEL || "") &&
+    String(process.env.KLING_VERTICAL_SOURCE || "1") !== "0";
+  if (wantsVerticalSource) {
+    // Cached on the scene: the QC ladder re-enters this function for every
+    // retry rung, and the crop is identical each time.
+    if (scene.__deliveryAspectUrl) {
+      imageUrl = scene.__deliveryAspectUrl;
+    } else {
+      try {
+        const pre = await prepareDeliveryAspectSource(imageUrl, manifest, tempDir, sceneIndex);
+        if (pre) {
+          scene.__deliveryAspectUrl = pre;
+          imageUrl = pre;
+        }
+      } catch (err) {
+        console.warn(`[src] scene ${sceneIndex + 1}: delivery-aspect prep failed (${err.message}) — sending the original photo.`);
+      }
+    }
+  }
 
   // Prompt priority: explicit veoPrompt from a v26 edit plan → legacy
   // runwayPrompt (older plans; plain text, works on Veo) → constrained.
@@ -1701,6 +1735,51 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
     veoModel: result.model || "",
     constrained
   };
+}
+
+/* ============================================================
+   v62.10 — delivery-aspect source prep (see generateVeoSceneClip)
+   ============================================================
+   Downloads the listing photo, crops it to the DELIVERY aspect with the
+   same centered geometry normalize would have applied, upscales to the
+   master's pixel size, and hands fal a URL to that. Returns null on any
+   failure so the caller falls back to the original photo URL.
+
+   Why upload instead of a data URI: a 1080x1920 JPEG is ~300-600KB, which
+   base64s to ~800KB inside the request body — fal's queue rejects bodies
+   that large on some models. fal.storage.upload is the supported path.
+*/
+async function prepareDeliveryAspectSource(imageUrl, manifest, tempDir, sceneIndex) {
+  const dims = runwayDimensions(manifest);
+  // Only worth doing when the delivery frame is NARROWER than a typical
+  // landscape photo — i.e. vertical/square masters. A 16:9 master already
+  // matches the source shape and gains nothing.
+  if (dims.width >= dims.height) return null;
+
+  const srcPath = path.join(tempDir, `vsrc-in-${String(sceneIndex).padStart(3, "0")}.img`);
+  const outPath = path.join(tempDir, `vsrc-${String(sceneIndex).padStart(3, "0")}.jpg`);
+  await downloadImageValidated(imageUrl, srcPath, `vertical-source scene ${sceneIndex + 1}`);
+
+  // Identical geometry to the normalize pass: cover-scale then centered
+  // crop. Composition on screen is unchanged; only the pixel budget moves.
+  await runFFmpeg([
+    "-y", "-threads", "1",
+    "-i", srcPath,
+    "-vf", `scale=${dims.width}:${dims.height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${dims.width}:${dims.height}`,
+    "-q:v", "2",
+    outPath
+  ], { timeoutMs: 60000, label: `src:vertical-${sceneIndex}` });
+
+  const buf = await fs.readFile(outPath);
+  if (buf.length < 20000) throw new Error(`cropped source suspiciously small (${buf.length}B)`);
+
+  const { uploadImageToFal } = await import("./veo-job.mjs");
+  const url = await uploadImageToFal(buf, `scene-${String(sceneIndex).padStart(3, "0")}.jpg`);
+  if (!url) return null;
+  console.info(`[src] scene ${sceneIndex + 1}: generating from a ${dims.width}x${dims.height} delivery-aspect crop (was full landscape → ~2.4x upscale downstream).`);
+  await fs.unlink(srcPath).catch(() => {});
+  await fs.unlink(outPath).catch(() => {});
+  return url;
 }
 
 // Per-scene safety net: when Runway fails, generate a Ken-Burns–style
