@@ -207,6 +207,23 @@ const MODELS = {
       safety_tolerance: "4"
     })
   },
+  kling3std916: {
+    // v60.3 probe: does V3 i2v accept aspect_ratio? If yes → NATIVE 9:16
+    // generation, no pipeline crop, and the sweep's "edge object missing"
+    // false positives (0raj5j: sink/cabinets/painting/armchair, 4 wrong
+    // floors) disappear along with the crop itself.
+    endpoint: "fal-ai/kling-video/v3/standard/image-to-video",
+    label: "Kling V3 Standard 9:16-native",
+    estPerScene: 0.5,
+    buildInput: (p, img) => ({
+      prompt: p,
+      image_url: img,
+      duration: "6",
+      aspect_ratio: "9:16",
+      negative_prompt: NEGATIVE_PROMPT,
+      generate_audio: false
+    })
+  },
   kling3std: {
     endpoint: "fal-ai/kling-video/v3/standard/image-to-video",
     label: "Kling V3 Standard",
