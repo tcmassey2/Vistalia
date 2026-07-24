@@ -1464,6 +1464,30 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
         sentences.push(current);
       }
     }
+    // v62.7 (m81-twice incident: derived monologue produced ~8.6s monster
+    // scenes — a sentence + its silent followers = one long static-feeling
+    // run): split any sentence over 16 words at its best comma into two,
+    // dividing its photo span, so the voice grid gets real cut points.
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i];
+      const wordsN = s.text.split(/\s+/).filter(Boolean).length;
+      if (wordsN <= 16 || s.photos.length < 2) continue;
+      const mid = Math.floor(s.text.length / 2);
+      let cut = -1;
+      for (const m of s.text.matchAll(/,\s/g)) {
+        if (cut === -1 || Math.abs(m.index - mid) < Math.abs(cut - mid)) cut = m.index;
+      }
+      if (cut < 8 || cut > s.text.length - 10) continue;
+      const a = s.text.slice(0, cut).trim().replace(/,$/, "") + ".";
+      const b = s.text.slice(cut + 1).trim();
+      const bText = (b[0] ? b[0].toUpperCase() + b.slice(1) : b).replace(/\.?$/, ".");
+      const half = Math.ceil(s.photos.length / 2);
+      sentences.splice(i, 1,
+        { text: a, photos: s.photos.slice(0, half) },
+        { text: bText, photos: s.photos.slice(half) }
+      );
+      i++; // skip the second half we just created
+    }
     // A leading empty-text slot merges into the first real sentence.
     while (sentences.length > 1 && !sentences[0].text) {
       sentences[1].photos = [...sentences[0].photos, ...sentences[1].photos];
@@ -1543,6 +1567,20 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
         sentences,
         source: "director"
       };
+      // v62.7 THIN-DIRECTOR UPGRADE (40th St: 44-word monologue → 20.6s
+      // video on a 30s ask — the voice-first grid honestly builds short
+      // videos from short scripts, so the script floor must be enforced
+      // HERE): when the Director badly under-delivers and the repaired
+      // per-scene lines carry meaningfully more words, the richer source
+      // wins. Expressive tags are lost in the swap — length beats garnish.
+      if (wordCount < Math.round(monologueTarget * 0.6)) {
+        const derived = deriveFromLines(`director monologue thin (${wordCount}/${monologueTarget} words)`);
+        const derivedWords = derived ? derived.monologue.split(/\s+/).filter(Boolean).length : 0;
+        if (derived && derivedWords > wordCount * 1.3) {
+          console.warn(`[plan] narration THIN-UPGRADE: director ${wordCount}w replaced by derived ${derivedWords}w.`);
+          narration = derived;
+        }
+      }
     }
   } else if (candidate) {
     narration = deriveFromLines("narration object malformed");

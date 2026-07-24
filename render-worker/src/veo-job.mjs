@@ -133,13 +133,18 @@ const KLING_MOTION_STRICT =
 // steady/strict retry rungs below are unchanged, so de-escalation is real.
 const KLING_MOTION_BOLD =
   " Bold cinematic drone shot: the camera flies forward through the space" +
-  " with real speed and purpose, sweeping through a wide banking arc that" +
+  " with confident purpose, sweeping through a wide banking arc that" +
   " pulls the room past the lens and reveals layer after layer of depth," +
-  " strong perspective parallax, covering serious distance like polished" +
+  " strong perspective parallax, covering real distance like polished" +
   " aerial cinematography on an invisible rail — buttery smooth, perfectly" +
-  " fluid, zero shake, luxury real-estate film with genuine kinetic energy.";
+  " fluid, zero shake, every surface and plant crisp and stable, luxury" +
+  " real-estate film with genuine kinetic energy.";
 const KLING_NEGATIVE_EXTRA =
-  ", handheld camera shake, camera bounce, bobbing, walking motion, jittery footage";
+  ", handheld camera shake, camera bounce, bobbing, walking motion, jittery footage" +
+  // v62.7 (40th St: 3 exterior scenes hard-failed QC with "texture boil",
+  // even on the steady retry — desert foliage + CGI-render vegetation is
+  // where i2v models shimmer): the boil ban rides Kling's strongest lever.
+  ", texture boil, shimmering foliage, crawling textures, flickering leaves, warping vegetation, boiling surfaces";
 const DEFAULT_RESOLUTION = "1080p";
 const DEFAULT_DURATION = "6s";
 const DEFAULT_GENERATE_AUDIO = false;

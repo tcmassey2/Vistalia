@@ -976,7 +976,12 @@ export async function renderRunwayJob(body, options = {}) {
             String(process.env.FINISH_TITLE || "1") !== "0" &&
             hard.length > 0
           ) {
-            const kept = hard.filter((r) => !/text/i.test(String(r)));
+            // v62.7 REGEX BUG: /text/i also matched "TEXTure boil" — a real
+            // temporal-instability flag on scene 1 was misread as the
+            // title-card text exemption and dropped, and the boil SHIPPED
+            // (40th St render, sweep summary said "0 flagged" over a FAIL).
+            // Strip texture-words before testing for text-overlay language.
+            const kept = hard.filter((r) => !/text/i.test(String(r).replace(/textur\w*/gi, "")));
             if (kept.length !== hard.length) {
               console.info(`[sweep] scene ${(clip.sceneIndex ?? i) + 1}: text flag ignored — address title card is intentional (${hard.length - kept.length} reason${hard.length - kept.length === 1 ? "" : "s"} dropped).`);
             }

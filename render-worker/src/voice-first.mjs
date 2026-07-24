@@ -520,11 +520,17 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
 
   const st = grid.stats;
   console.info(
-    `[voice-first] rung=${rung} voice=${voiceId} — ${st.wordCount} words / ${st.sentenceCount} sentences → ` +
+    `[voice-first] rung=${rung} voice=${voiceId} source=${narration.source || "director"} — ${st.wordCount} words / ${st.sentenceCount} sentences → ` +
     `${st.sceneCount} scenes, speech ${st.speechSec}s @ ${st.wps} w/s, ` +
     `scene range ${st.minSceneSec}-${st.maxSceneSec}s, video ${grid.videoEndSec}s` +
     (st.droppedPhotos.length ? ` — DROPPED photos [${st.droppedPhotos.join(",")}]` : "")
   );
+  // v62.7: the m81-twice incident's "brochure register" render was almost
+  // certainly a derived-from-lines monologue — make that unmissable in the
+  // render log, not just the plan log (which nobody reads after the fact).
+  if (narration.source && narration.source !== "director") {
+    console.warn(`[voice-first] NOTE: narration source is "${narration.source}" — the Director's monologue failed plan-side validation and the per-scene lines were joined instead. Expect a stiffer read; check the [plan] narration logs for the reason.`);
+  }
   for (const w of st.warnings) console.warn(`[voice-first] ${w}`);
   // Canary-gate transcript: every sentence with its video-time span.
   grid.sentenceSpansSec.forEach((span, i) => {
