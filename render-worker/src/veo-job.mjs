@@ -84,9 +84,18 @@ const KLING_NEGATIVE_PROMPT =
 // one scene but traveled into an invented fireplace close-up — too hot).
 // This suffix is v2's tested language, appended AFTER the fidelity
 // suffix so the safety bans stay in force.
+// v60.9 (Troy: "the camera bounces as if someone is walking with it"):
+// Kling defaults to a handheld documentary tremor — slit-scans of the
+// 35d8305 canary show a regular sawtooth on every horizontal edge. Name
+// the rig explicitly and ban the shake in the negative prompt; the
+// worker-side vidstab gimbal pass (runway-job v60.9) catches whatever
+// language doesn't.
 const KLING_MOTION_SUFFIX =
-  " Slow, steady cinematic dolly-in, smooth gliding camera with natural " +
-  "perspective parallax, luxury real-estate cinematography.";
+  " Slow, steady cinematic dolly-in on a motorized slider, perfectly " +
+  "stabilized tripod-grade movement, smooth gliding camera with natural " +
+  "perspective parallax, no handheld shake, luxury real-estate cinematography.";
+const KLING_NEGATIVE_EXTRA =
+  ", handheld camera shake, camera bounce, bobbing, walking motion, jittery footage";
 const DEFAULT_RESOLUTION = "1080p";
 const DEFAULT_DURATION = "6s";
 const DEFAULT_GENERATE_AUDIO = false;
@@ -420,7 +429,7 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
       prompt: prompt + KLING_MOTION_SUFFIX,
       image_url: imageUrl,
       duration: String(Math.min(15, Math.max(4, seconds))),
-      negative_prompt: KLING_NEGATIVE_PROMPT,
+      negative_prompt: KLING_NEGATIVE_PROMPT + KLING_NEGATIVE_EXTRA,
       generate_audio: false
     };
   }

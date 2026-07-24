@@ -1869,6 +1869,40 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       const ydif = await measureClipMotion(clip.clipPath);
       if (Number.isFinite(ydif)) motionStats.push({ scene: clip.sceneIndex + 1, ydif, engine: clip.engineUsed || "" });
     } catch { /* motion telemetry must never block a render */ }
+    // v60.9 KLING GIMBAL PASS (Troy: "the camera bounces as if someone is
+    // walking with it"). Kling ships a handheld tremor — a sawtooth ripple
+    // in slit-scans of every canary scene. The worker's libvidstab removes
+    // it cleanly (verified on canary-35d8305c scene-003; the sandbox build
+    // has a broken trf serializer, this one does not). Two passes on the
+    // RAW clip before the normalize chain; optzoom's small adaptive zoom
+    // hides compensation borders and the 9:16 cover-crop swallows the
+    // rest. smoothing=35 kills walk-frequency wobble but passes the slow
+    // intentional dolly. Floors/regen clips skip; KLING_STABILIZE=0 kills;
+    // any failure ships the unstabilized clip (fail-open).
+    const klingClip = String(process.env.FAL_VIDEO_MODEL || "").toLowerCase().includes("kling");
+    if (klingClip && !clip.fallback && !clip.usedPhotoMotionFloor && !clip.preNormalized && String(process.env.KLING_STABILIZE || "1") !== "0") {
+      const trfPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.trf`);
+      const stabPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
+      try {
+        await runFFmpeg(
+          ["-y", "-threads", "1", "-i", clip.clipPath, "-vf", `vidstabdetect=shakiness=8:accuracy=15:result=${trfPath}`, "-f", "null", "-"],
+          { timeoutMs: 120000, label: `stab:detect-${clip.sceneIndex}` }
+        );
+        await runFFmpeg(
+          ["-y", "-threads", "1", "-i", clip.clipPath, "-vf", `vidstabtransform=input=${trfPath}:smoothing=35:optzoom=1:interpol=bicubic`, "-c:v", "libx264", "-preset", "fast", "-crf", "16", "-an", stabPath],
+          { timeoutMs: 180000, label: `stab:transform-${clip.sceneIndex}` }
+        );
+        const st = await fs.stat(stabPath);
+        if (st.size > 50000) {
+          clip.clipPath = stabPath;
+          console.log(`[stab] scene ${clip.sceneIndex + 1}: gimbal pass applied (vidstab smoothing=35).`);
+        }
+      } catch (stabErr) {
+        console.warn(`[stab] scene ${clip.sceneIndex + 1} stabilization failed (${stabErr.message}) — shipping unstabilized.`);
+      } finally {
+        await fs.unlink(trfPath).catch(() => {});
+      }
+    }
     const normalized = path.join(tempDir, `norm-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
     // v28: trim the 8s native-1080p Veo clip back to its intended length here —
     // free, since this normalize pass already re-encodes. Guarded so a missing
