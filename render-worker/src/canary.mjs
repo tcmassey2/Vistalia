@@ -110,6 +110,12 @@ async function fetchCanaryPlan() {
   if (!res.ok) throw new Error(`planner HTTP ${res.status}`);
   const payload = await res.json().catch(() => ({}));
   if (!payload?.editPlan?.scenes?.length) throw new Error(payload?.reason || "planner returned no scenes");
+  // v60.1 (m77): a fallback plan would false-green the deploy gate — the
+  // canary must validate the REAL planning path, not the template. Abort
+  // loudly; a missing [CANARY] email after a deploy is itself the signal.
+  if (payload?.status === "fallback") {
+    throw new Error(`planner FELL BACK (${payload?.errorCategory || "?"}) — canary aborted, deploy gate not validated`);
+  }
   return payload.editPlan;
 }
 

@@ -2305,6 +2305,18 @@ function RenderControls() {
       if (!planResult.editPlan) {
         throw new Error(planResult.reason || "We couldn't draft an edit plan. Try again in a moment.");
       }
+      // v60.1 (m77 "disaster smoke test"): NEVER silently render a fallback
+      // plan. When the AI director is unavailable the API returns a
+      // deterministic template — stock narration, naive photo picks; m77
+      // shipped 9 scenes of the same front-exterior photo labeled
+      // bathroom/living. A customer would have burned their one free
+      // render on it. Plans are free to retry; renders are not.
+      if (planResult.status === "fallback") {
+        throw new Error(
+          "Our AI director couldn't study your photos just now — this happens briefly under heavy traffic. " +
+          "Nothing was rendered and no credits were used. Please try again in a minute or two."
+        );
+      }
       setEditPlan(planResult.editPlan);
 
       // 2. Build manifest

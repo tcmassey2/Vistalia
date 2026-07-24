@@ -446,37 +446,79 @@ export default async function handler(request, response) {
     });
 
     // v45.1 (m32b "audio broke"): ONE retry on 429/5xx before falling back.
-    // During the July 10 rate-limit storm the single-shot call 429'd
-    // straight into the deterministic fallback — and the fallback's
-    // narration enrichment ALSO needs OpenAI, so the render shipped with a
-    // 2-line script. Most 429 bursts clear in seconds; the retry uses a
-    // shorter timeout so worst-case stays inside the function budget.
-    const directorBody = JSON.stringify(buildOpenAIRequest({ allPhotos: photos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine, brandKit, includeNarration, targetDurationSec }));
+    // v60.1 (m77 "disaster smoke test"): the 429-retry wasn't enough — a
+    // TIMEOUT or parse failure still fell straight into the deterministic
+    // template, which rendered 9 scenes of the same hero photo with stock
+    // narration for a real project. The biggest requests (24 vision
+    // photos) die first when OpenAI is slow. New ladder: attempt 1 = full
+    // vision set (with the v45.1 inner 429 retry); attempt 2 = REDUCED
+    // vision set (12 photos — allPhotos stays complete so photoIds remain
+    // valid, only the image payload shrinks); only then fallback.
     const directorHeaders = {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       "Content-Type": "application/json"
     };
-    let openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
-      method: "POST", headers: directorHeaders, body: directorBody
-    }, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
-    if (!openaiResponse.ok && (openaiResponse.status === 429 || openaiResponse.status >= 500)) {
-      logMotionDirector("warn", `OpenAI ${openaiResponse.status} — retrying once in 4s`, { status: openaiResponse.status });
-      await new Promise((r) => setTimeout(r, 4000));
-      openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
-        method: "POST", headers: directorHeaders, body: directorBody
-      }, Math.min(25000, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS)));
+    const visionAttempts = visionPhotos.length > 12
+      ? [visionPhotos, visionPhotos.slice(0, 12)]
+      : [visionPhotos];
+    let parsed = null;
+    let lastFailure = { category: "openai_error", reason: "Motion Director unavailable.", requestId: "" };
+    for (let ai = 0; ai < visionAttempts.length && !parsed; ai++) {
+      const vp = visionAttempts[ai];
+      const attemptLabel = ai === 0 ? `full(${vp.length})` : `reduced(${vp.length})`;
+      try {
+        const directorBody = JSON.stringify(buildOpenAIRequest({ allPhotos: photos, visionPhotos: vp, listingDetails, selectedStyle, exportFormat, engine, brandKit, includeNarration, targetDurationSec }));
+        let openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+          method: "POST", headers: directorHeaders, body: directorBody
+        }, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
+        if (!openaiResponse.ok && (openaiResponse.status === 429 || openaiResponse.status >= 500)) {
+          logMotionDirector("warn", `OpenAI ${openaiResponse.status} on ${attemptLabel} — retrying once in 4s`, { status: openaiResponse.status });
+          await new Promise((r) => setTimeout(r, 4000));
+          openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+            method: "POST", headers: directorHeaders, body: directorBody
+          }, Math.min(25000, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS)));
+        }
+        const payload = await openaiResponse.json().catch(() => ({}));
+        if (!openaiResponse.ok) {
+          const openaiError = extractOpenAIError(openaiResponse, payload);
+          lastFailure = { category: openaiError.category, reason: userFacingOpenAIReason(openaiError), requestId: openaiError.requestId || "" };
+          logMotionDirector("warn", `OpenAI request failed on ${attemptLabel}${ai + 1 < visionAttempts.length ? " — retrying with reduced vision set" : "; fallback next"}`, openaiError);
+          continue;
+        }
+        const candidate = parseOpenAIJson(payload);
+        // Validate against ALL photos — the AI may reference any of them.
+        const validation = validateEditPlan(candidate, photos);
+        if (!validation.valid) {
+          lastFailure = { category: "schema_validation", reason: `Motion Director unavailable: schema validation failed. ${validation.error}`, requestId: payload.id || "" };
+          logMotionDirector("warn", `JSON parse/validation failure on ${attemptLabel}${ai + 1 < visionAttempts.length ? " — retrying with reduced vision set" : "; fallback next"}`, {
+            category: "schema_validation", reason: validation.error, outputId: payload.id || ""
+          });
+          continue;
+        }
+        parsed = candidate;
+        logMotionDirector("info", `OpenAI request succeeded on ${attemptLabel}`, {
+          sceneCount: parsed.scenes?.length || 0,
+          heroPhotoId: parsed.heroPhotoId
+        });
+      } catch (attemptError) {
+        lastFailure = {
+          category: attemptError.name === "AbortError" ? "timeout" : "openai_exception",
+          reason: attemptError.name === "AbortError" ? "Motion Director unavailable: planning service timed out." : `Motion Director unavailable: ${attemptError.message || "planning request failed."}`,
+          requestId: ""
+        };
+        logMotionDirector("warn", `OpenAI attempt ${attemptLabel} threw ${attemptError.name || "Error"}${ai + 1 < visionAttempts.length ? " — retrying with reduced vision set" : "; fallback next"}`, {
+          category: lastFailure.category, message: attemptError.message || ""
+        });
+      }
     }
 
-    const payload = await openaiResponse.json().catch(() => ({}));
-    if (!openaiResponse.ok) {
-      const openaiError = extractOpenAIError(openaiResponse, payload);
-      const reason = userFacingOpenAIReason(openaiError);
-      logMotionDirector("error", "OpenAI request failed; fallback used", openaiError);
+    if (!parsed) {
+      logMotionDirector("error", "All Motion Director attempts failed; fallback used", lastFailure);
       response.status(200).json({
         status: "fallback",
-        reason,
-        errorCategory: openaiError.category,
-        requestId: openaiError.requestId,
+        reason: lastFailure.reason,
+        errorCategory: lastFailure.category,
+        requestId: lastFailure.requestId,
         editPlan: await enrichFallbackPlan(
           deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }),
           photos,
@@ -485,33 +527,6 @@ export default async function handler(request, response) {
       });
       return;
     }
-
-    const parsed = parseOpenAIJson(payload);
-    // Validate against ALL photos — the AI is allowed to reference any of them.
-    const validation = validateEditPlan(parsed, photos);
-    if (!validation.valid) {
-      logMotionDirector("warn", "JSON parse/validation failure; fallback used", {
-        category: "schema_validation",
-        reason: validation.error,
-        outputId: payload.id || ""
-      });
-      response.status(200).json({
-        status: "fallback",
-        reason: `Motion Director unavailable: schema validation failed. ${validation.error}`,
-        errorCategory: "schema_validation",
-        editPlan: await enrichFallbackPlan(
-          deterministicEditPlan({ photos, listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }),
-          photos,
-          { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec }
-        )
-      });
-      return;
-    }
-
-    logMotionDirector("info", "OpenAI request succeeded", {
-      sceneCount: parsed.scenes?.length || 0,
-      heroPhotoId: parsed.heroPhotoId
-    });
     // v23: validate then normalize. validateNormalizedPlan checks for
     // structural problems and length-clamp violations on the normalized
     // plan. (Renamed from validateEditPlan to avoid colliding with the

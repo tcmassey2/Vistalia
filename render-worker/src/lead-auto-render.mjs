@@ -215,6 +215,15 @@ async function processOne() {
       console.warn(`[auto-render] plan failed for ${lead.lead_id}: HTTP ${plan.status}`);
       return;
     }
+    // v60.1 (m77): a fallback plan is a stock-narration template that can
+    // render every scene from the hero photo. A lead's FIRST impression
+    // must never be that — better no auto-video (normal nudge flow) than
+    // a template. Not retried blindly; the claim stands.
+    if (plan.json?.status === "fallback") {
+      await markStatus(supabaseUrl, lead.lead_id, { auto_render_status: "failed:plan(fallback)" });
+      console.warn(`[auto-render] plan FELL BACK for ${lead.lead_id} (${plan.json?.errorCategory || "?"}) — not rendering a template; lead stays in the nudge flow.`);
+      return;
+    }
 
     // 3. Submit through the front door — tier machinery runs as the lead.
     const manifest = buildManifest({
