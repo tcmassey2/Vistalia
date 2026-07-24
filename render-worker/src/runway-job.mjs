@@ -1179,8 +1179,12 @@ export async function renderRunwayJob(body, options = {}) {
     // v60: the fal path can now run non-Veo models via FAL_VIDEO_MODEL —
     // derive the family from the model id actually used so certificate
     // provenance stays truthful (kling renders must not claim "veo").
+    // v60.4: the scene-result field is `veoModel` (set at the generate call
+    // site, line ~1491) — v60 read `.model`, which is undefined, so the
+    // label said "veo" unconditionally and masked the engine identity all
+    // night. Scan a few clips (floors lack the field).
     engine: isVeo
-      ? (String(clipResults?.[0]?.model || "").includes("kling") ? "kling" : "veo")
+      ? ((clipResults || []).some((c) => String(c?.veoModel || c?.model || "").includes("kling")) ? "kling" : "veo")
       : "runway",
     upload,
     narration,
