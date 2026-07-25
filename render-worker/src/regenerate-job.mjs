@@ -110,10 +110,15 @@ export async function regenerateScene(body, options = {}) {
       // with hallucinated detail, so regen runs CONSTRAINED by default —
       // maximal fidelity is the whole point of the click. Retry once on
       // failure; no Ken Burns downgrade on the Veo path.
+      // v62.17: constrained maps to motionStyle "steady" on Kling, so a
+      // regenerated scene came back visibly calmer than the nine around it
+      // — the fix for one bad scene announced itself as a different bad
+      // scene. First attempt now runs the SAME rung as its neighbours; the
+      // retry drops to constrained, which is the ladder working as designed.
       try {
-        replacementClip = await generateVeoSceneClip(manifestScene, manifest, tempDir, sceneIndex, { constrained: true });
+        replacementClip = await generateVeoSceneClip(manifestScene, manifest, tempDir, sceneIndex, {});
       } catch (veoErr) {
-        console.warn(`[regen] veo regen failed (${veoErr.message}). Retrying once.`);
+        console.warn(`[regen] veo regen failed (${veoErr.message}). Retrying constrained.`);
         replacementClip = await generateVeoSceneClip(manifestScene, manifest, tempDir, sceneIndex, { constrained: true });
       }
     } else {
@@ -375,7 +380,15 @@ function buildSceneForRegen(auditScene, manifest) {
     photoId: auditScene.photoId || manifestScene.photoId,
     roomType: manifestScene.roomType || auditScene.roomType || "",
     cameraMotion: manifestScene.cameraMotion || auditScene.cameraMotion || "push_in",
-    duration: Number(manifestScene.duration || auditScene.duration || 5),
+    // v62.17: the AUDIT row wins on duration. It records `durationSec` =
+    // what the scene ACTUALLY shipped at, while the manifest carries the
+    // planner's value — and under voice-first those diverge by design,
+    // because the grid rewrites scene durations from the narration and
+    // never writes back to the posted manifest. Regenerating from the plan
+    // duration therefore produced a clip shorter or longer than the hole it
+    // has to fill, so the replaced scene desynced from a voiceover that was
+    // never re-cut. Prefer shipped truth; fall back to the plan.
+    duration: Number(auditScene.durationSec || auditScene.duration || manifestScene.duration || 5),
     // Prefer the manifest's prompt — it reflects the latest anti-hallucination
     // tweaks. Fall back to the audit row's prompt if the manifest scene wasn't
     // re-generated.

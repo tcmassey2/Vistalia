@@ -167,7 +167,13 @@ export function buildVoiceGrid(narration, words, opts = {}) {
       : t(run.words[run.words.length - 1].end) + tailPad;
     return t1 - t0;
   };
-  for (let guard = 0; guard < runs.length * 2 && runs.length > 1; guard++) {
+  // v62.17: bound captured ONCE. `runs.length * 2` re-read a length that
+  // shrinks with every merge, so from R runs only ~2R/3 merges could happen
+  // — the loop bailed mid-work on rapid-fire narration, leaving short runs
+  // that the capacity check below then paid for by DROPPING photos (which
+  // reverts the whole job to the legacy path after ElevenLabs is spent).
+  const mergeBudget = runs.length * 2;
+  for (let guard = 0; guard < mergeBudget && runs.length > 1; guard++) {
     const shortIdx = runs.findIndex((_, ri) => runSpan(ri) < minScene * Math.max(1, runs[ri].photos.length));
     if (shortIdx === -1) break;
     const into = shortIdx < runs.length - 1 ? shortIdx + 1 : shortIdx - 1;
@@ -320,7 +326,7 @@ async function synthesizeV3({ monologue, voiceId, tempDir, jobId }) {
 }
 
 // Rung 1b — forced alignment: audio + CLEAN transcript → word timestamps.
-async function forceAlign({ audioPath, cleanText }) {
+async function forceAlign({ audioPath, cleanText, expectedWords }) {
   const buf = await fs.readFile(audioPath);
   const form = new FormData();
   form.append("file", new Blob([buf], { type: "audio/mpeg" }), "narration.mp3");
@@ -339,6 +345,15 @@ async function forceAlign({ audioPath, cleanText }) {
     .map((w) => ({ word: String(w.text ?? w.word ?? "").trim(), start: Number(w.start), end: Number(w.end) }))
     .filter((w) => w.word && Number.isFinite(w.start) && Number.isFinite(w.end));
   if (!words.length) throw new Error("forced-alignment returned no words");
+  // v62.17: rung 1 had NO divergence guard while rung 2 did — an asymmetry
+  // that mattered because rung 1 is the DEFAULT. A short alignment doesn't
+  // fail loudly; wordsToSentences just runs out of words early, every
+  // sentence boundary slides, cuts drift off the voice, and the final
+  // sentence can map to zero words — which silently deletes the CTA's duck
+  // window (sentenceSpansSec entry goes null). Same tolerance as rung 2.
+  if (expectedWords > 0 && (words.length < expectedWords * 0.8 || words.length > expectedWords * 1.6)) {
+    throw new Error(`forced-alignment word count ${words.length} diverges from transcript ${expectedWords} — refusing to cut a grid from it`);
+  }
   return words;
 }
 
@@ -465,6 +480,26 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
     target.photos.sort((a, b) => a - b);
   }
 
+  // v62.17 PRE-FLIGHT CAPACITY CHECK — before spending a cent on TTS.
+  // A script too short to carry the photo count produces a grid that drops
+  // photos, and runway-job then (correctly) reverts to the legacy voice
+  // path — but only AFTER the ElevenLabs call is paid for and its seconds
+  // are gone from the render's wall clock. This is the common shape for
+  // blackout/fallback plans, whose stock per-scene lines join into 11-25
+  // words for a dozen photos. Measured pace across real renders is
+  // 2.34-2.80 words/sec; 2.5 is the honest middle. If the speech cannot
+  // cover minScene per photo, say so now and let legacy handle it.
+  const preflightWords = sentences.map((s) => s.text).join(" ").split(/\s+/).filter(Boolean).length;
+  const preflightSpeechSec = preflightWords / 2.5;
+  const needSec = photoScenes.length * MIN_SCENE_SEC;
+  if (preflightSpeechSec < needSec) {
+    console.warn(
+      `[voice-first] narration too thin to carry this photoset — ${preflightWords} words ≈ ${preflightSpeechSec.toFixed(1)}s ` +
+      `of speech for ${photoScenes.length} photos needing ${needSec.toFixed(1)}s. Reverting to the legacy voice path BEFORE spending on TTS.`
+    );
+    return null;
+  }
+
   const cleanFromSentences = sentences.map((s) => s.text).join(" ").replace(/\s+/g, " ").trim();
   const cleanFromMonologue = stripAudioTags(narration.monologue);
   // Alignment depends on transcript integrity; prefer the sentence join (it
@@ -483,10 +518,14 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
   if (v3Enabled) {
     try {
       audioPath = await synthesizeV3({ monologue: narration.monologue, voiceId, tempDir, jobId });
-      words = await forceAlign({ audioPath, cleanText });
+      words = await forceAlign({ audioPath, cleanText, expectedWords: cleanText.split(/\s+/).filter(Boolean).length });
       rung = "v3+forced-align";
     } catch (err) {
       console.warn(`[voice-first] expressive rung failed (${err.message}) — falling back to ${TIMESTAMP_MODEL} with-timestamps.`);
+      // v62.17: unlink the orphaned v3 mp3. It was already synthesized (and
+      // already billed) when alignment rejected it; leaving it behind meant
+      // two full-length mp3s per fallback render until the 2h temp sweep.
+      if (audioPath) await fs.unlink(audioPath).catch(() => {});
       audioPath = null;
       words = null;
     }

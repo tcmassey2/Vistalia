@@ -300,11 +300,16 @@ function ImportListingBand() {
   // even bright white kitchens — rarely exceed ~35% near-white; plans run
   // 55-85%. Fail-open: any canvas/CORS error reports paperLike=false.
   const probePhoto = (src: string) =>
-    new Promise<{ width: number; height: number; paperLike: boolean }>((resolve) => {
+    new Promise<{ width: number; height: number; paperLike: boolean; measured: boolean }>((resolve) => {
       const img = new Image();
       img.crossOrigin = "anonymous";
+      // v62.17: `measured` distinguishes a real decode from the 1024x1365
+      // placeholder. Without it a slow gallery on mobile (8s timeout) fed
+      // fabricated dimensions into the low-res median — which could either
+      // mask a genuinely small photo or, if enough probes timed out, make
+      // the median itself fictional and drop good photos.
       const done = (w: number, h: number, paperLike: boolean) =>
-        resolve({ width: w || 1024, height: h || 1365, paperLike });
+        resolve({ width: w || 1024, height: h || 1365, paperLike, measured: w > 0 && h > 0 });
       const timer = setTimeout(() => done(0, 0, false), 8000);
       img.onload = () => {
         clearTimeout(timer);
@@ -368,9 +373,12 @@ function ImportListingBand() {
       // visibly soft scene next to sharp ones. Two rules: a hard floor for
       // genuinely unusable images, and a relative rule that catches the odd
       // one out in an otherwise good set (the case Troy actually saw).
-      const areas = probes.filter((pr) => !pr.paperLike).map((pr) => pr.width * pr.height).sort((a, b) => a - b);
-      const medianArea = areas.length ? areas[Math.floor(areas.length / 2)] : 0;
-      const isLowRes = (pr: { width: number; height: number }) => {
+      // Median is built from MEASURED photos only — a fabricated dimension
+      // must never define what "normal size" means for this set.
+      const areas = probes.filter((pr) => !pr.paperLike && pr.measured).map((pr) => pr.width * pr.height).sort((a, b) => a - b);
+      const medianArea = areas.length >= 3 ? areas[Math.floor(areas.length / 2)] : 0;
+      const isLowRes = (pr: { width: number; height: number; measured: boolean }) => {
+        if (!pr.measured) return false;                                     // never judge a photo we couldn't decode
         const shortSide = Math.min(pr.width, pr.height);
         if (shortSide < 512) return true;                                   // unusable outright
         if (medianArea > 0 && pr.width * pr.height < medianArea * 0.4 && shortSide < 900) return true; // the odd one out
@@ -453,10 +461,16 @@ function ImportListingBand() {
       if (planDropped > 0) excluded.push(`${planDropped} plan/document sheet${planDropped === 1 ? "" : "s"}`);
       if (lowResDropped > 0) excluded.push(`${lowResDropped} low-res photo${lowResDropped === 1 ? "" : "s"}`);
       const planNote = excluded.length ? ` (${excluded.join(" and ")} excluded)` : "";
+      // v62.17: when EVERY imported image was excluded, say why. The old
+      // zero-case message ("add your photos") read as "we found nothing",
+      // which is a different and more alarming thing than "we found only
+      // floor plans and thumbnails and left them out".
       setToast(
         finalPhotos.length > 0
           ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote}${planNote} — review and render.`
-          : "Listing details imported — add your photos and render."
+          : planNote
+            ? `Listing details imported${planNote} — no usable photos, so add your own and render.`
+            : "Listing details imported — add your photos and render."
       );
     } catch {
       setError("Import failed — try again or start manually.");

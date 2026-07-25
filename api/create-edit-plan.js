@@ -643,7 +643,39 @@ export default async function handler(request, response) {
     // verify-repair and polish — so its derived fallback reads the REPAIRED
     // lines, not the raw ones. The Director's own narration passes through
     // untouched when structurally valid.
-    if (includeNarration) attachNarration(normalizedPlan, parsed?.narration, { targetDurationSec });
+    if (includeNarration) {
+      attachNarration(normalizedPlan, parsed?.narration, { targetDurationSec });
+      // v62.17: if the Director came in under its own stated word band, ask
+      // once for a longer read. Under voice-first this is the difference
+      // between the 30s the customer picked and the ~20s they kept getting.
+      // Only for director-authored narration — see the note on
+      // expandNarrationToBudget for why derived scripts are left alone.
+      const nar = normalizedPlan.narration;
+      const budgetTarget = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+      const nowWords = normalizedPlan.narrationScript
+        ? normalizedPlan.narrationScript.split(/\s+/).filter(Boolean).length : 0;
+      if (nar && nar.source === "director" && nowWords > 0 && nowWords < Math.round(budgetTarget * 0.9)) {
+        const expanded = await expandNarrationToBudget(nar, { targetDurationSec, listingDetails, selectedStyle });
+        if (expanded) {
+          // Re-run the SAME validation on a throwaway object. If the rewrite
+          // broke the monologue/sentences equality or the photo mapping,
+          // attachNarration degrades it to derived — and we discard it and
+          // keep the Director's original rather than shipping a downgrade.
+          const probe = { scenes: normalizedPlan.scenes };
+          attachNarration(probe, expanded, { targetDurationSec });
+          const probeWords = probe.narrationScript
+            ? probe.narrationScript.split(/\s+/).filter(Boolean).length : 0;
+          if (probe.narration && probe.narration.source === "director" && probeWords > nowWords) {
+            probe.narration.source = "director+expanded";
+            normalizedPlan.narration = probe.narration;
+            normalizedPlan.narrationScript = probe.narrationScript;
+            console.info(`[plan] narration expansion ACCEPTED: ${nowWords}w → ${probeWords}w (target ${budgetTarget}).`);
+          } else {
+            console.warn(`[plan] narration expansion rejected by validation — keeping the Director's ${nowWords}w original.`);
+          }
+        }
+      }
+    }
     // v32 observability: make the continuous script's presence LOUD in the
     // function logs — its absence was silent for a full smoke-test round.
     console.info(
@@ -1447,6 +1479,109 @@ function enforceScriptFloor(script, scenes, targetDurationSec) {
 */
 function stripNarrationAudioTags(text) {
   return String(text || "").replace(/\[[^\][\n]{1,40}\]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/* v62.17 — MONOLOGUE EXPANSION (the recurring short-video cause).
+   Under voice-first the video's length IS the narration's length, and the
+   Director has under-delivered against its stated word band on every render
+   measured: 44 words when asked for 70-85 (a 30s ask shipping ~20s), 124
+   when asked for 140-171. The band is stated plainly in the prompt and
+   ignored anyway, so ask again — cheaply.
+
+   This is a TEXT-ONLY call (no images, so a fraction of the Director's
+   cost) that rewrites each sentence richer while holding the structure
+   fixed: same sentence count, same photo mapping, same order. Keeping the
+   shape means the result reuses the exact validation below rather than
+   opening a second, weaker path — and if anything about it fails to
+   validate, the original narration ships untouched.
+
+   Deliberately NOT applied to the derived-from-lines fallback: those
+   sentences are per-scene lines clamped to beat windows, and expanding
+   them is how you get a script that no longer matches its scenes. */
+async function expandNarrationToBudget(narration, { targetDurationSec, listingDetails, selectedStyle }) {
+  if (!process.env.OPENAI_API_KEY) return null;
+  const target = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+  const min = Math.round(target * 0.9);
+  const max = Math.round(target * 1.1);
+  const current = stripNarrationAudioTags(narration.monologue).split(/\s+/).filter(Boolean).length;
+  const n = narration.sentences.length;
+  const prompt =
+    `You wrote this real-estate voiceover at ${current} words. The video's length is set by the ` +
+    `voiceover, and this one must run ${min}-${max} words to fill a ${targetDurationSec}-second video. ` +
+    `Rewrite it LONGER, to ${min}-${max} words total — count them.\n\n` +
+    `HARD STRUCTURE (do not change): return EXACTLY ${n} sentences, in the same order, each still about ` +
+    `the same subject as the one it replaces. Only the wording gets richer.\n` +
+    `- Add sensory and architectural specifics that are already implied by the sentence you are expanding ` +
+    `(light, materials, scale, flow, outlook). Invent NO new rooms, features, finishes, views or facts.\n` +
+    `- Keep the conversational register and contractions. No brochure clichés ("boasts", "nestled", "oasis").\n` +
+    `- The final sentence stays a short invitation, under 8 words.\n` +
+    `- Return "monologue" as the full text WITH bracketed audio tags ([warm], [pause], …), and "sentences" ` +
+    `as the same text split per sentence WITHOUT tags. The sentences joined by single spaces must equal ` +
+    `the monologue with all [tags] removed.\n\n` +
+    (/mls/i.test(selectedStyle || "") ? `TONE: MLS-compliant — strictly factual, no subjective adjectives.\n\n` : "") +
+    `Property: ${JSON.stringify(listingDetails || {}).slice(0, 400)}\n\n` +
+    `Current sentences:\n${narration.sentences.map((s, i) => `${i + 1}. ${s.text}`).join("\n")}`;
+  try {
+    const res = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: motionModel(),
+        input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "narration_expand",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["monologue", "sentences"],
+              properties: {
+                monologue: { type: "string", maxLength: 2200 },
+                sentences: {
+                  type: "array",
+                  minItems: n,
+                  maxItems: n,
+                  items: { type: "string", maxLength: 320 }
+                }
+              }
+            }
+          }
+        },
+        temperature: 0.5,
+        max_output_tokens: 1400
+      })
+    }, 30000);
+    if (!res.ok) return null;
+    const payload = await res.json().catch(() => ({}));
+    // parseOpenAIJson is this module's own extractor and returns a PARSED
+    // object (extractStructuredText lives in curate-photos.js and is not in
+    // scope here — calling it would have thrown ReferenceError at runtime,
+    // which `node --check` cannot see).
+    const out = parseOpenAIJson(payload);
+    if (!Array.isArray(out?.sentences) || out.sentences.length !== n || typeof out.monologue !== "string") return null;
+    const rebuilt = {
+      monologue: out.monologue.trim(),
+      direction: narration.direction,
+      // Photo mapping is carried over verbatim — it is the one thing the
+      // model was never allowed to touch.
+      sentences: narration.sentences.map((s, i) => ({ text: cleanText(String(out.sentences[i] || ""), 320), photos: s.photos })),
+      source: `${narration.source}+expanded`
+    };
+    if (rebuilt.sentences.some((s) => !s.text)) return null;
+    const newWords = stripNarrationAudioTags(rebuilt.monologue).split(/\s+/).filter(Boolean).length;
+    // Only accept an expansion that actually lands closer to the target.
+    if (Math.abs(newWords - target) >= Math.abs(current - target)) {
+      console.warn(`[plan] narration expansion returned ${newWords}w (was ${current}, target ${target}) — no closer, keeping the original.`);
+      return null;
+    }
+    console.info(`[plan] narration EXPANDED ${current}w → ${newWords}w (target ${target}, band ${min}-${max}).`);
+    return rebuilt;
+  } catch (err) {
+    console.warn(`[plan] narration expansion failed (${err.message}) — keeping the original.`);
+    return null;
+  }
 }
 
 function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {

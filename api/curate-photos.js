@@ -591,8 +591,13 @@ function pickAndOrder(scored) {
     if (i < MAX_RUN) continue;
     const run = orderedKept.slice(i - MAX_RUN, i);
     if (!run.every((r) => r.roomType === orderedKept[i].roomType)) continue;
-    // this would be a 3rd in a row — find the next scene of another type
-    const swapAt = orderedKept.findIndex((r, j) => j > i && r.roomType !== orderedKept[i].roomType);
+    // This would be a 3rd in a row — pull the next different-room scene
+    // forward. v62.17: never take the LAST scene. Tour flow deliberately
+    // saves its strongest closing shot for the end (pool at dusk, twilight
+    // rear exterior), and on a one-note gallery the only different-room
+    // scene often IS that closer — so the fix for a monotonous middle was
+    // paid for by amputating the ending.
+    const swapAt = orderedKept.findIndex((r, j) => j > i && j < orderedKept.length - 1 && r.roomType !== orderedKept[i].roomType);
     if (swapAt === -1) break; // nothing left to interleave with — genuinely one-note
     const [moved] = orderedKept.splice(swapAt, 1);
     orderedKept.splice(i, 0, moved);

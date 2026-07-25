@@ -334,10 +334,16 @@ function buildSceneMatchCorrections(stats) {
     const excessY = Math.sign(dY) * Math.max(0, Math.abs(dY) - DEADBAND_Y);
     const bRaw = (excessY / 255) * MATCH_STRENGTH;
     const b = Math.max(-0.030, Math.min(0.030, bRaw));
+    // v62.17: correct only the EXCESS past the deadband, same as luma. The
+    // first cut of this was a cliff — a scene at 12.1% off median jumped
+    // straight to a full 0.55x correction, so two scenes either side of the
+    // boundary got wildly different treatment and could pop at the cut.
     const satRatio = s.sat > 1 ? refSat / s.sat : 1;
-    const satF = Math.abs(satRatio - 1) <= DEADBAND_SAT
+    const satDev = satRatio - 1;
+    const satExcess = Math.sign(satDev) * Math.max(0, Math.abs(satDev) - DEADBAND_SAT);
+    const satF = satExcess === 0
       ? 1
-      : Math.max(0.94, Math.min(1.06, 1 + (satRatio - 1) * MATCH_STRENGTH));
+      : Math.max(0.94, Math.min(1.06, 1 + satExcess * MATCH_STRENGTH));
     const bStr = Math.abs(b) >= 0.008 ? b.toFixed(4) : null;
     const satStr = Math.abs(satF - 1) >= 0.02 ? satF.toFixed(3) : null;
     if (!bStr && !satStr) continue;
@@ -446,14 +452,37 @@ export async function renderRunwayJob(body, options = {}) {
     try {
       options.onProgress?.({ phase: "Recording narration", progress: 7 });
       const { prepareVoiceFirst } = await import("./voice-first.mjs");
-      voiceFirst = await prepareVoiceFirst({
-        manifest, photoScenes, tempDir, jobId, resolveVoice: resolveVoiceId,
-        // Scene ceiling follows the engine's clip ceiling: Kling asks are
-        // exact seconds up to 10 (9.5 visible); the Veo rollback path keeps
-        // its 8s bucket cap (7.5 visible) — the grid must never promise a
-        // scene the engine can't deliver.
-        maxSceneVisible: /kling/i.test(process.env.FAL_VIDEO_MODEL || "") ? 9.5 : 7.5
-      });
+      // v62.17: this stage had NO time budget while the mix step and the
+      // legacy step each cap at 120s. Worst case is v3 synth (90s) +
+      // alignment (60s) + rung-2 synth (90s) = 240s of wall clock spent
+      // before a single clip exists, against an 18-min render cap. 150s is
+      // generous for the healthy path (~15-25s) and still leaves the ladder
+      // room; a timeout here just means the legacy voice path runs.
+      const maxSceneVisible = /kling/i.test(process.env.FAL_VIDEO_MODEL || "") ? 9.5 : 7.5;
+      voiceFirst = await Promise.race([
+        prepareVoiceFirst({
+          manifest, photoScenes, tempDir, jobId, resolveVoice: resolveVoiceId,
+          // Scene ceiling follows the engine's clip ceiling: Kling asks are
+          // exact seconds up to 10 (9.5 visible); the Veo rollback path keeps
+          // its 8s bucket cap (7.5 visible) — the grid must never promise a
+          // scene the engine can't deliver.
+          maxSceneVisible
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("voice-first preparation exceeded its 150s budget")), 150000)
+        )
+      ]);
+      // v62.17: honor the grid's own over-cap ALERT. buildVoiceGrid already
+      // warns when a scene can't spill anywhere (single-photo monster
+      // narration), but nothing acted on it — the gate only checked dropped
+      // photos and scene count, both of which such a grid PASSES. The job
+      // then generated at a clamped 10s ask, shipped 9.5s visible, and the
+      // mixer's drift check threw ~17s later, after full ElevenLabs AND fal
+      // spend. Catch it here, before either is committed.
+      if (voiceFirst && voiceFirst.grid.stats.maxSceneSec > maxSceneVisible + 0.05) {
+        console.warn(`[voice-first] grid scene of ${voiceFirst.grid.stats.maxSceneSec}s exceeds the ${maxSceneVisible}s clip ceiling with nowhere to spill — reverting to legacy voice path before spending on clips.`);
+        voiceFirst = null;
+      }
       if (voiceFirst?.grid?.stats?.droppedPhotos?.length) {
         // Degenerate narration (fallback-class monologue too thin for the
         // photo count). Dropping customer photos is the legacy path's call,
@@ -1604,15 +1633,23 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
     // retry rung, and the crop is identical each time.
     if (scene.__deliveryAspectUrl) {
       imageUrl = scene.__deliveryAspectUrl;
-    } else {
+    } else if (!scene.__deliveryAspectFailed) {
+      // v62.17: NEGATIVE cache too. Only the success was remembered, so a
+      // fal-storage outage or a slow photo host paid the full
+      // download + ffmpeg crop + upload cost again on every rung of the QC
+      // ladder — four times per scene, all of it doomed, all of it inside
+      // the render's wall clock.
       try {
         const pre = await prepareDeliveryAspectSource(imageUrl, manifest, tempDir, sceneIndex);
         if (pre) {
           scene.__deliveryAspectUrl = pre;
           imageUrl = pre;
+        } else {
+          scene.__deliveryAspectFailed = true;
         }
       } catch (err) {
-        console.warn(`[src] scene ${sceneIndex + 1}: delivery-aspect prep failed (${err.message}) — sending the original photo.`);
+        scene.__deliveryAspectFailed = true;
+        console.warn(`[src] scene ${sceneIndex + 1}: delivery-aspect prep failed (${err.message}) — sending the original photo for this and every retry.`);
       }
     }
   }
@@ -1769,28 +1806,34 @@ async function prepareDeliveryAspectSource(imageUrl, manifest, tempDir, sceneInd
 
   const srcPath = path.join(tempDir, `vsrc-in-${String(sceneIndex).padStart(3, "0")}.img`);
   const outPath = path.join(tempDir, `vsrc-${String(sceneIndex).padStart(3, "0")}.jpg`);
-  await downloadImageValidated(imageUrl, srcPath, `vertical-source scene ${sceneIndex + 1}`);
+  // v62.17: temps are cleaned in a finally, not only on the happy path. A
+  // download that half-wrote, an ffmpeg timeout, or a rejected upload each
+  // used to strand a file per scene per QC rung until the 2h sweep.
+  try {
+    await downloadImageValidated(imageUrl, srcPath, `vertical-source scene ${sceneIndex + 1}`);
 
-  // Identical geometry to the normalize pass: cover-scale then centered
-  // crop. Composition on screen is unchanged; only the pixel budget moves.
-  await runFFmpeg([
-    "-y", "-threads", "1",
-    "-i", srcPath,
-    "-vf", `scale=${dims.width}:${dims.height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${dims.width}:${dims.height}`,
-    "-q:v", "2",
-    outPath
-  ], { timeoutMs: 60000, label: `src:vertical-${sceneIndex}` });
+    // Identical geometry to the normalize pass: cover-scale then centered
+    // crop. Composition on screen is unchanged; only the pixel budget moves.
+    await runFFmpeg([
+      "-y", "-threads", "1",
+      "-i", srcPath,
+      "-vf", `scale=${dims.width}:${dims.height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${dims.width}:${dims.height}`,
+      "-q:v", "2",
+      outPath
+    ], { timeoutMs: 60000, label: `src:vertical-${sceneIndex}` });
 
-  const buf = await fs.readFile(outPath);
-  if (buf.length < 20000) throw new Error(`cropped source suspiciously small (${buf.length}B)`);
+    const buf = await fs.readFile(outPath);
+    if (buf.length < 20000) throw new Error(`cropped source suspiciously small (${buf.length}B)`);
 
-  const { uploadImageToFal } = await import("./veo-job.mjs");
-  const url = await uploadImageToFal(buf, `scene-${String(sceneIndex).padStart(3, "0")}.jpg`);
-  if (!url) return null;
-  console.info(`[src] scene ${sceneIndex + 1}: generating from a ${dims.width}x${dims.height} delivery-aspect crop (was full landscape → ~2.4x upscale downstream).`);
-  await fs.unlink(srcPath).catch(() => {});
-  await fs.unlink(outPath).catch(() => {});
-  return url;
+    const { uploadImageToFal } = await import("./veo-job.mjs");
+    const url = await uploadImageToFal(buf, `scene-${String(sceneIndex).padStart(3, "0")}.jpg`);
+    if (!url) return null;
+    console.info(`[src] scene ${sceneIndex + 1}: generating from a ${dims.width}x${dims.height} delivery-aspect crop (was full landscape → ~2.4x upscale downstream).`);
+    return url;
+  } finally {
+    await fs.unlink(srcPath).catch(() => {});
+    await fs.unlink(outPath).catch(() => {});
+  }
 }
 
 // Per-scene safety net: when Runway fails, generate a Ken-Burns–style
@@ -1837,12 +1880,20 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
   // geometry, not a fourth lottery ticket. Falls through to the v36
   // supersampled zoompan only if onnxruntime itself is unavailable.
   try {
+    // v62.17: render the floor at the DELIVERY size, not a hardcoded
+    // 720x1280. Before v62.10 everything reached the master through a big
+    // upscale so a 720p floor was indistinguishable; now generated clips
+    // arrive natively 9:16 (near-native on the pro tier) and a 720x1280
+    // floor is the only thing in the render still being stretched 1.5x —
+    // it inverts the old relationship and makes floors the softest scenes
+    // on screen. Homography drift is pure resampling of the customer's own
+    // photo, so it costs nothing but CPU to render it at full size.
     await renderHomographyDrift({
       photoPath: localPhoto,
       outPath: clipPath,
       durationSec: duration,
-      width: 720,
-      height: 1280,
+      width: dimensions.width,
+      height: dimensions.height,
       roomType: scene.roomType,
       sceneIndex,
       cameraMotion: motion
@@ -2152,9 +2203,16 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // to cancel. So: gimbal defaults OFF whenever delivery-aspect sourcing
     // is active, ON when we're back to landscape sourcing (where it earns
     // its keep against the v60.9 walk tremor). KLING_STABILIZE overrides.
-    const deliveryAspectSourcing =
-      /kling/i.test(process.env.FAL_VIDEO_MODEL || "") &&
-      String(process.env.KLING_VERTICAL_SOURCE || "1") !== "0";
+    // v62.17: key off whether the crop ACTUALLY happened for THIS clip, not
+    // off the env. The env-only test was wrong in two directions: a 16:9 or
+    // 1:1 master skips the crop entirely (prepareDeliveryAspectSource
+    // returns null for non-portrait deliveries) yet still read as "delivery
+    // aspect" and shipped unstabilized, and any fal-upload failure silently
+    // fell back to the landscape photo — the exact case vidstab exists for —
+    // while the gimbal stayed off. `__deliveryAspectUrl` is set only when a
+    // crop was uploaded and accepted.
+    const clipScene = (manifest.scenes || []).find((s) => s.photoId === clip.photoId);
+    const deliveryAspectSourcing = Boolean(clipScene?.__deliveryAspectUrl);
     const stabDefault = deliveryAspectSourcing ? "0" : "1";
     if (klingClip && !alreadyStabilized && !clip.fallback && !clip.usedPhotoMotionFloor && !clip.preNormalized && String(process.env.KLING_STABILIZE || stabDefault) !== "0") {
       const trfPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.trf`);

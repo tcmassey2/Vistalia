@@ -1308,13 +1308,19 @@ export async function applyVoiceFirstMix({
     const vf = captionsAssPath
       ? [`[0:v:0]subtitles='${subtitlesFilterPath(captionsAssPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'[vout];`, "[vout]", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19"]]
       : ["", "0:v:0", ["-c:v", "copy"]];
+    // v62.17: NO -shortest here. The narration track is only
+    // actualVisible + 0.8s long — it covers the photo scenes, not the ~5s
+    // brand outro that stitch appends afterwards. With -shortest the audio
+    // stream became the limit and the entire outro card was cut off the end
+    // of every music-off render. Without it the output runs to the video
+    // stream and the outro plays over silence, which is what it always did.
     await runFFmpeg([
       "-y", "-threads", "1",
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex", vf[0] + (await voiceOnlyAudioFilter(narrationTrackPath)),
       "-map", vf[1], "-map", "[aout]",
       ...vf[2], "-c:a", "aac", "-b:a", "192k",
-      "-shortest", mixedMp4
+      mixedMp4
     ], { timeoutMs: captionsAssPath ? 240000 : 60000, label: "voice:first-mix-narration-only" });
   }
 
