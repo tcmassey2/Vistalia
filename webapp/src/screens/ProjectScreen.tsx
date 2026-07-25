@@ -2243,10 +2243,14 @@ function RenderControls() {
   const [showPaywall, setShowPaywall] = useState(false);
   const [paywallReason, setPaywallReason] = useState<string>("");
 
-  const isRendering = renderJob?.status === "queued" || renderJob?.status === "rendering";
   // v62.8: a render belongs to the project that started it — never let
-  // another project's job drive this page's completed state.
+  // another project's job drive this page's state.
   const jobIsMine = !renderJob?.projectId || renderJob.projectId === projectId;
+  // v62.16: isRendering must be scoped the same way isComplete is. Unscoped,
+  // another project's in-flight job disabled THIS project's Generate button
+  // (reading "Rendering…") while RenderStatusPanel correctly showed nothing —
+  // a dead button with no explanation, now for up to the full 45-min window.
+  const isRendering = jobIsMine && (renderJob?.status === "queued" || renderJob?.status === "rendering");
   const isComplete = jobIsMine && renderJob?.status === "completed" && renderJob.mp4Url;
   const canRender = photos.length >= 3 && !isRendering;
 
@@ -2517,14 +2521,24 @@ function RenderControls() {
       if (!raw) return;
       const saved = JSON.parse(raw) as { jobId?: string; projectId?: string; engine?: string; startedAt?: number };
       const ageMs = Date.now() - (saved.startedAt || 0);
-      // 35 min = worker's 25-min overall cap + polling slack. Older = stale key.
-      if (!saved.jobId || ageMs > 35 * 60 * 1000) {
+      // v62.16: 50 min, not 35 — the poll window is now 45 (v62.13), and a
+      // reload at minute 36 of a 40-minute render used to delete the key and
+      // abandon the client side of a render that was still going.
+      if (!saved.jobId || ageMs > 50 * 60 * 1000) {
         localStorage.removeItem("vistalia.active-render.v1");
         return;
       }
       setRenderJob({
         jobId: saved.jobId,
-        projectId: saved.projectId, // v62.8: refresh-resume keeps the scope
+        // v62.16 REFRESH-RESUME FIX: deliberately UNSTAMPED. The store mints
+        // a brand-new random projectId on every boot (store.ts newProjectId),
+        // so a restored stamp could never equal the current one and the
+        // scoping gate hid the panel on 100% of reloads — the v45.9 resume
+        // feature was dead. Leaving it undefined makes the gate permissive
+        // for this one recovered job (there is no other project in a
+        // freshly-booted tab to confuse it with) while every job stamped
+        // in-session keeps full cross-project protection.
+        projectId: undefined,
         status: "rendering",
         phase: "Reconnecting to your render",
         progress: 15,
@@ -2539,6 +2553,11 @@ function RenderControls() {
 
   const pollUntilDone = async (jobId: string) => {
     const startTime = Date.now();
+    // v62.16: whoever owns this job at poll start owns it for the whole
+    // poll. Submit stamps the slot with its projectId; the refresh-resume
+    // path deliberately leaves it undefined (permissive). Capturing it once
+    // here means later ticks can never inherit a different project's stamp.
+    const pollOwnerProjectId = useStore.getState().renderJob?.projectId;
     // v62.13: was 26 min, sized against a v31-era 25-min worker cap and a
     // ~9-scene render. A 45s/13-scene voice-first render legitimately runs
     // 28-30 min (Troy's 00:43 job: 28.5 min, and the UI froze at 85% because
@@ -2596,7 +2615,16 @@ function RenderControls() {
           jobId,
           // v62.8: the status endpoint doesn't echo projectId either — same
           // clobber class as `engine` below. Keep the submit-time stamp.
-          projectId: useStore.getState().renderJob?.projectId || projectId,
+          // v62.16: only adopt the slot's stamp when the slot is still THIS
+          // job. Without the jobId guard, a poll tick for render A would
+          // adopt whatever project had since taken the slot (render B) and
+          // re-stamp A with B's id — reopening the wrong-video bug from the
+          // other direction. The store's carry-forward (store.ts) already
+          // guards this way; the poll path did not.
+          projectId: (() => {
+            const cur = useStore.getState().renderJob;
+            return cur?.jobId === jobId && cur?.projectId ? cur.projectId : pollOwnerProjectId;
+          })(),
           progress: safeProgress,
           phase: safePhase,
           // v34.4: the status endpoint doesn't echo `engine`, so spreading
@@ -2689,11 +2717,18 @@ function RenderControls() {
     // the user staring at a frozen bar with a finished video sitting in
     // their library. Same recovery, same completed panel.
     try {
-      const late = await tryRecoverFromLibrary(jobId, startTime);
+      // v62.16: STRICT — exact jobId match only. The fuzzy time-window
+      // fallback is anchored to pollStartedAt, which on this path is 45
+      // minutes old, so its window spans ~55 minutes and would happily
+      // return an unrelated project's render as "yours" — the exact
+      // wrong-video class we just closed. The worker-restart branch above
+      // still allows fuzzy, where the job legitimately may not be filed
+      // under the same id.
+      const late = await tryRecoverFromLibrary(jobId, startTime, { strict: true });
       if (late) {
         setRenderJob({
           jobId,
-          projectId,
+          projectId: pollOwnerProjectId,
           status: "completed",
           phase: "Ready to download",
           progress: 100,
@@ -2705,6 +2740,11 @@ function RenderControls() {
         return;
       }
     } catch { /* fall through to the timeout message */ }
+    // v62.16: clear the slot, exactly like the worker-restart branch does.
+    // Leaving a "rendering" job in place kept isRendering true forever, so
+    // the banner said "or generate again" while the Generate button sat
+    // disabled reading "Rendering…" — only a page reload escaped it.
+    setRenderJob(null);
     setError("This render is taking longer than expected and timed out. Your credit hasn't been consumed by a failed render — check your Library in a few minutes in case it finished, or generate again. If this keeps happening, contact support@vistalia.ai.");
   };
 
@@ -2721,7 +2761,8 @@ function RenderControls() {
   // going. Always prefer jobId equality.
   const tryRecoverFromLibrary = async (
     targetJobId: string,
-    pollStartedAtMs: number
+    pollStartedAtMs: number,
+    opts: { strict?: boolean } = {}
   ): Promise<{ mp4Url: string; thumbnailUrl: string } | null> => {
     try {
       const lib = await fetchLibrary({ limit: 25 });
@@ -2734,6 +2775,10 @@ function RenderControls() {
       // 2) Fallback: time-window match (only if no jobId match found).
       // Tightened from 30 min to 10 min so we don't accidentally match
       // an unrelated earlier render.
+      // v62.16: callers on the long-timeout path pass strict:true — see the
+      // note there. The window is relative to poll START, so the older the
+      // poll, the wider and less trustworthy this match becomes.
+      if (opts.strict) return null;
       const RECOVERY_WINDOW_MS = 10 * 60 * 1000;
       const cutoff = pollStartedAtMs - RECOVERY_WINDOW_MS;
       const fuzzy = lib.library.find((entry) => {

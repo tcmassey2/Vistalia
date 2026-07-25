@@ -686,7 +686,18 @@ export async function renderRunwayJob(body, options = {}) {
         // renders are never less reliable than they were without it.
         if (qcEnabled() && result) {
           const qcPhoto = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
-          const qcSrcUrl = pickImageUrl(scene, qcPhoto);
+          // v62.16: QC must judge the clip against what the model was ACTUALLY
+          // given. Since v62.10 the clip is generated from a 9:16 crop, but
+          // this pass still handed the inspector the full landscape photo —
+          // so the reference showed doorways, windows and furniture that are
+          // outside the generated frame by construction, and the prompt's
+          // "count the doorways… must match exactly" rule read those as
+          // missing objects. That is a false object_artifacts verdict, and it
+          // costs a constrained regen, a strict re-roll, and finally a
+          // deterministic floor on a perfectly healthy scene. (The final
+          // sweep already crops its reference — v60.7 fixed this same class
+          // there; the per-clip pass was simply never updated.)
+          const qcSrcUrl = scene.__deliveryAspectUrl || pickImageUrl(scene, qcPhoto);
           let verdict = await qcVeoClip({
             clipPath: result.clipPath, sourceImageUrl: qcSrcUrl,
             sceneIndex: index, roomType: scene.roomType, tempDir
