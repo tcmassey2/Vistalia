@@ -117,6 +117,44 @@ ok(/cc_ft_1536/.test(z.best), "Zillow rewrite targets the 1536 tier");
 const rf = maximizePhotoUrl("https://ssl.cdn-redfin.com/photo/1/mbphoto/123/genMid.ABC_1.jpg");
 ok(/\/bigphoto\//.test(rf.best) && !/genMid/.test(rf.best), "Redfin rewrite targets the full-size original");
 
+console.log("\n== v62.23 THE 5-PHOTO BUG: Zillow ships four variant families");
+// Reproduces the live page's exact shape. Each gallery photo appears at a
+// FIXED thumbnail (p_d/p_c) BEFORE it appears at a resizable gallery tier —
+// and dedupe is first-seen-wins, so the thumbnail URL used to win.
+const galleryPhoto = (n) => {
+  const h = hash(n);
+  return `<img src="https://photos.zillowstatic.com/fp/${h}-p_d.jpg"/>` +      // thumb first
+         `{"url":"https://photos.zillowstatic.com/fp/${h}-cc_ft_1536.jpg"}` +   // gallery tier
+         `{"url":"https://photos.zillowstatic.com/fp/${h}-uncropped_scaled_within_1536_1152.webp"}`;
+};
+// Related-home carousel + chrome: fixed thumbs only, never a gallery tier.
+const carouselOnly = (n) => `<img src="https://photos.zillowstatic.com/fp/${hash(900 + n)}-p_c.jpg"/>`;
+const zPage = Array.from({ length: 12 }, (_, i) => galleryPhoto(i)).join("") +
+              Array.from({ length: 6 }, (_, i) => carouselOnly(i)).join("") +
+              `<img src="https://photos.zillowstatic.com/fp/${hash(777)}-zillow_web_95_35.jpg"/>`;
+const zOut = extractPagePhotos(zPage);
+ok(zOut.length === 12, "all 12 gallery photos survive (thumb-first ordering no longer wins)", `got ${zOut.length}`);
+ok(zOut.every((p) => /-cc_ft_1536\.(jpe?g|webp)$/.test(p.url)),
+   "every one is rewritten to the full-size tier", JSON.stringify(zOut.slice(0, 2)));
+ok(!zOut.some((p) => /-p_[cd]\./.test(p.url)), "no fixed thumbnail URL survives");
+ok(zOut.length === 12, "the 6 related-home carousel thumbs are excluded (no gallery tier)");
+
+// The regression itself: the OLD rewrite only touched cc_ft/scaled_within, so
+// a p_d-first photo kept a 316x234 URL and the low-res gate dropped it.
+const oldRewrite = (u) => u.replace(/-cc_ft_\d+/g, "-cc_ft_1536").replace(/scaled_within_\d+_\d+/g, "scaled_within_1536_1152");
+ok(oldRewrite(`https://photos.zillowstatic.com/fp/${hash(1)}-p_d.jpg`).includes("-p_d.jpg"),
+   "old rewrite provably left p_d thumbnails untouched — the shipped defect");
+ok(maximizePhotoUrl(`https://photos.zillowstatic.com/fp/${hash(1)}-p_d.jpg`).best.includes("-cc_ft_1536.jpg"),
+   "new rewrite upgrades p_d to the full-size tier");
+// Identity must still collapse every variant of one photo to a single entry.
+const variants = ["p_c", "p_d", "d_d", "o_a", "cc_ft_384", "uncropped_scaled_within_1536_1152"]
+  .map((v) => maximizePhotoUrl(`https://photos.zillowstatic.com/fp/${hash(5)}-${v}.jpg`).key);
+ok(new Set(variants).size === 1, "all six variant families share one identity key", JSON.stringify(variants.slice(0,2)));
+
+// Fail-open: a reduced page with no gallery tiers must still yield photos.
+const reduced = Array.from({ length: 4 }, (_, i) => `<img src="https://photos.zillowstatic.com/fp/${hash(i)}-p_d.jpg"/>`).join("");
+ok(extractPagePhotos(reduced).length === 4, "no gallery tiers anywhere → fail open, keep what we found");
+
 console.log("\n== v62.21 listing facts come off the page, so RentCast is optional");
 // Verbatim meta description from the live Scottsdale page.
 const realMeta = `<meta name="description" content="Zillow has 73 photos of this $1,130,000 3 beds, 3 baths, 2,097 sqft townhouse home located at 8725 E VIA DE DORADO --, Scottsdale, AZ 85258 "/>`;

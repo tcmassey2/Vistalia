@@ -253,6 +253,25 @@ const GALLERY_LOOKS_COMPLETE = 12;
    survives even on a thin above-the-fold render — so it is a reliable
    expectation to measure our extraction against, and the honest number to
    show the customer when we come up short. */
+/* v62.23: which Zillow photo hashes belong to THIS listing's gallery.
+   Upgrading every variant to full size (see maximizePhotoUrl) removes the
+   accidental protection the old code had: related-home carousels and site
+   chrome also live on /fp/, and they used to arrive as unusable thumbnails
+   that the low-res gate quietly discarded. Now they would arrive full-size
+   and indistinguishable — other people's houses in the customer's tour, the
+   angry-customer class.
+   The discriminator is exact, not heuristic: a photo of THIS listing is
+   served at a resizable gallery tier (cc_ft_* or uncropped_scaled_within_*)
+   somewhere in the document; carousel thumbs and chrome only ever appear at
+   fixed sizes. Measured on the live page: 85 hashes total, 73 with a gallery
+   tier — and the page advertises exactly 73 photos. */
+export function zillowGalleryHashes(html) {
+  const set = new Set();
+  const re = /\/fp\/([a-f0-9]{12,})-(?:cc_ft_\d+|uncropped_scaled_within_\d+_\d+)\.(?:jpe?g|webp|png)/gi;
+  for (const m of String(html).matchAll(re)) set.add(m[1].toLowerCase());
+  return set;
+}
+
 export function expectedPhotoCount(html) {
   const text = String(html);
   const sane = (n) => (Number.isFinite(n) && n >= 2 && n <= 300 ? n : 0);
@@ -289,11 +308,25 @@ export function maximizePhotoUrl(url) {
     // Zillow + Trulia (same CDN family): /fp/<hash>-<variant>.<ext> — the
     // hash IS the photo. -cc_ft_<w> crops and *_scaled_within_<w>_<h>
     // variants all resolve to it; 1536 is the top public tier.
+    /* v62.23 — THE ACTUAL 5-PHOTO BUG, measured on the live page.
+       Zillow addresses one photo as /fp/<hash>-<variant>.<ext>, and it ships
+       FOUR families of variant: cc_ft_<w> and uncropped_scaled_within_<w>_<h>
+       (the resizable gallery tiers) plus p_c / p_d / d_d / o_a / p_f (FIXED
+       thumbnails — p_c is 316x234). This rewrite only ever matched cc_ft and
+       scaled_within. Dedupe is by photo hash and first-seen wins, so a photo
+       whose first appearance in the document was a p_d thumbnail kept that
+       thumbnail URL forever.
+       Counted on 8725 E Via De Dorado: of 85 photo hashes, exactly FIVE first
+       appear as cc_ft. The other 78 first appear as p_d or p_c. Those five
+       are the five photos Troy got, every single import — the number never
+       moved because it was never the scraper. We fetched 24 URLs, 19 came
+       back at 400x300, and the v62.15 low-res gate correctly dropped them.
+       Rewriting the whole variant token turns 316x234 into 1536x1152. */
     if (/zillowstatic\.com|trulia\.com/i.test(url)) {
-      const best = url
-        .replace(/-cc_ft_\d+/g, "-cc_ft_1536")
-        .replace(/scaled_within_\d+_\d+/g, "scaled_within_1536_1152");
       const hash = url.match(/\/fp\/([a-f0-9]{12,})/i);
+      const best = hash
+        ? url.replace(/(\/fp\/[a-f0-9]{12,})-[a-z0-9_]+(\.(?:jpe?g|webp|png))/i, "$1-cc_ft_1536$2")
+        : url.replace(/-cc_ft_\d+/g, "-cc_ft_1536").replace(/scaled_within_\d+_\d+/g, "scaled_within_1536_1152");
       const key = hash
         ? `zw:${hash[1]}`
         : noExt(url.replace(/-cc_ft_\d+/g, "").replace(/scaled_within_\d+_\d+/g, "").split("?")[0]);
@@ -356,19 +389,34 @@ function extractPagePhotos(html) {
   // page carries the gallery only as thumbnails, that counter will be large
   // while `kept` stays tiny, and the fix is to upgrade those rather than
   // drop them. Costs nothing; ends the guessing.
-  const rejected = { thumb: 0, chrome: 0, nonPhoto: 0, offPath: 0 };
+  const rejected = { thumb: 0, chrome: 0, nonPhoto: 0, offPath: 0, notInGallery: 0 };
+  // v62.23: this listing's own photo hashes (see zillowGalleryHashes).
+  const zGallery = zillowGalleryHashes(text);
   // Portal CDNs first — these are the full-size listing photos.
   for (const m of text.matchAll(PHOTO_CDN_RE)) {
     let url = m[0];
-    // Skip obvious thumbnails when a size hint is embedded in the URL.
-    if (/cc_ft_(\d+)/.test(url) && Number(url.match(/cc_ft_(\d+)/)[1]) < 576) { rejected.thumb++; continue; }
-    if (/[-_](\d{2,3})x(\d{2,3})\./.test(url)) { rejected.thumb++; continue; }
+    const isZillow = /zillowstatic\.com/i.test(url);
+    // v62.23: a small size hint is only disqualifying when we CAN'T fix it.
+    // Every Zillow variant now rewrites to the full-size tier, so rejecting
+    // a photo for the tier it happened to be embedded at would throw away
+    // the exact photos this release exists to recover.
+    if (!isZillow) {
+      if (/cc_ft_(\d+)/.test(url) && Number(url.match(/cc_ft_(\d+)/)[1]) < 576) { rejected.thumb++; continue; }
+      if (/[-_](\d{2,3})x(\d{2,3})\./.test(url)) { rejected.thumb++; continue; }
+    }
     // v58.3: portal CDNs serve SITE ASSETS from the same hosts as listing
     // photos — m74 shipped a scene animating the REDFIN LOGO (captioned
     // "Living area"; QC passed it because the video faithfully matched its
     // source "photo"). Listing photos live under known path prefixes; site
     // chrome does not.
-    if (/zillowstatic\.com/i.test(url) && !/\/fp\//.test(url)) { rejected.offPath++; continue; }
+    if (isZillow) {
+      if (!/\/fp\//.test(url)) { rejected.offPath++; continue; }
+      const h = (url.match(/\/fp\/([a-f0-9]{12,})/i) || [])[1];
+      if (!h) { rejected.offPath++; continue; }
+      // Fail-open when the document carries no gallery tiers at all (a
+      // reduced or blocked page): better a thin import than an empty one.
+      if (zGallery.size > 0 && !zGallery.has(h.toLowerCase())) { rejected.notInGallery++; continue; }
+    }
     if (/cdn-redfin\.com/i.test(url) && !/\/photo\//i.test(url)) { rejected.offPath++; continue; }
     if (/logo|icon|sprite|badge|avatar|headshot|favicon|app-?store|play-?store|banner/i.test(url)) { rejected.chrome++; continue; }
     // v62.5: non-photo listing media — floor plans, site plans, surveys,
