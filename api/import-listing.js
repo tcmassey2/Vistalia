@@ -529,22 +529,40 @@ async function storePhoto(photo, userId, projectId, index, seenHashes) {
   const fileName = `imported-${String(index + 1).padStart(2, "0")}.${ext}`;
   const bucket = process.env.LISTING_PHOTOS_BUCKET || "listing-photos";
   const storagePath = `${userId}/projects/${projectId}/${Date.now()}-${index}-${fileName}`;
-  const up = await fetchWithTimeout(
-    `${supabaseUrl}/storage/v1/object/${bucket}/${storagePath}`,
-    {
-      method: "POST",
-      headers: {
-        apikey: serviceKey,
-        Authorization: `Bearer ${serviceKey}`,
-        "Content-Type": type,
-        "x-upsert": "true",
-        "Cache-Control": "3600"
+  /* v62.22: retry the upload. Storage is the one step in this loop that
+     depends on OUR backend being healthy, and a photo lost here is a photo
+     the customer never sees — with no error, because the caller swallows
+     per-photo failures to keep the import alive. Troy's 04:32 import ran
+     straight through a ~1-minute window where Supabase was returning
+     Cloudflare 520/525 (the same window that filled the render worker's log
+     with `claim_render_job 520`), and a single-shot upload during that
+     window drops the photo permanently. Three attempts over ~3.5s covers a
+     blip of that shape; 4xx is not retried because it will never succeed. */
+  let up = null;
+  let upErr = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 700 * attempt * attempt));
+    up = await fetchWithTimeout(
+      `${supabaseUrl}/storage/v1/object/${bucket}/${storagePath}`,
+      {
+        method: "POST",
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": type,
+          "x-upsert": "true",
+          "Cache-Control": "3600"
+        },
+        body: buf
       },
-      body: buf
-    },
-    20000
-  );
-  if (!up.ok) throw new Error(`upload ${up.status}`);
+      20000
+    ).catch((e) => { upErr = e?.message || "network"; return null; });
+    if (up && up.ok) break;
+    if (up && up.status >= 400 && up.status < 500) break; // permanent — don't burn retries
+    upErr = up ? `upload ${up.status}` : upErr || "upload failed";
+    if (attempt < 2) console.warn(`[import] photo ${index + 1}: ${upErr} — retrying (${attempt + 1}/2).`);
+  }
+  if (!up || !up.ok) throw new Error(upErr || `upload ${up ? up.status : "failed"}`);
   return {
     storagePath,
     bucket,
@@ -758,16 +776,39 @@ export default async function handler(request, response) {
   if (pagePhotoUrls.length > 0 && auth.userId) {
     const queue = [...pagePhotoUrls.entries()];
     const seenHashes = new Set(); // v62.4 byte-identity net across this import
+    // v62.22: per-photo failures were swallowed completely — `catch {}` with
+    // no counter, no reason, no log line. So "we found 24 URLs and shipped
+    // 7" was indistinguishable from "the page only had 7", which is exactly
+    // the ambiguity that made this bug take three rounds to corner. Reasons
+    // are grouped (24 identical lines help nobody) and the deliberate ones
+    // (duplicate-bytes) are separated from the failures.
+    const failures = [];
     const workers = Array.from({ length: 6 }, async () => {
       while (queue.length > 0) {
         const [i, photoUrl] = queue.shift();
         try {
           stored.push({ order: i, ...(await storePhoto(photoUrl, auth.userId, projectId, i, seenHashes)) });
-        } catch { /* skip failed photo */ }
+        } catch (err) {
+          failures.push(String(err?.message || "unknown").slice(0, 60));
+        }
       }
     });
     await Promise.all(workers);
     stored.sort((a, b) => a.order - b.order);
+    const dupes = failures.filter((f) => f === "duplicate-bytes").length;
+    const realFailures = failures.filter((f) => f !== "duplicate-bytes");
+    if (failures.length > 0) {
+      const grouped = realFailures.reduce((acc, f) => (acc[f] = (acc[f] || 0) + 1, acc), {});
+      console.log(`[import] photo transfer: ${stored.length} stored, ${dupes} byte-duplicates, ${realFailures.length} failed ${JSON.stringify(grouped)}`);
+    }
+    // A transfer failure is OUR side, not the portal's, and it needs a
+    // different message than "the listing only exposed N photos".
+    if (realFailures.length >= 3 && stored.length > 0) {
+      warnings.push(
+        `We found ${pagePhotoUrls.length} photos but only ${stored.length} transferred — ` +
+        `that's usually a brief storage hiccup on our end. Re-importing normally picks up the rest.`
+      );
+    }
     if (stored.length === 0 && pagePhotoUrls.length > 0) {
       warnings.push("Photos were found but couldn't be transferred — add them manually.");
       photoSource = "none";

@@ -392,8 +392,16 @@ const sbHeaders = {
 };
 
 async function sbRpc(fn, payload) {
+  // v62.22: this fetch had NO timeout. During the Jul 25 04:32 window —
+  // Supabase behind Cloudflare returning 520/525 for about a minute — a
+  // hung request could outlive the 2500ms poll interval, and since the
+  // interval fires regardless of whether the previous tick finished, every
+  // stall stacked another concurrent RPC on a backend that was already
+  // failing. That is how one blip produced three `poll error` lines inside
+  // the same second. Bounded here, guarded at the caller.
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
-    method: "POST", headers: sbHeaders, body: JSON.stringify(payload || {})
+    method: "POST", headers: sbHeaders, body: JSON.stringify(payload || {}),
+    signal: AbortSignal.timeout(15000)
   });
   if (!res.ok) throw new Error(`${fn} ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
   return res.json().catch(() => null);
@@ -541,8 +549,18 @@ async function confirmTerminalPersist(jobId, status) {
 
 // Poll the queue and start jobs up to the concurrency cap. Each claim is atomic
 // (SKIP LOCKED) so multiple worker instances never collide on the same job.
+// v62.22: single-flight + backoff state for the queue poller.
+let polling = false;
+let pollFailures = 0;
+let pollBackoffUntil = 0;
+
 async function pollAndProcess() {
   if (!QUEUE_ENABLED) return;
+  // setInterval does not wait for the previous tick. Without this guard a
+  // slow Supabase turns one poller into an unbounded fan-out of concurrent
+  // claims — the opposite of what you want from a struggling database.
+  if (polling || Date.now() < pollBackoffUntil) return;
+  polling = true;
   try {
     while (activeRenders < RENDER_CONCURRENCY) {
       const claimed = await sbRpc("claim_render_job", { p_worker_id: WORKER_ID });
@@ -603,8 +621,22 @@ async function pollAndProcess() {
         .catch((e) => console.error(`[queue] ${isRegen ? "regen" : "render"} ${claimed.job_id} crashed: ${e?.message}`))
         .finally(() => { activeRenders--; });
     }
+    pollFailures = 0;
   } catch (e) {
-    console.warn(`[queue] poll error: ${e?.message}`);
+    // v62.22: back off instead of hammering. Every 2500ms tick used to fire
+    // another claim at a backend that had just failed, so a one-minute
+    // Supabase incident became ~24 futile RPCs per instance per minute plus
+    // a wall of identical log lines that buried anything useful. Backoff is
+    // exponential to a 60s ceiling and resets the moment a poll succeeds;
+    // the log line now says how long we are standing down, and repeats are
+    // summarized rather than reprinted.
+    pollFailures++;
+    pollBackoffUntil = Date.now() + Math.min(60000, 2500 * Math.pow(2, pollFailures));
+    if (pollFailures === 1 || pollFailures % 10 === 0) {
+      console.warn(`[queue] poll error (x${pollFailures}): ${e?.message} — backing off ${Math.round((pollBackoffUntil - Date.now()) / 1000)}s`);
+    }
+  } finally {
+    polling = false;
   }
 }
 
