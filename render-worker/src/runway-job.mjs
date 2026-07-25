@@ -196,6 +196,42 @@ function measureClipMotion(file, { timeoutMs = 20000 } = {}) {
   });
 }
 
+/* v62.26 THE JUDDER — measured on the Jul 25 05:08 master, scene by scene.
+   Kling does not always return 30fps. Three of that render's nine clips came
+   back at 24, and the normalize chain opened with a flat `fps=30`, which is
+   a DUPLICATING converter: 4 source frames become 5 output frames, so every
+   fifth frame is a hold. At 30fps that is a freeze six times a second, on a
+   slow push-in, which reads exactly as "the camera wobbles inside the shot".
+   Reproduced end-to-end: decimate a clean clip to 24 and run it through
+   `fps=30` → 18 held frames in 87, cadence "every 5f", frame-difference 0.00
+   at the holds — byte-for-byte the pattern in the shipped scenes 3, 5 and 6.
+   Every other check we own is blind to it: the QC and sweep inspectors read
+   2-3 stills, and the global YDIF duplicate counter never fires because film
+   grain is applied AFTER this step, so a duplicated frame still differs.
+   Returns the clip's average frame rate, or NaN. Telemetry only — a probe
+   failure falls back to the historical `fps` filter. */
+function probeFrameRate(file, { timeoutMs = 10000 } = {}) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn("ffprobe", [
+        "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=avg_frame_rate",
+        "-of", "csv=p=0", file
+      ], { stdio: ["ignore", "pipe", "ignore"] });
+      let out = "";
+      proc.stdout.on("data", (d) => { out += d; });
+      proc.on("close", () => {
+        const [n, d] = String(out).trim().split("/").map(Number);
+        resolve(Number.isFinite(n) && Number.isFinite(d) && d > 0 ? n / d : NaN);
+      });
+      proc.on("error", () => resolve(NaN));
+      setTimeout(() => { try { proc.kill(); } catch {} }, timeoutMs);
+    } catch {
+      resolve(NaN);
+    }
+  });
+}
+
 // Map the customer-facing style name onto a finishing personality.
 function resolveFinishStyle(manifest) {
   if (manifest?.runwayConfig?.complianceMode) return "mls";
@@ -2315,8 +2351,28 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       const t = sceneTones.get(clip.sceneIndex);
       console.info(`[finish] scene ${clip.sceneIndex + 1}: blue-hour protected (U−V=+${(t.u - t.v).toFixed(0)}) — neutral grade, natural dusk kept.`);
     }
+    /* v62.26: convert to 30fps WITHOUT duplicating frames. `fps` resamples by
+       nearest-neighbour — on a 24fps clip that is a hold every fifth frame.
+       `framerate` interpolates between the two neighbouring source frames
+       instead, so a 24→30 conversion reads as a hair of motion blur rather
+       than a stutter; measured on the same clip it takes the held-frame count
+       from 18/87 to 1/87. It is only engaged when the source ISN'T already
+       30fps, so the six clips per render that arrive at 30 keep the exact
+       byte-path they have today. minterpolate (true motion compensation) is
+       the better converter and is NOT used here: it costs minutes per clip on
+       this worker and invents motion on generative content, which is the
+       artifact class we spend the whole QC ladder trying to keep out. */
+    const srcFps = await probeFrameRate(clip.clipPath);
+    const needsResample = Number.isFinite(srcFps) && Math.abs(srcFps - 30) > 0.2;
+    const fpsFilter = needsResample && filterCaps.has("framerate") ? "framerate=fps=30" : "fps=30";
+    if (needsResample) {
+      console.info(
+        `[fps] scene ${clip.sceneIndex + 1}: source ${srcFps.toFixed(2)}fps → 30fps via ` +
+        (filterCaps.has("framerate") ? "framerate (interpolated — no duplicated frames)" : "fps (DUPLICATING: framerate filter unavailable)")
+      );
+    }
     const preHalation = [
-      `fps=30`,
+      fpsFilter,
       // v50: deflicker BEFORE denoise — temporal luma pulse is easiest to
       // remove at native resolution, and hqdn3d then has less to chase.
       ...(!isPre && deflickerFilter ? [deflickerFilter] : []),
