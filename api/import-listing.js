@@ -229,8 +229,41 @@ async function rentcastFacts(query) {
    3. Page photos — best-effort, expected to fail on some portals
    ============================================================ */
 
+/* v62.19: subdomain-agnostic for the three CDNs that use more than one photo
+   host. Realtor.com is the live case — it serves a single gallery across
+   ap./ar./ai./p.rdcpix.com, and pinning `ap.` silently dropped whichever
+   share of the set landed on a sibling host. maximizePhotoUrl() already
+   matched /rdcpix\.com/i for ALL subdomains, so discovery and rewriting
+   disagreed about what counted as a photo. The path guards below
+   (zillowstatic needs /fp/, cdn-redfin needs /photo/) are what keep site
+   chrome out, not the subdomain — so widening costs no safety. homes.com
+   and trulia stay pinned to their known image hosts: those domains serve
+   the marketing site from the same registrable domain. */
 const PHOTO_CDN_RE =
-  /https:\/\/(?:photos\.zillowstatic\.com|ssl\.cdn-redfin\.com|ap\.rdcpix\.com|images\.homes\.com|photos\.trulia\.com)[^\s"'\\)]+?\.(?:jpe?g|webp|png)/gi;
+  /https:\/\/(?:(?:[a-z0-9-]+\.)*(?:zillowstatic\.com|cdn-redfin\.com|rdcpix\.com)|images\.homes\.com|photos\.trulia\.com)\/[^\s"'\\)]+?\.(?:jpe?g|webp|png)/gi;
+
+// A gallery this size is treated as complete when the page doesn't state a
+// count. Below it, the tier ladder keeps escalating: a real listing with
+// only 7 photos costs one extra proxy call, while a 73-photo listing that
+// exposed 5 gets another chance instead of shipping a 5-photo tour.
+const GALLERY_LOOKS_COMPLETE = 12;
+
+/* v62.19: what the page CLAIMS to hold. Zillow states it in the meta
+   description ("Zillow has 73 photos of this $1,130,000 3 beds..."), which
+   survives even on a thin above-the-fold render — so it is a reliable
+   expectation to measure our extraction against, and the honest number to
+   show the customer when we come up short. */
+export function expectedPhotoCount(html) {
+  const text = String(html);
+  const sane = (n) => (Number.isFinite(n) && n >= 2 && n <= 300 ? n : 0);
+  const meta = text.match(/\bhas\s+(\d{1,3})\s+photos?\b/i);
+  if (meta && sane(Number(meta[1]))) return Number(meta[1]);
+  const json = text.match(/"photo(?:Count|s_?count)"\s*:\s*(\d{1,3})\b/i);
+  if (json && sane(Number(json[1]))) return Number(json[1]);
+  const label = text.match(/>\s*(\d{1,3})\s+photos?\b/i);
+  if (label && sane(Number(label[1]))) return Number(label[1]);
+  return 0;
+}
 
 /* v62.3 MAX-RES PHOTO UPGRADE — the render is only as sharp as its inputs,
    and on the Kling v3 pro (1080p-class) tier the imported photo is the
@@ -303,7 +336,18 @@ function extractPagePhotos(html) {
   // Portals embed the full gallery in JSON script blobs with escaped
   // slashes ("https:\/\/photos...") — the visible <img> tags are only the
   // first few. Unescape before matching so we see the whole gallery.
-  const text = String(html).replace(/\\\//g, "/").replace(/\\u002[fF]/g, "/");
+  // v62.19: unescape to a FIXED POINT, not once. Zillow's preloaded Apollo
+  // cache is JSON embedded inside a JSON *string*, so its photo URLs arrive
+  // double-escaped ("https:\\/\\/photos..."); one pass leaves a stray
+  // backslash, and the URL character class deliberately excludes
+  // backslashes, so every one of those matches was silently lost. Bounded
+  // at 3 passes — this only ever rewrites \/ and /.
+  let text = String(html);
+  for (let pass = 0; pass < 3; pass++) {
+    const next = text.replace(/\\\//g, "/").replace(/\\u002[fF]/g, "/");
+    if (next === text) break;
+    text = next;
+  }
   // Portal CDNs first — these are the full-size listing photos.
   for (const m of text.matchAll(PHOTO_CDN_RE)) {
     let url = m[0];
@@ -512,6 +556,10 @@ export default async function handler(request, response) {
   // Page photos — best-effort; portals often block datacenter fetches.
   let pagePhotoUrls = [];
   let photoSource = "none";
+  // v62.19: how many photos the listing page SAYS it has. This is the only
+  // way to tell "this listing has 5 photos" from "we only reached 5 of 73" —
+  // and those two need completely different responses from us.
+  let expectedPhotos = 0;
   if (rc.photos.length > 0) {
     // Licensed media is typically full-size already — no rewrite, no fallback.
     pagePhotoUrls = rc.photos.slice(0, MAX_PHOTOS).map((u) => ({ url: u, fallbackUrl: "" }));
@@ -532,22 +580,58 @@ export default async function handler(request, response) {
       // its pages are SSR'd — so skip JS rendering there and escalate the
       // proxy tier instead (premium 10cr → ultra_premium 30cr, mutually
       // exclusive params per ScraperAPI docs). Zillow/Redfin stay on the
-      // proven render=true path (10cr). Each attempt gets a shorter budget
-      // so two tiers still fit the 120s function ceiling.
+      // proven render=true path (10cr).
+      //
+      // v62.19 (Troy, 8725 E Via De Dorado: "the URL scraper only grabbed 5
+      // photos" — the page advertises 73). TWO bugs met here:
+      //   1. This loop broke on `if (html) break` — on HAVING HTML, not on
+      //      having a GALLERY. A tier that returns 200 with a bot-wall or a
+      //      thin above-the-fold page ended the ladder, so realtor.com's
+      //      ultra_premium escalation has been dead code since v58.2 and
+      //      Zillow had no second tier at all.
+      //   2. render=true returns the HYDRATED DOM. Zillow mounts only the
+      //      hero grid (1 + 4 tiles = the 5 Troy got) and loads the rest of
+      //      the gallery on interaction — while the un-rendered SSR HTML
+      //      carries the whole set in its JSON blob. Rendering the page can
+      //      therefore see FEWER photos than not rendering it.
+      // Now every tier is scored by how many photos it actually yields, the
+      // best result wins, and the ladder stops early only once the gallery
+      // looks complete against the count the page itself advertises.
       const tiers = /(^|\.)realtor\.com$/.test(host)
         ? ["premium=true", "ultra_premium=true"]
-        : ["render=true"];
-      const perAttemptMs = tiers.length > 1 ? 35000 : PROXY_PAGE_TIMEOUT_MS;
+        : ["render=true", "premium=true"];
+      // maxDuration is 60s and photo downloads still have to run, so the
+      // page phase gets a hard deadline rather than a per-attempt budget
+      // that can overrun it (2 x 35s already exceeded the function ceiling).
+      const pagePhaseDeadline = t0 + 40000;
       for (const tier of tiers) {
+        const remainingMs = pagePhaseDeadline - Date.now();
+        if (remainingMs < 12000) {
+          console.log(`[import] page phase out of budget — skipping ${tier.split("=")[0]} tier.`);
+          break;
+        }
         try {
           const prox = await fetchWithTimeout(
             `https://api.scraperapi.com/?api_key=${encodeURIComponent(proxyKey)}&url=${encodeURIComponent(url)}&${tier}&country_code=us`,
             { redirect: "follow" },
-            perAttemptMs
+            Math.min(PROXY_PAGE_TIMEOUT_MS, remainingMs)
           );
           if (prox.ok) {
-            html = await prox.text();
-            if (html) break;
+            const body = await prox.text();
+            if (body) {
+              const found = extractPagePhotos(body);
+              expectedPhotos = Math.max(expectedPhotos, expectedPhotoCount(body));
+              console.log(`[import] tier ${tier.split("=")[0]}: ${found.length} photo URL(s); page advertises ${expectedPhotos || "?"}.`);
+              // Keep the richest gallery, and the html that produced it.
+              if (found.length > pagePhotoUrls.length || !html) {
+                if (found.length >= pagePhotoUrls.length) pagePhotoUrls = found;
+                html = body;
+              }
+              // Enough = the advertised count (capped at what we can store),
+              // or a plausibly-complete gallery when the page never says.
+              const enough = Math.min(MAX_PHOTOS, expectedPhotos || GALLERY_LOOKS_COMPLETE);
+              if (pagePhotoUrls.length >= enough) break;
+            }
           } else {
             warnings.push(`Photo proxy (${tier.split("=")[0]}) returned ${prox.status}.`);
           }
@@ -556,26 +640,34 @@ export default async function handler(request, response) {
         }
       }
     }
-    if (!html) {
+    // Direct fetch is the no-key dev path and the last resort — only worth
+    // trying when the proxy ladder produced no gallery at all.
+    if (pagePhotoUrls.length === 0) {
       try {
         const page = await fetchWithTimeout(url, { headers: BROWSER_HEADERS, redirect: "follow" }, PAGE_TIMEOUT_MS);
-        if (page.ok) html = await page.text();
-        else warnings.push(`The listing page couldn't be read (${page.status}) — add photos manually.`);
+        if (page.ok) {
+          const body = await page.text();
+          if (body) {
+            const found = extractPagePhotos(body);
+            expectedPhotos = Math.max(expectedPhotos, expectedPhotoCount(body));
+            if (found.length > 0 || !html) html = body;
+            if (found.length > pagePhotoUrls.length) pagePhotoUrls = found;
+          }
+        } else {
+          warnings.push(`The listing page couldn't be read (${page.status}) — add photos manually.`);
+        }
       } catch {
         warnings.push("The listing page couldn't be read — add photos manually.");
       }
     }
-    if (html) {
-      pagePhotoUrls = extractPagePhotos(html);
-      if (pagePhotoUrls.length > 0) photoSource = proxyKey ? "listing_page_proxy" : "listing_page";
+    if (pagePhotoUrls.length > 0) photoSource = proxyKey ? "listing_page_proxy" : "listing_page";
+    if (html && !address) {
       // v58.2: ID-only links (realtor.com M-ids) carry no address — pull it
       // from the page markup, then backfill facts from RentCast.
-      if (!address) {
-        address = extractAddressFromHtml(html);
-        if (address) {
-          const late = await rentcastFacts(address.query);
-          rc = { facts: late.facts, photos: rc.photos };
-        }
+      address = extractAddressFromHtml(html);
+      if (address) {
+        const late = await rentcastFacts(address.query);
+        rc = { facts: late.facts, photos: rc.photos };
       }
     }
   }
@@ -601,6 +693,19 @@ export default async function handler(request, response) {
     }
   }
 
+  // v62.19: say it out loud when the portal held photos back. Five photos
+  // off a 73-photo listing looks identical, in the UI, to a listing that
+  // only has five — and the agent reasonably assumes the second. Comparing
+  // against the page's own advertised count is the difference between a
+  // silent bad import and one the customer can act on.
+  const shortfall = expectedPhotos - stored.length;
+  if (expectedPhotos > 0 && stored.length > 0 && shortfall >= 3 && stored.length < MAX_PHOTOS) {
+    warnings.push(
+      `This listing has ${expectedPhotos} photos but the page only exposed ${stored.length} to us — ` +
+      `drag the rest in to build a fuller tour.`
+    );
+  }
+
   // v58.2: one structured line per import — Vercel logs are otherwise blind
   // to WHY a portal produced zero photos (warnings only ship in the response
   // body, which the UI drops). This is the black box recorder.
@@ -610,6 +715,12 @@ export default async function handler(request, response) {
       status,
       photoSource,
       photos: stored.length,
+      // v62.19: the three numbers that make a thin import diagnosable from
+      // the log alone — what the page claims, what we extracted, what
+      // survived download+dedupe. Without `expected` there is no way to
+      // tell a 5-photo listing from a 5-of-73 extraction failure.
+      expected: expectedPhotos || null,
+      urlsFound: pagePhotoUrls.length,
       address: address ? address.display : null,
       warnings,
       ms: Date.now() - t0
