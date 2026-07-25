@@ -462,13 +462,28 @@ function ImportListingBand() {
       if (planDropped > 0) excluded.push(`${planDropped} plan/document sheet${planDropped === 1 ? "" : "s"}`);
       if (lowResDropped > 0) excluded.push(`${lowResDropped} low-res photo${lowResDropped === 1 ? "" : "s"}`);
       const planNote = excluded.length ? ` (${excluded.join(" and ")} excluded)` : "";
+      // v62.20: the server's warnings were being thrown away. api/import-
+      // listing.js has pushed a `warnings` array since v58.2 — proxy tier
+      // failures, transfer failures, and as of v62.19 the shortfall line
+      // ("This listing has 73 photos but the page only exposed 5") — and
+      // this screen never read the field. That is why a five-of-seventy-
+      // three import looked exactly like a five-photo listing: the app HAD
+      // the explanation and dropped it on the floor. The shortfall is the
+      // one the customer can act on, so it leads.
+      const serverWarnings = (result.warnings || []).filter((w) => typeof w === "string" && w.trim());
+      const shortfallNote = serverWarnings.find((w) => /only exposed/i.test(w)) || "";
+      if (serverWarnings.length > 0) {
+        console.info(`[import] server warnings: ${serverWarnings.join(" | ")}`);
+      }
       // v62.17: when EVERY imported image was excluded, say why. The old
       // zero-case message ("add your photos") read as "we found nothing",
       // which is a different and more alarming thing than "we found only
       // floor plans and thumbnails and left them out".
       setToast(
         finalPhotos.length > 0
-          ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote}${planNote} — review and render.`
+          ? shortfallNote
+            ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${planNote}. ${shortfallNote}`
+            : `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote}${planNote} — review and render.`
           : planNote
             ? `Listing details imported${planNote} — no usable photos, so add your own and render.`
             : "Listing details imported — add your photos and render."

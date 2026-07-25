@@ -348,25 +348,34 @@ function extractPagePhotos(html) {
     if (next === text) break;
     text = next;
   }
+  // v62.20: count what each guard throws away. Measured against the live
+  // Scottsdale page, the shipped extractor pulls the full 24 out of a REAL
+  // browser's HTML — so when production yields 5, the proxy is handing us a
+  // different document, and the only way to see its shape from a serverless
+  // log is to count the rejections. `cc_ft<576` is the tell: if the reduced
+  // page carries the gallery only as thumbnails, that counter will be large
+  // while `kept` stays tiny, and the fix is to upgrade those rather than
+  // drop them. Costs nothing; ends the guessing.
+  const rejected = { thumb: 0, chrome: 0, nonPhoto: 0, offPath: 0 };
   // Portal CDNs first — these are the full-size listing photos.
   for (const m of text.matchAll(PHOTO_CDN_RE)) {
     let url = m[0];
     // Skip obvious thumbnails when a size hint is embedded in the URL.
-    if (/cc_ft_(\d+)/.test(url) && Number(url.match(/cc_ft_(\d+)/)[1]) < 576) continue;
-    if (/[-_](\d{2,3})x(\d{2,3})\./.test(url)) continue;
+    if (/cc_ft_(\d+)/.test(url) && Number(url.match(/cc_ft_(\d+)/)[1]) < 576) { rejected.thumb++; continue; }
+    if (/[-_](\d{2,3})x(\d{2,3})\./.test(url)) { rejected.thumb++; continue; }
     // v58.3: portal CDNs serve SITE ASSETS from the same hosts as listing
     // photos — m74 shipped a scene animating the REDFIN LOGO (captioned
     // "Living area"; QC passed it because the video faithfully matched its
     // source "photo"). Listing photos live under known path prefixes; site
     // chrome does not.
-    if (/zillowstatic\.com/i.test(url) && !/\/fp\//.test(url)) continue;
-    if (/cdn-redfin\.com/i.test(url) && !/\/photo\//i.test(url)) continue;
-    if (/logo|icon|sprite|badge|avatar|headshot|favicon|app-?store|play-?store|banner/i.test(url)) continue;
+    if (/zillowstatic\.com/i.test(url) && !/\/fp\//.test(url)) { rejected.offPath++; continue; }
+    if (/cdn-redfin\.com/i.test(url) && !/\/photo\//i.test(url)) { rejected.offPath++; continue; }
+    if (/logo|icon|sprite|badge|avatar|headshot|favicon|app-?store|play-?store|banner/i.test(url)) { rejected.chrome++; continue; }
     // v62.5: non-photo listing media — floor plans, site plans, surveys,
     // plats, brochures, elevation sheets — must never become video scenes
     // (the angry-customer class). URL keywords are the free first net; the
     // curation Vision pass (contentType gate) catches unlabeled ones.
-    if (/floor-?plan|site-?plan|survey|plat[-_.]|blueprint|brochure|flyer|elevation|schematic|diagram/i.test(url)) continue;
+    if (/floor-?plan|site-?plan|survey|plat[-_.]|blueprint|brochure|flyer|elevation|schematic|diagram/i.test(url)) { rejected.nonPhoto++; continue; }
     const { best, key } = maximizePhotoUrl(url);
     if (!found.has(key)) {
       found.set(key, { url: best, fallbackUrl: best === url ? "" : url });
@@ -383,6 +392,11 @@ function extractPagePhotos(html) {
   const photos = [...found.values()].slice(0, MAX_PHOTOS);
   const upgraded = photos.filter((p) => p.fallbackUrl).length;
   if (upgraded > 0) console.log(`[import] photo max-res upgrade: ${upgraded}/${photos.length} URLs rewritten to full-size tiers.`);
+  // v62.20: a thin result is only diagnosable next to what was discarded.
+  if (photos.length < GALLERY_LOOKS_COMPLETE) {
+    console.log(`[import] THIN GALLERY: kept ${photos.length}, page bytes ${Math.round(String(html).length / 1024)}KB, rejected ${JSON.stringify(rejected)}`);
+  }
+  photos.rejected = rejected;
   return photos;
 }
 
@@ -597,9 +611,18 @@ export default async function handler(request, response) {
       // Now every tier is scored by how many photos it actually yields, the
       // best result wins, and the ladder stops early only once the gallery
       // looks complete against the count the page itself advertises.
-      const tiers = /(^|\.)realtor\.com$/.test(host)
-        ? ["premium=true", "ultra_premium=true"]
-        : ["render=true", "premium=true"];
+      // v62.20 — MEASURED, not guessed. Loaded the Scottsdale page in a real
+      // browser and counted: the full gallery (85 distinct photo hashes) is
+      // already in the SSR HTML, inside __NEXT_DATA__; only 16 appear in
+      // <img> tags. Running the SHIPPED extractor against that document
+      // returns the full 24. So parsing was never the problem, and JS
+      // rendering buys nothing — the gallery is server-rendered. What
+      // render=true DOES buy is a headless-browser fingerprint, which is
+      // among the easiest things for Zillow to challenge, and 10 credits.
+      // Every portal now gets the residential ladder realtor.com already
+      // used: a trusted IP first, a more expensive one if the page comes
+      // back thin.
+      const tiers = ["premium=true", "ultra_premium=true"];
       // maxDuration is 60s and photo downloads still have to run, so the
       // page phase gets a hard deadline rather than a per-attempt budget
       // that can overrun it (2 x 35s already exceeded the function ceiling).
