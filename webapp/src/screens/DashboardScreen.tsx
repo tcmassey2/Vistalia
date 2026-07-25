@@ -360,9 +360,29 @@ function ImportListingBand() {
       if (planDropped > 0) {
         console.info(`[import] dropped ${planDropped} plan/document image(s) — paper-white background detected.`);
       }
+      // v62.15 LOW-RES GATE (Troy: "a low res example snuck in"). The
+      // importer only ever checked BYTE size — an 800x600 thumbnail passes
+      // the 8KB floor comfortably. Pixels are what matter, and doubly so
+      // now that v62.10 crops the photo to 9:16 before generation: a small
+      // source gets cropped AND upscaled, so one weak photo reads as a
+      // visibly soft scene next to sharp ones. Two rules: a hard floor for
+      // genuinely unusable images, and a relative rule that catches the odd
+      // one out in an otherwise good set (the case Troy actually saw).
+      const areas = probes.filter((pr) => !pr.paperLike).map((pr) => pr.width * pr.height).sort((a, b) => a - b);
+      const medianArea = areas.length ? areas[Math.floor(areas.length / 2)] : 0;
+      const isLowRes = (pr: { width: number; height: number }) => {
+        const shortSide = Math.min(pr.width, pr.height);
+        if (shortSide < 512) return true;                                   // unusable outright
+        if (medianArea > 0 && pr.width * pr.height < medianArea * 0.4 && shortSide < 900) return true; // the odd one out
+        return false;
+      };
+      const lowResDropped = probes.filter((pr, i) => !probes[i].paperLike && isLowRes(pr)).length;
+      if (lowResDropped > 0) {
+        console.info(`[import] dropped ${lowResDropped} low-resolution photo(s) — too small to hold up beside the rest of the set.`);
+      }
       const photos: Photo[] = imported
         .map((p, i) => ({ p, probe: probes[i], i }))
-        .filter(({ probe }) => !probe.paperLike)
+        .filter(({ probe }) => !probe.paperLike && !isLowRes(probe))
         .map(({ p, probe }, i) => ({
           id: `imported-${projectId}-${i}`,
           fileName: p.fileName,
@@ -429,9 +449,10 @@ function ImportListingBand() {
         photos: finalPhotos
       });
       setPct(100);
-      const planNote = planDropped > 0
-        ? ` (${planDropped} plan/document sheet${planDropped === 1 ? "" : "s"} excluded)`
-        : "";
+      const excluded: string[] = [];
+      if (planDropped > 0) excluded.push(`${planDropped} plan/document sheet${planDropped === 1 ? "" : "s"}`);
+      if (lowResDropped > 0) excluded.push(`${lowResDropped} low-res photo${lowResDropped === 1 ? "" : "s"}`);
+      const planNote = excluded.length ? ` (${excluded.join(" and ")} excluded)` : "";
       setToast(
         finalPhotos.length > 0
           ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote}${planNote} — review and render.`

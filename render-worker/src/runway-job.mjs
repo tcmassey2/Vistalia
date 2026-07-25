@@ -2124,14 +2124,28 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // refuses input==output ("cannot edit in-place") and logs 9 scary-but-
     // harmless errors per re-stitch. Already-stabilized clips skip.
     const alreadyStabilized = /\bstab-\d{3}\.mp4$/.test(String(clip.clipPath || ""));
-    // v62.11: gimbal pass DEFAULT-ON again — this is what the Spanish
-    // colonial master shipped with ([stab] fired on all 9 of its scenes;
-    // the 40th St render that Troy called a disaster has no [stab] lines
-    // at all). v62.2 turned it off on the theory that smoothing=35 was
-    // sanding down the aggressive prompt's swoops; with that prompt
-    // reverted there is nothing to protect and the v60.9 walk-tremor fix
-    // is worth more. KLING_STABILIZE=0 disables if it ever needs testing.
-    if (klingClip && !alreadyStabilized && !clip.fallback && !clip.usedPhotoMotionFloor && !clip.preNormalized && String(process.env.KLING_STABILIZE || "1") !== "0") {
+    // v62.15 GIMBAL AUTO-OFF WHEN THE SOURCE IS ALREADY DELIVERY-ASPECT.
+    // Measured (Troy: "super clunky/jittery"): jerk ratio — mean|2F(n) −
+    // F(n−1) − F(n+1)| over mean|F(n) − F(n−1)|, i.e. how much the motion
+    // changes DIRECTION frame to frame — came in at 1.25 on the first
+    // render carrying both vidstab and v62.10, against 0.79 (Spanish, стаб
+    // on, landscape source) and 0.84 (40th St, stab off). ~50% jerkier.
+    // Why the pass turned harmful without changing: it was always safe
+    // because normalize then cropped ~60% of the width away and upscaled
+    // 2.45x — that discarded the frame edges where vidstab's warping and
+    // border fill live, and blurred its high-frequency corrections into
+    // nothing. With v62.10 the generated clip IS the delivered frame, so
+    // every correction is visible at full res, optzoom's dynamic rescale
+    // included (that one literally breathes). vidstab is also correcting
+    // "shake" that a generative model never had — it is inventing motion
+    // to cancel. So: gimbal defaults OFF whenever delivery-aspect sourcing
+    // is active, ON when we're back to landscape sourcing (where it earns
+    // its keep against the v60.9 walk tremor). KLING_STABILIZE overrides.
+    const deliveryAspectSourcing =
+      /kling/i.test(process.env.FAL_VIDEO_MODEL || "") &&
+      String(process.env.KLING_VERTICAL_SOURCE || "1") !== "0";
+    const stabDefault = deliveryAspectSourcing ? "0" : "1";
+    if (klingClip && !alreadyStabilized && !clip.fallback && !clip.usedPhotoMotionFloor && !clip.preNormalized && String(process.env.KLING_STABILIZE || stabDefault) !== "0") {
       const trfPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.trf`);
       const stabPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
       try {
