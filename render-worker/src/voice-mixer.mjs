@@ -220,7 +220,15 @@ async function voiceOnlyAudioFilter(narrationTrackPath) {
   return `[1:a:0]volume=${voiceGainDb.toFixed(1)}dB,alimiter=limit=0.841:level=false[aout]`;
 }
 
-export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, crossfadeOverlapSec = 0, narrationScript = "", brandKit, tempDir, jobId, onProgress, captionsEnabled = true, captionsVariant = "luxury" }) {
+export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByPhoto, crossfadeOverlapSec = 0, narrationScript = "", brandKit, tempDir, jobId, onProgress, captionsEnabled = true, captionsVariant = "luxury",
+  // v62.18: the master's real canvas. ASS subtitle files carry FIXED play
+  // dimensions — a track authored for 1080x1920 and burned into a 1080x1080
+  // master puts every caption line roughly 800px below the bottom of the
+  // frame, i.e. invisible, with no error anywhere. This is the LEGACY
+  // narration path (voice-first's fallback), so it was the one place a
+  // square render could still silently lose its captions. Defaults to
+  // vertical: every existing caller keeps its exact behavior.
+  deliveryDims = { width: 1080, height: 1920 } }) {
   // v26.9: actual rendered clip duration per scene (keyed by photoId). When
   // present it overrides the manifest's stated duration so narration timing
   // matches the real video exactly — the single biggest narration-sync fix.
@@ -269,7 +277,10 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
         return await applyAlignedNarration({
           masterMp4, photoScenes, realDur, crossfadeOverlapSec,
           lines: alignedLines, voiceId, tempDir, jobId, onProgress,
-          captionsEnabled, captionsVariant
+          captionsEnabled, captionsVariant,
+          // v62.18: the caption canvas travels with the master (see the
+          // deliveryDims note on applyVoiceNarration above).
+          deliveryDims
         });
       } catch (err) {
         // v34.1: LOUD failure with the real cause — this error was being
@@ -617,7 +628,12 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
    v33 — aligned-continuous narration
    ============================================================ */
 
-async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfadeOverlapSec, lines, voiceId, tempDir, jobId, onProgress, captionsEnabled = true, captionsVariant = "luxury" }) {
+async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfadeOverlapSec, lines, voiceId, tempDir, jobId, onProgress, captionsEnabled = true, captionsVariant = "luxury",
+  // v62.18: master canvas for the caption ASS geometry. The default matters
+  // — this function is also the fallback the whole legacy path funnels
+  // through, and an undefined here throws inside the caption try/catch,
+  // which fails OPEN to "no captions at all" without a visible error.
+  deliveryDims = { width: 1080, height: 1920 } }) {
   // Visible timeline (same model as everywhere): scene k starts at the sum
   // of visible durations before it.
   const sceneStarts = [];
@@ -821,12 +837,18 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
         }
       }
       if (words.length) {
+        // v62.18: authored at the MASTER's dimensions (see deliveryDims).
         captionsAssPath = path.join(tempDir, `${jobId}-captions-v.ass`);
         captionsSquareAssPath = path.join(tempDir, `${jobId}-captions-sq.ass`);
-        await fs.writeFile(captionsAssPath, buildCaptionsAss({ words, playW: 1080, playH: 1920, variant: captionsVariant }));
+        await fs.writeFile(captionsAssPath, buildCaptionsAss({
+          words, playW: deliveryDims.width, playH: deliveryDims.height, variant: captionsVariant
+        }));
         await fs.writeFile(captionsSquareAssPath, buildCaptionsAss({ words, playW: 1080, playH: 1080, variant: captionsVariant }));
+        // A square master burns the master track itself; the separate square
+        // track exists only for the derived-square variant of a 9:16 master.
+        if (deliveryDims.width === deliveryDims.height) captionsSquareAssPath = null;
         console.info(
-          `[captions] ${words.length} words → ${path.basename(captionsAssPath)} (word-synced, skin=${captionsVariant})` +
+          `[captions] ${words.length} words → ${path.basename(captionsAssPath)} at ${deliveryDims.width}x${deliveryDims.height} (word-synced, skin=${captionsVariant})` +
           (wordsDroppedByTrim ? ` — ${wordsDroppedByTrim} word${wordsDroppedByTrim === 1 ? "" : "s"} dropped past audio trim` : "")
         );
       }
@@ -1204,7 +1226,12 @@ async function pMap(items, fn, { concurrency = 4 } = {}) {
 export async function applyVoiceFirstMix({
   masterMp4, voiceFirst, photoScenes, sceneDurationsByPhoto,
   crossfadeOverlapSec = 0, tempDir, jobId, onProgress,
-  captionsEnabled = true, captionsVariant = "luxury"
+  captionsEnabled = true, captionsVariant = "luxury",
+  // v62.18: the master is no longer always 9:16 — square is a first-class
+  // delivery format now, generated natively. Captions are rendered against
+  // fixed ASS play dimensions, so burning the 1080x1920 track into a
+  // 1080x1080 master would place every line off the bottom of the frame.
+  deliveryDims = { width: 1080, height: 1920 }
 }) {
   const { grid, audioPath, captionWords, sentences } = voiceFirst || {};
   if (!grid || !audioPath) throw new Error("voice-first mix called without a prepared stem");
@@ -1254,21 +1281,30 @@ export async function applyVoiceFirstMix({
   ], { timeoutMs: 120000, label: "voice:first-track" });
 
   // ── Word-synced captions (no trim path exists — every word is audible) ─
+  // v62.18: `captionsAssPath` is the track burned into THIS master, so it
+  // is built at the master's own dimensions. The square file stays a
+  // separate output for the derived 1:1 variant (includeSquare), which is
+  // recomposed from the same clips at 1080x1080.
   let captionsAssPath = null;
   let captionsSquareAssPath = null;
+  const masterIsSquare = deliveryDims.width === deliveryDims.height;
   if (captionsEnabled && Array.isArray(captionWords) && captionWords.length) {
     try {
-      captionsAssPath = path.join(tempDir, `${jobId}-captions-v.ass`);
+      captionsAssPath = path.join(tempDir, `${jobId}-captions-master.ass`);
       captionsSquareAssPath = path.join(tempDir, `${jobId}-captions-sq.ass`);
-      await fs.writeFile(captionsAssPath, buildCaptionsAss({ words: captionWords, playW: 1080, playH: 1920, variant: captionsVariant }));
+      await fs.writeFile(captionsAssPath, buildCaptionsAss({
+        words: captionWords, playW: deliveryDims.width, playH: deliveryDims.height, variant: captionsVariant
+      }));
       await fs.writeFile(captionsSquareAssPath, buildCaptionsAss({ words: captionWords, playW: 1080, playH: 1080, variant: captionsVariant }));
-      console.info(`[captions] ${captionWords.length} words → ${path.basename(captionsAssPath)} (voice-first, skin=${captionsVariant})`);
+      console.info(`[captions] ${captionWords.length} words → ${path.basename(captionsAssPath)} at ${deliveryDims.width}x${deliveryDims.height} (voice-first, skin=${captionsVariant})`);
     } catch (err) {
       console.warn(`[captions] build failed open (${err.message}) — shipping without captions.`);
       captionsAssPath = null;
       captionsSquareAssPath = null;
     }
   }
+  // When the master IS square, the derived-variant file is redundant.
+  if (masterIsSquare) captionsSquareAssPath = null;
 
   // ── Duck windows: sentence spans (merged across short breaths) ────────
   const spans = (grid.sentenceSpansSec || []).filter(Boolean)

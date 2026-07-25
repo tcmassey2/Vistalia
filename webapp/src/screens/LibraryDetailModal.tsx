@@ -52,6 +52,16 @@ export default function LibraryDetailModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // v62.18: a render ships as 9:16 OR 1:1 now, so this whole modal can no
+  // longer assume vertical. Two signals, in order of authority:
+  //   1. the video file itself (onLoadedMetadata below) — always true, but
+  //      only known after the player fetches its header;
+  //   2. renderConfig.exportFormat, persisted by the worker's audit row.
+  // Rows written before v62.18 have neither field, and every one of those
+  // masters IS vertical — so `false` is the correct default, not a guess.
+  const [measuredSquare, setMeasuredSquare] = useState<boolean | null>(null);
+  const isSquare = measuredSquare ?? entry.renderConfig?.exportFormat === "square";
+
   // Library entries don't carry the full formats/shorts URL set right
   // now — the audit log only stores master_mp4_url + thumbnail_url. So
   // we infer the variant + short URLs from the master URL pattern,
@@ -161,6 +171,15 @@ export default function LibraryDetailModal({
               controls
               playsInline
               poster={bust(entry.thumbnailUrl)}
+              // v62.18: the file's own header is the only unarguable source
+              // for what shape shipped. object-contain already centers any
+              // aspect correctly, so this only drives the labels below.
+              onLoadedMetadata={(e) => {
+                const el = e.currentTarget;
+                if (el.videoWidth > 0 && el.videoHeight > 0) {
+                  setMeasuredSquare(Math.abs(el.videoWidth / el.videoHeight - 1) < 0.08);
+                }
+              }}
               className="block w-auto h-auto max-w-full max-h-[65vh] object-contain"
             />
           </div>
@@ -185,16 +204,23 @@ export default function LibraryDetailModal({
             ignored cross-origin and used to NAVIGATE to the mp4). */}
         <div className="px-6 sm:px-8 mt-6 flex flex-col gap-2.5">
           <h3 className="text-sm font-semibold tracking-tightish">Downloads</h3>
+          {/* v62.18: the master slot holds whatever shape was rendered —
+              label it from the file, not from the old vertical-only
+              assumption. A square master downloaded as "...-vertical.mp4"
+              under a "9:16" pill is the kind of small lie that makes an
+              agent distrust the whole library. */}
           <DeliverablePill
-            label="Vertical · 9:16"
-            sublabel="Instagram Reels · TikTok · YouTube Shorts"
+            label={isSquare ? "Square · 1:1" : "Vertical · 9:16"}
+            sublabel={isSquare ? "Instagram & Facebook feed" : "Instagram Reels · TikTok · YouTube Shorts"}
             url={inferredUrls.vertical}
-            filename={deliverableFilename(heading, "vertical")}
+            filename={deliverableFilename(heading, isSquare ? "square" : "vertical")}
           />
           {/* v35.1: square is opt-in per render — only show the pill when
               this render actually produced it (formatsCount counts the
-              uploaded variants; vertical-only renders have 1). */}
-          {entry.formatsCount >= 2 && inferredUrls.square && (
+              uploaded variants; vertical-only renders have 1).
+              v62.18: never alongside a square master — there the master IS
+              the 1:1, and the derived-square pass is retired. */}
+          {!isSquare && entry.formatsCount >= 2 && inferredUrls.square && (
             <DeliverablePill
               label="Square · 1:1"
               sublabel="Instagram & Facebook feed"
@@ -325,7 +351,12 @@ function RenderDetailsPanel({ entry }: { entry: LibraryEntry }) {
     ? (cfg.captionsApplied === false || cfg.captionsEnabled === false ? "Off" : "Word-synced")
     : "—";
   const lengthValue = cfg.targetDurationSec ? `~${cfg.targetDurationSec}s tour` : "";
-  const formatsValue = entry.formatsCount >= 2 ? "9:16 vertical + 1:1 square" : "9:16 vertical";
+  // v62.18: state the shape this render actually shipped. formatsCount is
+  // NOT a reliable "+1:1" signal — it counts uploaded variant keys, and a
+  // free-trial render uploads a `clean` master alongside the marked one, so
+  // every trial render counted 2. Since the derived square is retired, the
+  // only honest answer is the master's own format.
+  const formatsValue = entry.renderConfig?.exportFormat === "square" ? "1:1 square" : "9:16 vertical";
 
   const facts: Array<{ label: string; value: string }> = [
     { label: "Style", value: styleLabel },
@@ -925,7 +956,9 @@ function buildRegenManifest(
   return {
     app: "Vistalia",
     engine: "runway",
-    exportFormat: "vertical",
+    // v62.18: see the runwayConfig.ratio note below — a regen must re-stitch
+    // in the master's own shape, not an assumed 9:16.
+    exportFormat: entry.renderConfig?.exportFormat === "square" ? "square" : "vertical",
     project: {
       id: entry.jobId,
       userId,
@@ -961,9 +994,13 @@ function buildRegenManifest(
     selectedStyle: entry.renderConfig?.selectedStyle || "Cinematic Luxury",
     musicTrack: entry.renderConfig?.musicTrack || undefined,
     captionsEnabled: entry.renderConfig?.captionsEnabled,
+    // v62.18: ratio was hardcoded "9:16". Regenerating one scene re-stitches
+    // the WHOLE video at this aspect — so on a square render the customer
+    // clicked "fix this scene" and got their 1:1 video back as a 9:16 one.
+    // Rows written before v62.18 carry no exportFormat and are all vertical.
     runwayConfig: {
       model: "gen4_turbo",
-      ratio: "9:16",
+      ratio: entry.renderConfig?.exportFormat === "square" ? "1:1" : "9:16",
       useCrossfades: entry.renderConfig?.useCrossfades !== false
     },
     brandKit: branding,

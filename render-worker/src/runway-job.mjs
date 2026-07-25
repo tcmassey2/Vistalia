@@ -995,7 +995,12 @@ export async function renderRunwayJob(body, options = {}) {
         const visible = Math.max(0.8, (Number(clip.duration) || 4) - overlap);
         const scene = (manifest.scenes || []).find((s) => s.photoId === clip.photoId) || {};
         const photo = (manifest.orderedPhotos || []).find((p) => p.id === clip.photoId);
-        const srcUrl = pickImageUrl(scene, photo);
+        // v62.18: prefer the delivery-aspect crop the clip was GENERATED
+        // from. The sweep compares master frames against this photo, so it
+        // has to be the same slice of the room the master shows — the
+        // per-clip QC already does this (see qcSrcUrl below); the final
+        // sweep was the one comparator still looking at the raw landscape.
+        const srcUrl = scene.__deliveryAspectUrl || pickImageUrl(scene, photo);
         // Floor clips are deterministic — nothing to inspect. Skip them.
         if (srcUrl && !clip.fallback && !clip.usedPhotoMotionFloor) {
           // v43.2: a scene that shipped without a completed per-clip verdict
@@ -1013,7 +1018,9 @@ export async function renderRunwayJob(body, options = {}) {
             sceneIndex: clip.sceneIndex ?? i,
             roomType: scene.roomType || "",
             tempDir,
-            highScrutiny
+            highScrutiny,
+            // v62.18: crop the reference to the SAME frame the master ships.
+            deliveryDims: runwayDimensions(manifest)
           });
           // v43.1: at the FINAL gate, every flag is hard — motion included.
           // m29 proved the exemption wrong here: the sweep FAILed scenes 2
@@ -1122,6 +1129,9 @@ export async function renderRunwayJob(body, options = {}) {
           sceneDurationsByPhoto: actualDurationsByPhoto,
           crossfadeOverlapSec: manifest?.runwayConfig?.useCrossfades !== false ? 0.5 : 0,
           captionsEnabled: manifest?.captionsEnabled !== false,
+          // v62.18: square is a first-class delivery format now — captions
+          // must be laid out for the frame they're burned into.
+          deliveryDims: runwayDimensions(manifest),
           captionsVariant: /social|upbeat|modern|viral/i.test(
             `${manifest?.musicMood || ""} ${manifest?.selectedStyle || ""}`
           ) ? "bold" : "luxury",
@@ -1156,6 +1166,10 @@ export async function renderRunwayJob(body, options = {}) {
         applyVoiceNarration({
           masterMp4: finalMp4,
           scenes: manifest.scenes,
+          // v62.18: captions must be authored at the master's real canvas —
+          // this is the fallback path a square render lands on when
+          // voice-first can't build a grid.
+          deliveryDims: runwayDimensions(manifest),
           // v38: word-synced captions toggle (webapp Audio panel; default on)
           captionsEnabled: manifest?.captionsEnabled !== false,
           // v38.2: caption skin by video style. v43.4: test the UNION of
@@ -1226,6 +1240,12 @@ export async function renderRunwayJob(body, options = {}) {
   // lottery, zero fal cost. Fail-open direction is deliberate: if the mark
   // pass fails, the trial user gets a clean video (a generous one-off),
   // never a failed render.
+  // v62.18: the master is no longer always 9:16 — square is a first-class
+  // delivery format now (generated natively, not cropped). Every dimension
+  // below reads the manifest instead of assuming vertical; a 1080-wide
+  // watermark sized for a 1920-tall canvas lands wrong on a 1080 one.
+  const masterDims = runwayDimensions(manifest);
+  const masterIsSquare = masterDims.width === masterDims.height;
   let masterCleanPath = "";
   if (manifest.freeRenderWatermark) {
     try {
@@ -1233,7 +1253,7 @@ export async function renderRunwayJob(body, options = {}) {
       await runFFmpeg([
         "-y", "-threads", "1",
         "-i", masterForVariants,
-        "-vf", buildFreeRenderWatermark({ width: 1080, height: 1920 }),
+        "-vf", buildFreeRenderWatermark(masterDims),
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER,
         "-c:a", "copy",
@@ -1256,7 +1276,14 @@ export async function renderRunwayJob(body, options = {}) {
   // different aspect can re-render with exportFormat changed.
   // deriveAspectVariants + buildSocialShorts modules retained in
   // tree for the future-tier 'Pro Pack' SKU, but no longer called.
-  options.onProgress?.({ phase: "Building square format", progress: 86 });
+  // v62.18: the label has to match what actually happens next. A native
+  // square render skips the derived pass entirely (see the masterIsSquare
+  // throw below), and "Building square format" on a video that IS square
+  // reads as a stall on a step that never runs.
+  options.onProgress?.({
+    phase: masterIsSquare || manifest?.includeSquare !== true ? "Finalizing your video" : "Building square format",
+    progress: 86
+  });
   // v35 TRUE SQUARE (test-16): the derived 1:1 was a center crop of the
   // BAKED 9:16 master — it beheaded the corner badge, clipped card text,
   // and threw away 44% of every composition ("looks a little bit
@@ -1270,19 +1297,33 @@ export async function renderRunwayJob(body, options = {}) {
   // WIDE (16:9) IS RETIRED: from a vertical master it can only ever be a
   // pillarboxed 9:16 ("just a framed 9 by 16"). A real wide needs
   // per-aspect Veo generations — the post-launch Formats pack.
+  // v62.18: the `vertical` KEY is the master slot (legacy name — the webapp,
+  // the library and VARIANT_FILENAMES all key off it, so renaming it would
+  // orphan every finished job). Its `format`/`dimensions` now tell the truth
+  // about what's actually in the file. dimensions switched from {w,h} to
+  // {width,height} to match RenderFormatVariant in webapp types.ts, which
+  // has always declared {width,height}; readers tolerate both.
   let variants = {
-    vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } }
+    vertical: {
+      format: masterIsSquare ? "square" : "vertical",
+      path: masterForVariants,
+      dimensions: { width: masterDims.width, height: masterDims.height }
+    }
   };
   // v55: the clean master uploads alongside the marked deliverable (the
   // uploader names it clean.mp4 in the same job folder). Not referenced by
   // the job row — only the audit row carries it, and the library serves it
   // exclusively after purchase unlock.
   if (masterCleanPath) {
-    variants.clean = { format: "clean", path: masterCleanPath, dimensions: { w: 1080, h: 1920 } };
+    variants.clean = { format: "clean", path: masterCleanPath, dimensions: { width: masterDims.width, height: masterDims.height } };
   }
   // v35.1: square is OPT-IN (manifest.includeSquare from the webapp Formats
   // toggle). Default renders ship vertical-only and skip the ~2 min pass.
+  // v62.18: when the MASTER is already 1:1 this pass is dead work — it would
+  // recompose a square from source clips that are already square-framed and
+  // ship a byte-alike duplicate. The native square is the deliverable.
   try {
+    if (masterIsSquare) throw { skipSquare: true, nativeSquare: true };
     if (manifest?.includeSquare !== true) throw { skipSquare: true };
     const squareDir = path.join(tempDir, "square");
     await fs.mkdir(squareDir, { recursive: true });
@@ -1343,11 +1384,13 @@ export async function renderRunwayJob(body, options = {}) {
         console.warn(`[v55] square trial-mark failed (${err.message}) — shipping square unmarked.`);
       }
     }
-    variants.square = { format: "square", path: squareDeliverable, dimensions: { w: 1080, h: 1080 } };
+    variants.square = { format: "square", path: squareDeliverable, dimensions: { width: 1080, height: 1080 } };
     await fs.unlink(squareSilent).catch(() => {});
     console.info("[variants] TRUE 1:1 square composed from source clips (square-positioned branding, master audio muxed).");
   } catch (err) {
-    if (err && err.skipSquare) {
+    if (err && err.nativeSquare) {
+      console.info("[variants] master IS 1:1 (natively generated) — derived-square pass skipped.");
+    } else if (err && err.skipSquare) {
       console.info("[variants] square not requested — shipping vertical only.");
     } else {
       console.warn(`[variants] square recomposition failed (${err.message}) — shipping vertical only.`);
@@ -1696,7 +1739,14 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   const prompt = basePrompt + foliageLock + interiorLock + VEO_FIDELITY_SUFFIX;
 
   const config = manifest.runwayConfig || {};
-  const ratio = config.ratio === "16:9" || config.ratio === "wide" ? "16:9" : "9:16";
+  // v62.18: 1:1 used to collapse into "9:16" right here, so a square render
+  // asked the generator for a tall frame and then cropped it back — exactly
+  // the pixel loss v62.10 was built to end. Pass the real delivery shape;
+  // buildModelInput() is the layer that knows each model family's enum and
+  // maps 1:1 down where the family can't take it (Kling doesn't need it to).
+  const ratio = config.ratio === "16:9" || config.ratio === "wide" ? "16:9"
+    : config.ratio === "1:1" || config.ratio === "square" ? "1:1"
+    : "9:16";
   // v31 COGS pivot: generate at 720p in the smallest 4s/6s/8s bucket that
   // covers the scene, then upscale in the normalize pass (lanczos scale to the
   // 1080x1920 master + tuned grade). Rationale: the product ships to phone
@@ -1799,10 +1849,14 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
 */
 async function prepareDeliveryAspectSource(imageUrl, manifest, tempDir, sceneIndex) {
   const dims = runwayDimensions(manifest);
-  // Only worth doing when the delivery frame is NARROWER than a typical
-  // landscape photo — i.e. vertical/square masters. A 16:9 master already
-  // matches the source shape and gains nothing.
-  if (dims.width >= dims.height) return null;
+  // Worth doing whenever the delivery frame is NARROWER than a typical
+  // landscape photo — vertical AND square both qualify. Only a 16:9 master
+  // already matches the source shape and gains nothing.
+  // v62.18: was `>=`, which excluded square. Square is the same win in
+  // smaller print: a landscape clip covering 1080x1080 uses ~784x784 of
+  // generated pixels at a 1.38x upscale, while a natively square clip
+  // gives the full ~960x960 at 1.13x — about 1.5x more real pixels.
+  if (dims.width > dims.height) return null;
 
   const srcPath = path.join(tempDir, `vsrc-in-${String(sceneIndex).padStart(3, "0")}.img`);
   const outPath = path.join(tempDir, `vsrc-${String(sceneIndex).padStart(3, "0")}.jpg`);
@@ -1847,11 +1901,12 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
   const imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Fallback impossible — scene ${sceneIndex + 1} has no image URL.`);
 
-  const config = manifest.runwayConfig || {};
-  const ratio = config.ratio || "9:16";
-  const dimensions = ratio === "16:9" || ratio === "wide" ? { width: 1920, height: 1080 }
-                  : ratio === "1:1" || ratio === "square" ? { width: 1080, height: 1080 }
-                  : { width: 1080, height: 1920 };
+  // v62.18: was a local ratio resolver that read ONLY runwayConfig.ratio, so
+  // a manifest carrying exportFormat:"square" with no runwayConfig (the
+  // non-AI engine emits runwayConfig:null) rendered floor clips at 1080x1920
+  // — the stitch then cover-cropped them to 1:1 and the floor lost ~44% of
+  // its frame while every generated scene kept all of it. One resolver.
+  const dimensions = runwayDimensions(manifest);
   // v33.4: durationSec override — the QC floor needs the motion arc designed
   // for the scene's EXACT beat-snapped length. The legacy 5/10s quantization
   // (Quick Reel era) meant floors got trimmed mid-arc: slow half-finished

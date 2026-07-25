@@ -70,7 +70,15 @@ interface AppState {
   captionsEnabled: boolean;
   // v35.1: opt-in 1:1 square deliverable (adds ~2 min of render time —
   // most agents only want the 9:16). Default false.
+  // v62.18: superseded by outputFormat for new renders — square is now a
+  // primary format generated NATIVELY rather than a crop of the vertical
+  // master. Kept so in-flight/legacy manifests still behave.
   includeSquare: boolean;
+  // v62.18: the delivery aspect the whole render is built for. Kling has no
+  // aspect control — it returns a clip shaped like its input photo — so
+  // choosing here means the photo is cropped to this aspect BEFORE
+  // generation and every generated pixel lands in the delivered frame.
+  outputFormat: "vertical" | "square";
   // v50.7: twilight (blue-hour) color correction — softens heavy violet
   // casts on dusk photos. Default true; off = original color character.
   blueHourCorrection: boolean;
@@ -156,6 +164,7 @@ interface AppState {
   setNarrationEnabled: (enabled: boolean) => void;
   setCaptionsEnabled: (enabled: boolean) => void;
   setIncludeSquare: (enabled: boolean) => void;
+  setOutputFormat: (format: "vertical" | "square") => void;
   setBlueHourCorrection: (enabled: boolean) => void;
   setMusicEnabled: (enabled: boolean) => void;
   setMusicVolume: (volume: number) => void;
@@ -325,6 +334,13 @@ function loadStoredPrefs(): Record<string, unknown> {
     if (p.selectedStyleId && !KNOWN_STYLE_IDS.includes(String(p.selectedStyleId))) {
       delete p.selectedStyleId;
     }
+    // v62.18: same hazard, higher stakes — outputFormat is sent straight
+    // through as the render's exportFormat. A stale or hand-edited value
+    // ("wide", "") would render an aspect the UI has no button for and no
+    // way to explain. Only the two shipped shapes survive a reload.
+    if (p.outputFormat !== "vertical" && p.outputFormat !== "square") {
+      delete p.outputFormat;
+    }
     return p;
   } catch {
     return {};
@@ -358,6 +374,7 @@ const emptyProject = () => ({
   narrationEnabled: true,
   captionsEnabled: true,
   includeSquare: false,
+  outputFormat: "vertical" as "vertical" | "square",
   blueHourCorrection: true,
   musicEnabled: true,
   // 1.0 = use the worker's default musicBedLevel as-is. 0.0 = silent.
@@ -565,6 +582,13 @@ export const useStore = create<AppState>((set, get) => ({
   setNarrationEnabled: (enabled) => (set({ narrationEnabled: enabled, editPlan: null }), persistPrefs({ narrationEnabled: enabled })),
   setCaptionsEnabled: (enabled) => (set({ captionsEnabled: enabled }), persistPrefs({ captionsEnabled: enabled })),
   setIncludeSquare: (enabled) => (set({ includeSquare: enabled }), persistPrefs({ includeSquare: enabled })),
+  // v62.18: changing the delivery aspect invalidates the plan — scene
+  // durations, the title card and the outro are all composed for a
+  // specific frame, and the photo crop that feeds generation changes too.
+  setOutputFormat: (format) => (
+    set({ outputFormat: format, includeSquare: false, editPlan: null }),
+    persistPrefs({ outputFormat: format, includeSquare: false })
+  ),
   setBlueHourCorrection: (enabled) => (set({ blueHourCorrection: enabled }), persistPrefs({ blueHourCorrection: enabled })),
   setMusicEnabled: (enabled) => (set({ musicEnabled: enabled }), persistPrefs({ musicEnabled: enabled })),
   setMusicVolume: (volume) => {

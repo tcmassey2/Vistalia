@@ -2020,44 +2020,51 @@ function AudioControls() {
    Drives manifest.targetDurationSec → edit-plan scene count.
    30s ≈ 6 Cinematic AI scenes (or ~10 Quick Reel). 60s doubles that.
 */
-/* v35.1: formats are OPT-IN. The square is a real 1:1 re-composition
-   (~2 extra minutes of render time), and most agents only want the 9:16 —
-   so the default is vertical-only and the square is a deliberate choice. */
+/* v62.18 (Troy): shape is now a CHOICE, not an add-on. Previously the only
+   master was 9:16 and "square" meant a second, derived 1:1 pass — a real
+   re-composition, but downstream of a generator that had never seen a square
+   frame. Kling's image-to-video returns a clip shaped like the INPUT PHOTO
+   (its aspect_ratio parameter is silently ignored), so asking for square up
+   front lets us crop the SOURCE photo to 1:1 before generation: every
+   generated pixel lands inside the shipped frame instead of being thrown
+   away. Measured on a landscape source, 1:1 delivery samples ~960x960 of
+   real photo at 1.13x upscale where 9:16 samples ~784x784 at 1.38x.
+   One master, one shape, chosen here. */
 function FormatsToggle() {
-  const includeSquare = useStore((s) => s.includeSquare);
-  const setIncludeSquare = useStore((s) => s.setIncludeSquare);
+  const outputFormat = useStore((s) => s.outputFormat);
+  const setOutputFormat = useStore((s) => s.setOutputFormat);
   return (
     <div>
       <div className="flex items-baseline justify-between mb-2.5">
-        <h3 className="text-sm font-semibold tracking-tightish">Formats</h3>
-        <span className="text-xs text-ink-muted">Square is composed separately — not a crop</span>
+        <h3 className="text-sm font-semibold tracking-tightish">Format</h3>
+        <span className="text-xs text-ink-muted">Generated in this shape — never cropped down</span>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <button
           type="button"
-          onClick={() => setIncludeSquare(false)}
+          onClick={() => setOutputFormat("vertical")}
           className={cn(
             "card-press text-left p-3 rounded-lg bg-surface border",
-            !includeSquare
+            outputFormat !== "square"
               ? "border-gold bg-surface-raised card-selected"
               : "border-edge hover:border-edge-strong"
           )}
         >
           <div className="text-sm font-semibold tracking-tightish mb-0.5">Vertical · 9:16</div>
-          <div className="text-xs text-ink-muted">Reels · TikTok · Shorts — fastest render</div>
+          <div className="text-xs text-ink-muted">Reels · TikTok · Shorts — full-screen on a phone</div>
         </button>
         <button
           type="button"
-          onClick={() => setIncludeSquare(true)}
+          onClick={() => setOutputFormat("square")}
           className={cn(
             "card-press text-left p-3 rounded-lg bg-surface border",
-            includeSquare
+            outputFormat === "square"
               ? "border-gold bg-surface-raised card-selected"
               : "border-edge hover:border-edge-strong"
           )}
         >
-          <div className="text-sm font-semibold tracking-tightish mb-0.5">Vertical + Square · 1:1</div>
-          <div className="text-xs text-ink-muted">Adds IG/FB feed format · ~2 min longer</div>
+          <div className="text-sm font-semibold tracking-tightish mb-0.5">Square · 1:1</div>
+          <div className="text-xs text-ink-muted">Instagram · Facebook feed — keeps more of each room</div>
         </button>
       </div>
       <TwilightCorrectionToggle />
@@ -2223,6 +2230,10 @@ function RenderControls() {
   const selectedMusicTrackId = useStore((s) => s.selectedMusicTrackId);
   const targetDurationSec = useStore((s) => s.targetDurationSec);
   const setTargetDuration = useStore((s) => s.setTargetDuration);
+  // v62.18: delivery shape. Drives the edit plan's runwayConfig.ratio AND the
+  // worker's pre-generation source crop — it has to be decided before the
+  // plan is drafted, not after a master already exists in another aspect.
+  const outputFormat = useStore((s) => s.outputFormat);
   const narrationEnabled = useStore((s) => s.narrationEnabled);
   const musicEnabled = useStore((s) => s.musicEnabled);
   const musicVolume = useStore((s) => s.musicVolume);
@@ -2297,7 +2308,12 @@ function RenderControls() {
         photos,
         listing,
         selectedStyle: styleLabel,
-        exportFormat: "vertical",
+        // v62.18: was hardcoded "vertical". The plan is where the aspect is
+        // decided — defaultRunwayConfig() turns this into runwayConfig.ratio,
+        // which the worker reads for BOTH the pre-generation source crop and
+        // the final canvas. A square render planned as vertical would have
+        // generated 9:16 clips and then letterboxed them into a 1:1 frame.
+        exportFormat: outputFormat,
         // v26.9 FIX: single Veo engine. The store's renderEngine still
         // defaults to "remotion" (the toggle that set it was removed), and
         // an edit plan generated for "remotion" carries NO motion prompts —
@@ -2334,7 +2350,10 @@ function RenderControls() {
         // v26.6: single production engine. The worker upgrades "veo"
         // (and legacy "runway") through the Veo 3.1 pipeline.
         engine: "veo",
-        exportFormat: "vertical",
+        // v62.18: matches the exportFormat the plan was drafted with. The
+        // worker prefers runwayConfig.ratio (carried up from the plan) and
+        // falls back to this — they must agree or the fallback lies.
+        exportFormat: outputFormat,
         project: {
           id: projectId,
           userId: session.user.id,
@@ -2412,8 +2431,13 @@ function RenderControls() {
         // bath, pool, laundry) to constrained locked-tripod Veo prompts
         // instead of Ken Burns — always on, no user-facing safety picker.
         hallucinationGuard: "balanced",
-        // v35.1: 1:1 square is opt-in (adds ~2 min; most agents want 9:16 only).
-        includeSquare: useStore.getState().includeSquare === true,
+        // v62.18: the derived-square pass is retired from the product. Square
+        // is now a natively-generated master (exportFormat above), so asking
+        // for a second 1:1 recomposition would either duplicate the master or
+        // — on a vertical render — ship a differently-framed second file the
+        // UI has no room for. The worker branch stays in tree for the future
+        // multi-format Pro Pack; nothing in the app sets this true today.
+        includeSquare: false,
         // v38: word-synced narration captions (Audio panel toggle).
         captionsEnabled: useStore.getState().captionsEnabled !== false,
         // v50.7: twilight (blue-hour) color correction toggle — worker
@@ -2455,7 +2479,9 @@ function RenderControls() {
         engine: renderEngine
       });
       setToast(
-        `Render started — your cinematic video is usually ready in about ${useStore.getState().includeSquare ? 12 : 10} minutes, every scene verified.`
+        // v62.18: one master, one shape — the old "+2 min for square" case is
+        // gone (a native square costs the same as a native vertical).
+        "Render started — your cinematic video is usually ready in about 10 minutes, every scene verified."
       );
 
       // 4. Poll
@@ -2837,6 +2863,20 @@ function RenderStatusPanel() {
   const goToScreen = useStore((s) => s.goToScreen);
   const projectTitle = useStore((s) => s.projectTitle);
   const currentProjectId = useStore((s) => s.projectId);
+  // v62.18: what shape the finished master actually is. Set from the
+  // player's own metadata, which beats every other signal — the worker's
+  // reported dimensions are absent on library-recovered jobs, and the
+  // store's outputFormat can have been changed since this render started.
+  const [measuredSquare, setMeasuredSquare] = useState<boolean | null>(null);
+  const outputFormat = useStore((s) => s.outputFormat);
+  // A new job must not inherit the previous one's measurement.
+  const measuredForJob = useRef<string>("");
+  useEffect(() => {
+    if (measuredForJob.current !== (renderJob?.jobId || "")) {
+      measuredForJob.current = renderJob?.jobId || "";
+      setMeasuredSquare(null);
+    }
+  }, [renderJob?.jobId]);
 
   // v2.1: one-time confetti reward when a render lands successfully. Keyed on
   // jobId so it fires once per finished video, not on every re-render.
@@ -2893,10 +2933,33 @@ function RenderStatusPanel() {
     const wideUrl = formats.wide?.mp4Url || "";
     const shorts = renderJob.socialShorts || [];
 
+    // v62.18: the master slot is keyed `vertical` for backward compatibility
+    // (every finished job in the library uses that key), but it now holds
+    // whatever shape was rendered. Label it from the file's own dimensions
+    // rather than assuming — a square master announced as "9:16" is exactly
+    // the kind of small lie that makes an agent distrust the whole download.
+    // Tolerates both dimension spellings: pre-v62.18 rows wrote {w,h}.
+    const masterDims = formats.vertical?.dimensions as
+      | { width?: number; height?: number; w?: number; h?: number }
+      | null
+      | undefined;
+    const masterW = Number(masterDims?.width ?? masterDims?.w ?? 0);
+    const masterH = Number(masterDims?.height ?? masterDims?.h ?? 0);
+    // The library-recovery paths (worker restart, late finish) rebuild
+    // renderJob from a library entry that carries no `formats` at all, so
+    // dimensions are simply absent there. Fall back to the format this
+    // project was submitted with, and let the player's own metadata
+    // (onLoadedMetadata below) overrule both once the file header lands.
+    const masterIsSquare = measuredSquare ?? (
+      masterW > 0 ? masterW === masterH : outputFormat === "square"
+    );
+
     const formatPills: Array<{ label: string; sublabel: string; url: string; ratio: string }> = [
-      { label: "9:16", sublabel: "Reels · TikTok · Shorts", url: verticalUrl, ratio: "9:16" }
+      masterIsSquare
+        ? { label: "1:1", sublabel: "Instagram · Facebook feed", url: verticalUrl, ratio: "1:1" }
+        : { label: "9:16", sublabel: "Reels · TikTok · Shorts", url: verticalUrl, ratio: "9:16" }
     ];
-    if (squareUrl) formatPills.push({ label: "1:1", sublabel: "Instagram feed", url: squareUrl, ratio: "1:1" });
+    if (squareUrl && !masterIsSquare) formatPills.push({ label: "1:1", sublabel: "Instagram feed", url: squareUrl, ratio: "1:1" });
     if (wideUrl)   formatPills.push({ label: "16:9", sublabel: "YouTube · Zillow · MLS", url: wideUrl, ratio: "16:9" });
 
     return (
@@ -2918,6 +2981,15 @@ function RenderStatusPanel() {
           controls
           playsInline
           poster={renderJob.thumbnailUrl}
+          // v62.18: the file header is the authoritative shape (see
+          // measuredSquare above) — it corrects the download pill's label
+          // and filename on any job we couldn't get dimensions for.
+          onLoadedMetadata={(e) => {
+            const el = e.currentTarget;
+            if (el.videoWidth > 0 && el.videoHeight > 0) {
+              setMeasuredSquare(Math.abs(el.videoWidth / el.videoHeight - 1) < 0.08);
+            }
+          }}
           className="w-full max-h-[600px] rounded-xl bg-black ring-1 ring-edge"
           style={{ boxShadow: "0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(199,167,108,0.08)" }}
         />
@@ -3307,8 +3379,10 @@ function enrichPhase(renderJob: { phase?: string; engine?: string; progress?: nu
   // actually runs today.
   if (raw.includes("variant") || raw.includes("aspect") || raw.includes("finaliz")) {
     return {
-      title: "Finalizing your formats",
-      detail: "Packaging the 9:16 vertical and a true 1:1 square at 1080p."
+      title: "Finalizing your video",
+      // v62.18: one master in the shape you chose — the derived-square pass
+      // this line used to describe no longer runs.
+      detail: "Packaging your master at 1080p."
     };
   }
   if (raw.includes("upload")) {
@@ -3352,9 +3426,9 @@ function useStableEta({ startedAt, isRunway }: { startedAt: number; isRunway: bo
     // real renders land at 9-13 minutes (m-lux: 13.3 with two floors; m31:
     // 9.5). The old 400/520s estimates made the ETA read "1 min left" for
     // the last five minutes — worse than no ETA.
-    const totalEstimateSec = isRunway
-      ? (useStore.getState().includeSquare ? 780 : 620)
-      : 75;
+    // v62.18: the 780s branch was the derived-square pass, now retired — a
+    // natively-generated square master costs the same as a vertical one.
+    const totalEstimateSec = isRunway ? 620 : 75;
     const interval = window.setInterval(() => {
       const job = useStore.getState().renderJob;
       if (!job) { setLabel(""); return; }

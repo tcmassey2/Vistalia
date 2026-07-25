@@ -811,7 +811,14 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
               `Allowed roomType values: ${ROOM_TYPES.join(", ")}.`,
               `Allowed cameraMotion values: ${CAMERA_MOTIONS.join(", ")}.`,
               `Allowed transition values: ${TRANSITIONS.join(", ")}.`,
-              "Prefer vertical 9:16 pacing.",
+              // v62.18: the delivery shape is a customer choice now (9:16 or
+              // 1:1, both generated natively). Telling the director "prefer
+              // vertical pacing" on a square render biases composition toward
+              // a frame that will never exist — tall detail crops, headroom
+              // left for a canvas 78% taller than the real one.
+              String(exportFormat || "").toLowerCase().startsWith("squ") || exportFormat === "1:1"
+                ? "The video ships as a 1:1 SQUARE frame (Instagram/Facebook feed). Favor centered, balanced compositions that read at a glance; avoid shots whose subject only works when the frame is tall."
+                : "Prefer vertical 9:16 pacing.",
               isCinematicAI
                 // v31 (720p pivot): scenes are planned at 3-4s and generated
                 // in 4s/6s Veo buckets. Bias toward 3-3.5s (lands in the

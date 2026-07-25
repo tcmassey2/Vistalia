@@ -365,7 +365,15 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
  * first verdict got wrong. The master legitimately carries branding at
  * this stage — the prompt tells the inspector to ignore it.
  */
-export async function qcMasterSceneCheck({ masterPath, startSec, endSec, sourceImageUrl, sceneIndex, roomType, tempDir, highScrutiny = false }) {
+export async function qcMasterSceneCheck({ masterPath, startSec, endSec, sourceImageUrl, sceneIndex, roomType, tempDir, highScrutiny = false,
+  // v62.18: the master's shape. The reference photo is cropped to MATCH the
+  // master before the inspector compares them — crop it to the wrong aspect
+  // and the inspector is shown less of the room than the master actually
+  // contains, so real delivered architecture reads as invented. That is a
+  // hard FAIL at this gate, and the remedy is a deterministic floor clip, so
+  // a mismatch here quietly turns good scenes into a slideshow. Defaults to
+  // 9:16 — pre-v62.18 behavior for every existing caller.
+  deliveryDims = { width: 1080, height: 1920 } }) {
   if (!qcEnabled()) return { pass: true, reasons: [], checked: false };
   try {
     const span = Math.max(0.6, endSec - startSec);
@@ -406,7 +414,7 @@ export async function qcMasterSceneCheck({ masterPath, startSec, endSec, sourceI
         const cropPath = path.join(tempDir, `sweep-srccrop-${String(sceneIndex).padStart(3, "0")}.jpg`);
         await fs.writeFile(rawPath, srcBuf);
         await runFFmpeg(
-          ["-y", "-i", rawPath, "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,scale=512:-2", "-q:v", "5", cropPath],
+          ["-y", "-i", rawPath, "-vf", `scale=${deliveryDims.width}:${deliveryDims.height}:force_original_aspect_ratio=increase,crop=${deliveryDims.width}:${deliveryDims.height},scale=512:-2`, "-q:v", "5", cropPath],
           { timeoutMs: 20000, label: `sweep:srccrop-${sceneIndex}` }
         );
         const cropB64 = (await fs.readFile(cropPath)).toString("base64");

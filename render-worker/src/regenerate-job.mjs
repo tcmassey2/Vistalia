@@ -217,6 +217,14 @@ export async function regenerateScene(body, options = {}) {
         applyVoiceNarration({
           masterMp4: finalMp4,
           scenes: manifest.scenes,
+          // v62.18: same canvas the regenerated master is stitched at (see
+          // the packaging step below) — captions authored for 1080x1920 land
+          // off-frame on a 1:1 master.
+          deliveryDims: String(manifest?.runwayConfig?.ratio || manifest?.exportFormat || "")
+            .toLowerCase()
+            .match(/^(1:1|square)$/)
+            ? { width: 1080, height: 1080 }
+            : { width: 1080, height: 1920 },
           // v31 pipeline-audit fix: regen never passed the ACTUAL clip
           // durations (the v26.9 narration-sync fix) — the mixer fell back
           // to manifest durations, which post-v31 are the snapped values,
@@ -246,28 +254,34 @@ export async function regenerateScene(body, options = {}) {
   }
   const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
 
-  // Step 8: re-derive aspect variants.
-  options.onProgress?.({ phase: "Re-deriving aspect variants", progress: 82 });
-  const wants4K = Boolean(
-    manifest?.runwayConfig?.is4K ||
-    manifest?.runwayConfig?.upscale4K ||
-    manifest?.export4K
-  );
-  let variants = {};
-  try {
-    variants = await deriveAspectVariants({
-      masterMp4: masterForVariants,
-      tempDir,
-      jobId,
-      upscale4K: wants4K
-    });
-  } catch (err) {
-    console.warn(`[regen] aspect variants failed (${err.message}). Vertical-only.`);
-    variants = { vertical: { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } } };
-  }
-  if (!variants.vertical?.path) {
-    variants.vertical = { format: "vertical", path: masterForVariants, dimensions: { w: 1080, h: 1920 } };
-  }
+  // Step 8: package the master.
+  //
+  // v62.18: this used to call deriveAspectVariants(), which crops the master
+  // into 1:1 and pillarboxes it into 16:9. Two problems, and the square
+  // delivery format makes both load-bearing:
+  //   1. The main render path retired derived variants in v24 (ONE-MASTER).
+  //      A regenerated job therefore came back with MORE formats than the
+  //      original render had — the library would show 3 pills where the
+  //      customer's own render showed 1.
+  //   2. On a 1:1 master the crop is a no-op duplicate and the 16:9 pass is
+  //      a blurred-pillar file of a square source: minutes of CPU for a
+  //      deliverable the product doesn't sell.
+  // Regen now ships exactly what the render shipped — the master, in its own
+  // shape. deriveAspectVariants stays imported for the future Formats pack.
+  options.onProgress?.({ phase: "Packaging your video", progress: 82 });
+  const regenRatio = String(
+    manifest?.runwayConfig?.ratio || manifest?.exportFormat || "vertical"
+  ).toLowerCase();
+  const regenDims = regenRatio === "16:9" || regenRatio === "wide" ? { width: 1920, height: 1080 }
+                  : regenRatio === "1:1" || regenRatio === "square" ? { width: 1080, height: 1080 }
+                  : { width: 1080, height: 1920 };
+  const variants = {
+    vertical: {
+      format: regenDims.width === regenDims.height ? "square" : "vertical",
+      path: masterForVariants,
+      dimensions: regenDims
+    }
+  };
 
   // Step 9: re-cut social shorts.
   options.onProgress?.({ phase: "Re-cutting social shorts", progress: 88 });

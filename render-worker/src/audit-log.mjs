@@ -51,7 +51,12 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
     internal: manifest?.internal === true,
     thumbnail_url: upload?.thumbnailUrl || "",
     social_short_count: Array.isArray(upload?.socialShorts) ? upload.socialShorts.length : 0,
-    formats_count: Object.keys(upload?.formats || {}).length || 1,
+    // v62.18: `clean` is the un-watermarked copy of the SAME master that
+    // every free-trial render uploads for instant unlock — not a format the
+    // customer receives. Counting it made every trial render report "2
+    // formats", which the Library rendered as "9:16 + 1:1": a promise of a
+    // square file that was never produced.
+    formats_count: Object.keys(upload?.formats || {}).filter((k) => k !== "clean").length || 1,
     // v42.1 (Troy: "library shows captions off even though they are on"):
     // the mixer returns `narrationApplied`; this read `.applied` — undefined
     // → narration_applied has been FALSE for every narrated render since
@@ -74,6 +79,15 @@ export async function writeRenderAudit({ manifest, jobId, engine, upload, narrat
       captionsApplied: Boolean(narration?.captionsApplied),
       useCrossfades: manifest?.runwayConfig?.useCrossfades !== false,
       targetDurationSec: Number(manifest?.targetDurationSec) || null,
+      // v62.18: the delivery shape this render actually shipped. The Library
+      // detail modal labels the download from it, and per-scene regen uses
+      // it to re-stitch in the SAME aspect — regen rebuilds the whole video,
+      // so a wrong value here hands the customer back a differently-shaped
+      // file than the one they asked to fix. Rows without this field predate
+      // square and are all vertical.
+      exportFormat: String(manifest?.runwayConfig?.ratio || manifest?.exportFormat || "").toLowerCase().match(/^(1:1|square)$/)
+        ? "square"
+        : "vertical",
       twilightHero: Boolean(manifest?.twilightHero),
       disableAddressCard: Boolean(manifest?.disableAddressCard)
     },

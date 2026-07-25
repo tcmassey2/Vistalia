@@ -321,6 +321,11 @@ export interface LibraryEntry {
     captionsApplied?: boolean;
     useCrossfades?: boolean;
     targetDurationSec?: number | null;
+    // v62.18: which shape shipped ("vertical" | "square"). Written by
+    // audit-log.mjs. Absent on every row from before square existed — and
+    // every one of those masters is vertical, so `undefined` reads as
+    // vertical everywhere without a migration.
+    exportFormat?: string | null;
   } | null;
   createdAt: string;
 }

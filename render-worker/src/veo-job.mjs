@@ -475,11 +475,31 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
   const m = String(model || "").toLowerCase();
   const seconds = parseInt(durationEnum, 10) || 6;
 
+  // v62.18 SQUARE DELIVERY: 1:1 is a customer-selectable output shape now.
+  // Kling is where it belongs and why Troy asked for it — Kling i2v ignores
+  // aspect_ratio entirely and returns a clip shaped like the input photo, so
+  // a 1:1 source photo yields a natively square clip with every generated
+  // pixel inside the shipped frame. The veo3 and luma families DO send
+  // aspect_ratio, and their enums are 16:9 | 9:16 — asking either for "1:1"
+  // is a 422, which in this pipeline means a burned retry and a silent
+  // de-escalation to the constrained prompt (the v61.1 lesson). Ask for the
+  // nearest supported shape instead, and say so out loud: on those models a
+  // square render is NOT native, and this line is how we find that out
+  // without reading pixel dimensions off a finished master.
+  const supportedAspect = (family) => {
+    if (aspectRatio !== "1:1" && aspectRatio !== "square") return aspectRatio;
+    console.warn(
+      `[veo] ${family} has no 1:1 aspect — requesting 9:16 and cropping to square in the stitch. ` +
+      `Set FAL_VIDEO_MODEL to a kling tier for natively square generation.`
+    );
+    return "9:16";
+  };
+
   if (m.includes("luma")) {
     return {
       prompt,
       image_url: imageUrl,
-      aspect_ratio: aspectRatio,
+      aspect_ratio: supportedAspect("luma"),
       duration: seconds <= 5 ? "5s" : "9s",
       resolution
     };
@@ -560,7 +580,7 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
   return {
     prompt,
     image_url: imageUrl,
-    aspect_ratio: aspectRatio,
+    aspect_ratio: supportedAspect("veo3"),
     duration: veoEnum,
     resolution: veoResolution,
     generate_audio: generateAudio,

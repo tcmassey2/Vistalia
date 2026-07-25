@@ -368,7 +368,8 @@ function ImportListingBand() {
       // v62.15 LOW-RES GATE (Troy: "a low res example snuck in"). The
       // importer only ever checked BYTE size — an 800x600 thumbnail passes
       // the 8KB floor comfortably. Pixels are what matter, and doubly so
-      // now that v62.10 crops the photo to 9:16 before generation: a small
+      // now that v62.10 crops the photo to the delivery aspect (9:16 or, as
+      // of v62.18, 1:1) before generation: a small
       // source gets cropped AND upscaled, so one weak photo reads as a
       // visibly soft scene next to sharp ones. Two rules: a hard floor for
       // genuinely unusable images, and a relative rule that catches the odd
@@ -603,6 +604,14 @@ function LibraryCard({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => voi
   const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   const labelText = engineLabel(entry.engine);
   const heading = entry.listingAddress || entry.projectTitle || "Untitled listing";
+  // v62.18: renders ship as 9:16 OR 1:1 now, so the badge can't assume
+  // vertical. The library API (/api/library) carries no aspect field and
+  // isn't in this repo to extend — but the thumbnail IS a frame extracted
+  // from the master (runway-job.mjs "runway:thumbnail"), so its natural
+  // dimensions ARE the master's. Read them off the already-loaded <img>:
+  // no server change, no extra request. Null until load → badge stays
+  // hidden rather than guessing wrong for a frame.
+  const [aspectLabel, setAspectLabel] = useState<string | null>(null);
 
   return (
     <button
@@ -615,6 +624,15 @@ function LibraryCard({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => voi
           <img
             src={entry.thumbnailUrl}
             alt=""
+            onLoad={(e) => {
+              const img = e.currentTarget;
+              if (!img.naturalWidth || !img.naturalHeight) return;
+              const ratio = img.naturalWidth / img.naturalHeight;
+              // Generous bands — a 1080x1080 master reads 1.00, a 1080x1920
+              // reads 0.5625. Anything else is a legacy or odd render; label
+              // it by the closest of the two rather than inventing a third.
+              setAspectLabel(Math.abs(ratio - 1) < 0.08 ? "1:1" : ratio < 1 ? "9:16" : "16:9");
+            }}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
         ) : (
@@ -630,10 +648,20 @@ function LibraryCard({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => voi
             NARRATED
           </span>
         )}
-        {/* Format hint pill — customer vocabulary, not a file count */}
-        <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-paper/85 text-[10px] font-mono text-ink-soft border border-edge">
-          {entry.formatsCount >= 2 ? "9:16 + 1:1" : "9:16"}
-        </span>
+        {/* Format hint pill — customer vocabulary, not a file count.
+            v62.18: reads the master's true shape (see aspectLabel above)
+            instead of assuming every render is vertical. */}
+        {aspectLabel && (
+          <span className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-paper/85 text-[10px] font-mono text-ink-soft border border-edge">
+            {/* v62.18: the old "9:16 + 1:1" branch keyed off formatsCount,
+                which counts uploaded variant KEYS — and a free-trial render
+                uploads a `clean` master alongside the marked one, so every
+                trial render read as 2 and promised a square file that was
+                never made. The derived square is retired; one master, one
+                honest label. */}
+            {aspectLabel}
+          </span>
+        )}
       </div>
       <div className="p-4">
         <h3 className="font-medium tracking-tightish truncate">{heading}</h3>

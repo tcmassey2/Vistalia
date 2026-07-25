@@ -186,7 +186,19 @@ function roundedRect(w, h, r) {
 /** Build a complete .ass document for the given canvas geometry and skin. */
 export function buildCaptionsAss({ words, playW = 1080, playH = 1920, variant = "luxury" }) {
   const v = VARIANTS[variant] || VARIANTS.luxury;
-  const baseEm = Math.round(playH * v.emFrac);
+  // v62.18 SQUARE DELIVERY: type used to be sized off playH alone. That was
+  // fine while every master was 1080x1920, and fine for the old DERIVED
+  // square (a secondary file). Now a 1:1 master is a primary deliverable on
+  // an identically-wide canvas — sizing off its height would ship 40px
+  // captions where the vertical master ships 71px, i.e. 56% the size at the
+  // same frame width, which reads as a different (worse) product.
+  // Size from the 9:16-equivalent height: byte-identical on vertical by
+  // construction (1920 >= 1920), and a square master's captions now occupy
+  // the same fraction of the frame WIDTH — which is what legibility on a
+  // phone actually depends on. Vertical position stays proportional to the
+  // real frame (yC below), so the block still sits at 70% height.
+  const typeH = Math.max(playH, Math.round((playW * 16) / 9));
+  const baseEm = Math.round(typeH * v.emFrac);
   const baseFontSize = Math.round(baseEm * v.cellPerEm);
   const baseSpacing = +(v.trackingEm * baseEm).toFixed(1);
   const yC = Math.round(playH * 0.70);
