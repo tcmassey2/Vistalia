@@ -645,16 +645,33 @@ export default async function handler(request, response) {
     // untouched when structurally valid.
     if (includeNarration) {
       attachNarration(normalizedPlan, parsed?.narration, { targetDurationSec });
-      // v62.17: if the Director came in under its own stated word band, ask
-      // once for a longer read. Under voice-first this is the difference
-      // between the 30s the customer picked and the ~20s they kept getting.
-      // Only for director-authored narration — see the note on
-      // expandNarrationToBudget for why derived scripts are left alone.
+      /* v62.17: if the narration came in under its stated word band, ask once
+         for a longer read. Under voice-first this is the difference between
+         the 30s the customer picked and the ~20s they kept getting.
+
+         v62.25 — WHY THE SOURCE GATE IS GONE. The Jul 25 05:08 render shipped
+         39 words for a 30-second video: the worker logged "narration too thin
+         to carry this photoset — 39 words ≈ 15.6s of speech for 9 photos
+         needing 16.2s", disabled voice-first BEFORE spending on TTS, and fell
+         back to the legacy path. The customer got a 30s video with 15s of
+         speech and only 5 of 9 scenes speaking. It missed the voice-first
+         threshold by 0.6 seconds.
+         39 is under 70 (the 0.9 floor), so the expansion existed and should
+         have run — unless the narration was `derived-from-lines`, which this
+         gate excluded by design. And derived is EXACTLY the case that needs
+         it: deriving from per-scene lines can only ever produce as many words
+         as the Director bothered to write, so a plan that skipped four
+         scenes' lines is permanently short with no way back.
+         The stated risk of expanding a derived script — sentences that no
+         longer match their scenes — is already handled below: the rewrite is
+         re-validated on a throwaway object and only accepted if it comes back
+         fully director-grade. A rewrite that breaks the mapping is discarded
+         and the original ships untouched. */
       const nar = normalizedPlan.narration;
       const budgetTarget = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
       const nowWords = normalizedPlan.narrationScript
         ? normalizedPlan.narrationScript.split(/\s+/).filter(Boolean).length : 0;
-      if (nar && nar.source === "director" && nowWords > 0 && nowWords < Math.round(budgetTarget * 0.9)) {
+      if (nar && nowWords > 0 && nowWords < Math.round(budgetTarget * 0.9)) {
         const expanded = await expandNarrationToBudget(nar, { targetDurationSec, listingDetails, selectedStyle });
         if (expanded) {
           // Re-run the SAME validation on a throwaway object. If the rewrite
@@ -666,21 +683,37 @@ export default async function handler(request, response) {
           const probeWords = probe.narrationScript
             ? probe.narrationScript.split(/\s+/).filter(Boolean).length : 0;
           if (probe.narration && probe.narration.source === "director" && probeWords > nowWords) {
-            probe.narration.source = "director+expanded";
+            probe.narration.source = `${nar.source}+expanded`;
             normalizedPlan.narration = probe.narration;
             normalizedPlan.narrationScript = probe.narrationScript;
-            console.info(`[plan] narration expansion ACCEPTED: ${nowWords}w → ${probeWords}w (target ${budgetTarget}).`);
+            console.info(`[plan] narration expansion ACCEPTED (${nar.source}): ${nowWords}w → ${probeWords}w (target ${budgetTarget}).`);
           } else {
-            console.warn(`[plan] narration expansion rejected by validation — keeping the Director's ${nowWords}w original.`);
+            console.warn(`[plan] narration expansion rejected by validation — keeping the ${nar.source} ${nowWords}w original.`);
           }
         }
       }
     }
     // v32 observability: make the continuous script's presence LOUD in the
     // function logs — its absence was silent for a full smoke-test round.
-    console.info(
-      `[plan] narrationScript: ${normalizedPlan.narrationScript ? normalizedPlan.narrationScript.trim().split(/\s+/).length + " words" : "ABSENT (per-line fallback will run)"}`
-    );
+    // v62.25: the word count alone couldn't explain the 39-word render — the
+    // SOURCE is what decides whether expansion ran, and the target is what
+    // the worker's voice-first preflight will measure against. All three on
+    // one line, plus a loud verdict, so a thin script is legible in the log
+    // that produced it instead of six minutes later in the worker's.
+    {
+      const words = normalizedPlan.narrationScript
+        ? normalizedPlan.narrationScript.trim().split(/\s+/).filter(Boolean).length : 0;
+      const target = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+      const src = normalizedPlan.narration?.source || "none";
+      console.info(
+        words
+          ? `[plan] narrationScript: ${words} words (target ${target}, source=${src})` +
+            (words < Math.round(target * 0.9)
+              ? ` ⚠️ UNDER BAND — voice-first needs ~${(normalizedPlan.scenes || []).filter((s) => String(s.type || "photo") === "photo").length * 1.8}s of speech and this is ~${(words / 2.5).toFixed(1)}s; expect the legacy path.`
+              : "")
+          : "[plan] narrationScript: ABSENT (per-line fallback will run)"
+      );
+    }
     // v33.4 observability: room ↔ line mapping, verifiable BEFORE spending
     // fal credits — test-10 spoke "kitchen" over the great room and the
     // mismatch was only discoverable by watching the finished video.
