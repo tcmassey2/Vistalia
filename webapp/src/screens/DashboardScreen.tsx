@@ -342,7 +342,13 @@ function ImportListingBand() {
     setBusy(true);
     setError("");
     setPct(3);
-    startPhase("Reading the listing page…", 52);
+    // v62.24: the ceilings used to be weighted for a flow whose last step
+    // was a 50-90s Vision call — reading the page got 3-52 and curation got
+    // 66-93, so the bar crawled through the 80s for a minute and read as
+    // stuck. With curation moved off the critical path, the server round
+    // trip (page fetch + 24 downloads + 24 uploads, ~11-15s measured) IS
+    // the long pole and gets the bar to match.
+    startPhase("Reading the listing page…", 74);
     try {
       const projectId = `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const result = await importListing(trimmed, projectId);
@@ -355,8 +361,10 @@ function ImportListingBand() {
         return;
       }
       const imported = result.photos || [];
-      setPct(56);
-      startPhase(`Preparing ${imported.length} photo${imported.length === 1 ? "" : "s"}…`, 64);
+      setPct(78);
+      // Each probe decodes a full-size photo in the browser, so this scales
+      // with the gallery: ~24 images is a real few seconds, not instant.
+      startPhase(`Checking ${imported.length} photo${imported.length === 1 ? "" : "s"}…`, 94);
       const probes = await Promise.all(imported.map((p) => probePhoto(p.publicUrl)));
       // v62.6: paper-like sheets (floor plans, site plans, documents) are
       // dropped HERE, deterministically, before curation ever sees them —
@@ -414,31 +422,21 @@ function ImportListingBand() {
       // caps per-room counts, and returns a professional tour order.
       // Fail-open at every exit: any non-ok status keeps ALL imported
       // photos exactly as before.
-      let finalPhotos = photos;
-      let curatedNote = "";
-      if (photos.length >= 8) {
-        setPct(66);
-        startPhase("Hand-picking the most diverse shots…", 93);
-        try {
-          const cur = await curatePhotos({
-            photos: photos.map((p) => ({ id: p.id, durableUrl: p.durableUrl, fileName: p.fileName }))
-          });
-          if (cur.status === "ok" && Array.isArray(cur.curated) && cur.curated.length >= 6) {
-            const byId = new Map(photos.map((p) => [p.id, p]));
-            const picked = [...cur.curated]
-              .sort((a, b) => a.order - b.order)
-              .map((c, i) => {
-                const p = byId.get(c.photoId);
-                return p ? { ...p, order: i } : null;
-              })
-              .filter((p): p is Photo => Boolean(p));
-            if (picked.length >= 6) {
-              finalPhotos = picked;
-              curatedNote = ` — kept the ${picked.length} most diverse in tour order`;
-            }
-          }
-        } catch { /* curation is a bonus, never a blocker */ }
-      }
+      /* v62.24: CURATION NO LONGER BLOCKS THE IMPORT.
+         This awaited a Vision pass over every imported photo, and
+         curate-photos.js documents its own latency: "scoring 25 photos at
+         gpt-4.1-mini Vision (low detail) regularly takes 50-90s". Nobody
+         noticed until v62.23, because the gate is `photos.length >= 8` and
+         imports had been landing at five — the fix that recovered the
+         gallery switched on a minute-long step that had never once run.
+         The photos are already stored and already gated by then; curation
+         only reorders and prunes. So the project opens immediately and the
+         pass lands afterwards, turning a 90-second wait into ~15 seconds.
+         It is applied ONLY if the user hasn't touched the set in the
+         meantime — reordering photos under someone's cursor is worse than
+         not curating at all. */
+      const finalPhotos = photos;
+      const curatedNote = "";
 
       setPct(96);
       setPhaseLabel("Opening your project…");
@@ -488,6 +486,40 @@ function ImportListingBand() {
             ? `Listing details imported${planNote} — no usable photos, so add your own and render.`
             : "Listing details imported — add your photos and render."
       );
+
+      // v62.24: the diversity pass, off the critical path. Deliberately not
+      // awaited — the import is already finished and the user is already
+      // looking at their photos.
+      if (finalPhotos.length >= 8) {
+        const idsAtStart = finalPhotos.map((p) => p.id).join(",");
+        curatePhotos({
+          photos: finalPhotos.map((p) => ({ id: p.id, durableUrl: p.durableUrl, fileName: p.fileName }))
+        })
+          .then((cur) => {
+            const s = useStore.getState();
+            // Three ways this result is stale, and all of them mean drop it:
+            // the user opened a different project, they changed the photo set
+            // themselves, or the model gave us too little to be worth acting on.
+            if (s.projectId !== projectId) return;
+            if (s.photos.map((p) => p.id).join(",") !== idsAtStart) return;
+            if (cur.status !== "ok" || !Array.isArray(cur.curated)) return;
+            const keep = new Set(finalPhotos.map((p) => p.id));
+            const order = [...cur.curated]
+              .sort((a, b) => a.order - b.order)
+              .map((c) => c.photoId)
+              .filter((id) => keep.has(id));
+            if (order.length < 6 || order.length === finalPhotos.length) return;
+            // reorderPhotos takes a subset: it prunes and reorders in one
+            // pass, and invalidates the edit plan so narration re-syncs.
+            s.reorderPhotos(order);
+            const dropped = finalPhotos.length - order.length;
+            s.setToast(
+              `Tour order set — kept the ${order.length} strongest` +
+              (dropped > 0 ? `, set aside ${dropped} near-duplicate${dropped === 1 ? "" : "s"}.` : ".")
+            );
+          })
+          .catch(() => { /* curation is a bonus, never a blocker */ });
+      }
     } catch {
       setError("Import failed — try again or start manually.");
     } finally {
