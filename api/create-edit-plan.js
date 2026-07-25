@@ -692,6 +692,35 @@ export default async function handler(request, response) {
           }
         }
       }
+      /* v62.27: and the ceiling. Same validate-and-revert contract as the
+         expansion above — the trim is applied to a throwaway object first,
+         and only adopted if it still passes the full narration validation
+         (monologue↔sentences equality, every photoId exactly once). */
+      const overNar = normalizedPlan.narration;
+      const overWords = normalizedPlan.narrationScript
+        ? normalizedPlan.narrationScript.split(/\s+/).filter(Boolean).length : 0;
+      if (overNar && overWords > Math.round(budgetTarget * 1.1)) {
+        const trimmed = trimNarrationToBudget(overNar, { targetDurationSec });
+        if (trimmed) {
+          const probe = { scenes: normalizedPlan.scenes };
+          attachNarration(probe, trimmed, { targetDurationSec });
+          const probeWords = probe.narrationScript
+            ? probe.narrationScript.split(/\s+/).filter(Boolean).length : 0;
+          if (probe.narration && probe.narration.source === "director" && probeWords < overWords) {
+            probe.narration.source = `${overNar.source}+trimmed`;
+            normalizedPlan.narration = probe.narration;
+            normalizedPlan.narrationScript = probe.narrationScript;
+            console.info(
+              `[plan] narration OVER BAND trimmed: ${overWords}w → ${probeWords}w ` +
+              `(target ${budgetTarget}, ${trimmed.__trim.cuts} sentence(s) cut, audio tags dropped). ` +
+              `Voice-first makes the video as long as the voice — ${overWords}w would have shipped ` +
+              `~${(overWords / 2.77).toFixed(1)}s against a ${targetDurationSec}s order.`
+            );
+          } else {
+            console.warn(`[plan] narration trim rejected by validation — keeping the ${overNar.source} ${overWords}w original (video WILL run long).`);
+          }
+        }
+      }
     }
     // v32 observability: make the continuous script's presence LOUD in the
     // function logs — its absence was silent for a full smoke-test round.
@@ -1622,6 +1651,65 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
     console.warn(`[plan] narration expansion failed (${err.message}) — keeping the original.`);
     return null;
   }
+}
+
+/* v62.27 THE OTHER HALF OF THE DURATION CONTRACT.
+   The Jul 25 21:58 render: customer picked 30 seconds (9 scenes — the 30s
+   budget), the Director returned 127 words against a 70-85 band, and
+   voice-first did exactly what it is designed to do — it made the video as
+   long as the voice. 127 words at 2.77 w/s = 45.9s of speech, shipped as a
+   47.7-second video. Three scenes were stretched to the 9.5s visible cap to
+   cover the overrun, which is also why motion read low on them.
+
+   We had a FLOOR in code (enforceScriptFloor, expandNarrationToBudget) and a
+   ceiling only in the PROMPT. v62.14 already taught this lesson on the scene
+   axis: the prompt is SOFT — the Gemini failover never even sees the schema —
+   so a customer-facing contract needs a hard clamp in code. This is that
+   clamp for the word axis.
+
+   Whole sentences are dropped from the MIDDLE, never the hook or the CTA,
+   choosing at each step the cut that lands closest to target without falling
+   under the floor. A dropped sentence's photos merge into the sentence before
+   it, so every scene's photoId still appears exactly once and the scene still
+   shows — narrated by its neighbour instead of dropped from the tour.
+   Rebuilding the monologue from the surviving sentences loses the [audio
+   tags], which only the eleven_v3 expressive rung consumes; a correct runtime
+   is worth more than delivery tags, and the caller logs when it happens. */
+function trimNarrationToBudget(narration, { targetDurationSec = 30 } = {}) {
+  const target = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+  const maxWords = Math.round(target * 1.1);
+  const minWords = Math.round(target * 0.9);
+  const wc = (t) => String(t || "").split(/\s+/).filter(Boolean).length;
+  const sents = (narration?.sentences || []).map((s) => ({
+    text: String(s?.text || "").trim(),
+    photos: Array.isArray(s?.photos) ? [...s.photos] : []
+  })).filter((s) => s.text);
+  let total = sents.reduce((a, s) => a + wc(s.text), 0);
+  if (!sents.length || total <= maxWords || sents.length < 3) return null;
+  const before = total;
+  let cuts = 0;
+  while (total > maxWords && sents.length > 2) {
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    for (let i = 1; i < sents.length - 1; i++) {
+      const after = total - wc(sents[i].text);
+      if (after < minWords) continue; // never cut through the floor
+      const dist = Math.abs(after - target);
+      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+    }
+    if (bestIdx < 0) break;
+    sents[bestIdx - 1].photos.push(...sents[bestIdx].photos);
+    sents.splice(bestIdx, 1);
+    cuts += 1;
+    total = sents.reduce((a, s) => a + wc(s.text), 0);
+  }
+  if (!cuts) return null;
+  return {
+    ...narration,
+    monologue: sents.map((s) => s.text).join(" "),
+    sentences: sents,
+    __trim: { before, after: total, cuts }
+  };
 }
 
 function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {

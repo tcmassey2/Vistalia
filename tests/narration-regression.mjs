@@ -126,6 +126,43 @@ check("verify prompt bans the m73 template", planSrc.includes('NEVER the skeleto
 check("verify prompt keeps agreement rule", planSrc.includes('"this area", "these areas"'));
 check("floor runs on polish failure path", /catch[\s\S]{0,400}enforceNarrationFloor|enforceNarrationFloor[\s\S]{0,200}narrationGuard/.test(planSrc));
 
+/* ── v62.27 DURATION CEILING: voice-first makes the video as long as the voice ──
+   The Jul 25 21:58 render: 30s order (9 scenes), Director returned 127 words
+   against a 70-85 band, shipped a 47.7s video. There was a floor in code and
+   a ceiling only in the prompt. This is the real script from that render. */
+eval(`globalThis.trimNar = ${grab(planSrc, "trimNarrationToBudget").replace(/^function \w+/, "function")}`);
+{
+  const real = [
+    "Welcome to 4935 E Berneil Dr in Paradise Valley, a stunning 6-bedroom, 8-bath home with over 7,700 square feet of living space.",
+    "Step inside to a bright kitchen featuring dual islands with dark stone countertops and natural wood cabinetry.",
+    "The spacious living area offers a cozy fireplace and expansive windows overlooking the backyard.",
+    "Just beyond, the primary bedroom boasts sweeping views and direct access to the pool area.",
+    "The outdoor space is a true retreat with a dramatic rock waterfall pool and spa.",
+    "Every detail, from the sleek black cabinetry in the butler's pantry to the elegant bathroom finishes, speaks to quality.",
+    "Living here means enjoying luxury and comfort in one of Arizona's finest neighborhoods.",
+    "Contact Vistalia AI at their brokerage to schedule your private tour today."
+  ];
+  const wc = (t) => String(t).split(/\s+/).filter(Boolean).length;
+  const nar = { monologue: real.join(" "), direction: "warm", source: "director",
+                sentences: real.map((t, i) => ({ text: t, photos: [`p${i + 1}`] })) };
+  check("fixture is the real 127-word overrun", wc(nar.monologue) === 127);
+  const out = globalThis.trimNar(nar, { targetDurationSec: 30 });
+  check("over-band narration is trimmed", !!out);
+  const after = out ? wc(out.monologue) : 0;
+  check(`trim lands inside the 30s ceiling (${after}w <= 85)`, after > 0 && after <= 85);
+  check(`trim does not cut through the floor (${after}w >= 70)`, after >= 70);
+  check("hook preserved", !!out && out.sentences[0].text === real[0]);
+  check("CTA preserved", !!out && out.sentences[out.sentences.length - 1].text === real[real.length - 1]);
+  const ph = out ? out.sentences.flatMap((s) => s.photos) : [];
+  check("every photoId still appears exactly once", ph.length === 8 && new Set(ph).size === 8);
+  check("monologue equals sentences joined", !!out && out.monologue === out.sentences.map((s) => s.text).join(" "));
+  check("in-band narration is left alone", globalThis.trimNar(
+    { sentences: real.slice(0, 5).map((t, i) => ({ text: t, photos: [`p${i}`] })), monologue: real.slice(0, 5).join(" ") },
+    { targetDurationSec: 30 }) === null);
+  check("127w against a 60s order is not over band", globalThis.trimNar(nar, { targetDurationSec: 60 }) === null);
+}
+check("ceiling is enforced in code, not only in the prompt", /trimNarrationToBudget\(/.test(planSrc) && /OVER BAND trimmed/.test(planSrc));
+
 /* ── Amy-class lint: lead emails must never claim fake deadlines ── */
 const tplSrc = fs.readFileSync(path.join(ROOT, "api/_lib/email-templates.js"), "utf8");
 const freeVideoBlock = tplSrc.slice(tplSrc.indexOf("freeVideoWaiting"), tplSrc.indexOf("paymentFailed"));
