@@ -1576,9 +1576,18 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
       if (wordCount < Math.round(monologueTarget * 0.6)) {
         const derived = deriveFromLines(`director monologue thin (${wordCount}/${monologueTarget} words)`);
         const derivedWords = derived ? derived.monologue.split(/\s+/).filter(Boolean).length : 0;
-        if (derived && derivedWords > wordCount * 1.3) {
-          console.warn(`[plan] narration THIN-UPGRADE: director ${wordCount}w replaced by derived ${derivedWords}w.`);
+        // v62.13: pick whichever source lands CLOSER to the target, not
+        // simply whichever is longer. The old rule only asked "is derived
+        // 1.3x richer" — with many scenes the joined per-scene lines can
+        // blow well past the budget, and under voice-first the video length
+        // IS the narration length, so an overshoot ships a video longer
+        // than the duration the customer picked.
+        if (derived && derivedWords > wordCount * 1.3 &&
+            Math.abs(derivedWords - monologueTarget) < Math.abs(wordCount - monologueTarget)) {
+          console.warn(`[plan] narration THIN-UPGRADE: director ${wordCount}w replaced by derived ${derivedWords}w (target ${monologueTarget}).`);
           narration = derived;
+        } else if (derived) {
+          console.warn(`[plan] narration thin (${wordCount}w vs target ${monologueTarget}) but derived ${derivedWords}w is no closer — keeping the Director's monologue.`);
         }
       }
     }
@@ -1593,10 +1602,20 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
     // Old-worker compat: narrationScript mirrors the clean monologue.
     plan.narrationScript = stripNarrationAudioTags(narration.monologue);
     const tagCount = (narration.monologue.match(/\[[^\][\n]{1,40}\]/g) || []).length;
+    const finalWords = plan.narrationScript.split(/\s+/).filter(Boolean).length;
     console.info(
       `[plan] narration (v62): source=${narration.source}, ` +
-      `${plan.narrationScript.split(/\s+/).length} words / ${narration.sentences.length} sentences / ${tagCount} expressive tags, ` +
+      `${finalWords} words / ${narration.sentences.length} sentences / ${tagCount} expressive tags, ` +
       `direction="${narration.direction}"`
+    );
+    // v62.13: under voice-first the video's LENGTH IS THE NARRATION'S
+    // LENGTH, so make the duration contract explicit in the log — "why is
+    // this 47s when I asked for 30" should be answerable from one line
+    // instead of reverse-engineering the scene count. (13 scenes + 124
+    // words == a 45s target; 30s yields ~9 scenes and ~78 words.)
+    console.info(
+      `[plan] DURATION CONTRACT: target ${targetDurationSec}s → ${(plan.scenes || []).length} scenes, ` +
+      `word budget ~${monologueTarget} (±10%), actual ${finalWords} → expect ≈${(finalWords / 2.5).toFixed(0)}s of speech.`
     );
     narration.sentences.forEach((s, i) => {
       console.info(`[plan] narration s${i + 1} [${s.photos.join(",") || "linger"}]: "${s.text}"`);

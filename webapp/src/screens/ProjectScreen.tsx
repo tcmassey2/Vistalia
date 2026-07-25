@@ -2539,7 +2539,13 @@ function RenderControls() {
 
   const pollUntilDone = async (jobId: string) => {
     const startTime = Date.now();
-    const maxMs = 26 * 60 * 1000; // worker's overall cap is 25 min (v31 audit) + 1 min slack
+    // v62.13: was 26 min, sized against a v31-era 25-min worker cap and a
+    // ~9-scene render. A 45s/13-scene voice-first render legitimately runs
+    // 28-30 min (Troy's 00:43 job: 28.5 min, and the UI froze at 85% because
+    // this loop exited while the worker was still finishing). The client
+    // must never be the first thing to give up — the worker has its own
+    // watchdog, attempt deadlines and the pull-queue reaper for true hangs.
+    const maxMs = 45 * 60 * 1000;
     let prevProgress = 0;
     let prevPhase = "";
     let lastProgressMovedAt = Date.now();
@@ -2677,6 +2683,28 @@ function RenderControls() {
         }
       }
     }
+    // v62.13: before declaring a timeout, ASK THE LIBRARY. The 404 branch
+    // above already does this for worker restarts; the timeout path never
+    // did — so a render that finished a minute after the window closed left
+    // the user staring at a frozen bar with a finished video sitting in
+    // their library. Same recovery, same completed panel.
+    try {
+      const late = await tryRecoverFromLibrary(jobId, startTime);
+      if (late) {
+        setRenderJob({
+          jobId,
+          projectId,
+          status: "completed",
+          phase: "Ready to download",
+          progress: 100,
+          mp4Url: late.mp4Url,
+          thumbnailUrl: late.thumbnailUrl,
+          engine: renderEngine
+        });
+        setToast("Render finished — it took longer than usual, but it's ready.");
+        return;
+      }
+    } catch { /* fall through to the timeout message */ }
     setError("This render is taking longer than expected and timed out. Your credit hasn't been consumed by a failed render — check your Library in a few minutes in case it finished, or generate again. If this keeps happening, contact support@vistalia.ai.");
   };
 
