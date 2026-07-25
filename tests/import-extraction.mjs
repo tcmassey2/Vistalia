@@ -31,7 +31,7 @@ const stubbed = raw
 const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vistalia-import-")), "import-listing.mjs");
 fs.writeFileSync(tmp, stubbed);
 const mod = await import(`file://${tmp}`);
-const { extractPagePhotos, expectedPhotoCount, maximizePhotoUrl } = mod;
+const { extractPagePhotos, expectedPhotoCount, maximizePhotoUrl, factsFromHtml } = mod;
 
 let pass = 0;
 const failures = [];
@@ -116,6 +116,28 @@ ok(z.key === zWebp.key, "same Zillow photo at different tiers/formats shares one
 ok(/cc_ft_1536/.test(z.best), "Zillow rewrite targets the 1536 tier");
 const rf = maximizePhotoUrl("https://ssl.cdn-redfin.com/photo/1/mbphoto/123/genMid.ABC_1.jpg");
 ok(/\/bigphoto\//.test(rf.best) && !/genMid/.test(rf.best), "Redfin rewrite targets the full-size original");
+
+console.log("\n== v62.21 listing facts come off the page, so RentCast is optional");
+// Verbatim meta description from the live Scottsdale page.
+const realMeta = `<meta name="description" content="Zillow has 73 photos of this $1,130,000 3 beds, 3 baths, 2,097 sqft townhouse home located at 8725 E VIA DE DORADO --, Scottsdale, AZ 85258 "/>`;
+const f = factsFromHtml(realMeta) || {};
+ok(f.price === 1130000, "price parsed from the real page", JSON.stringify(f));
+ok(f.beds === 3, "beds parsed", JSON.stringify(f));
+ok(f.baths === 3, "baths parsed", JSON.stringify(f));
+ok(f.sqft === 2097, "sqft parsed", JSON.stringify(f));
+// These four are exactly what DashboardScreen maps into the listing.
+ok(["price", "beds", "baths", "sqft"].every((k) => f[k] != null),
+   "all four fields the webapp consumes are present without RentCast");
+
+// Redfin/Realtor phrasing ("3 beds, 2.5 baths, 1,890 Sq. Ft.")
+const alt = factsFromHtml(`<meta name="description" content="4 beds, 2.5 baths, 1,890 Sq. Ft. house for sale at $649,900."/>`) || {};
+ok(alt.beds === 4 && alt.baths === 2.5 && alt.sqft === 1890 && alt.price === 649900,
+   "alternate portal phrasing parses too", JSON.stringify(alt));
+
+// Rails: a garbage parse must never overwrite good records data.
+ok(factsFromHtml('<meta name="description" content="99 beds, 200 baths, 12 sqft for $5"/>') === null,
+   "absurd values are rejected wholesale rather than shipped");
+ok(factsFromHtml("<p>a page with no facts at all</p>") === null, "returns null when the page says nothing");
 
 fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
 console.log(`\n${failures.length === 0 ? "ALL PASS" : `FAILURES (${failures.length}):\n  - ${failures.join("\n  - ")}`}  [${pass} passed]`);

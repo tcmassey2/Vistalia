@@ -400,6 +400,45 @@ function extractPagePhotos(html) {
   return photos;
 }
 
+/* v62.21: the listing facts, straight off the page we already fetched.
+   Measured on the live Scottsdale page — Zillow's meta description is:
+     "Zillow has 73 photos of this $1,130,000 3 beds, 3 baths, 2,097 sqft
+      townhouse home located at 8725 E VIA DE DORADO --, Scottsdale, AZ"
+   which is EXACTLY the four fields the webapp consumes (price / beds /
+   baths / sqft). RentCast's other three — yearBuilt, lotSize, propertyType
+   — are fetched today and read by nothing. So for a URL import the page is
+   a complete substitute, and the property-records call becomes a fallback
+   rather than a dependency. JSON-LD is tried first (Redfin and Realtor.com
+   both ship schema.org RealEstateListing); the meta line is the portable
+   floor that works even on a reduced page. */
+export function factsFromHtml(html) {
+  const text = String(html);
+  const out = {};
+  const num = (v) => {
+    const n = Number(String(v).replace(/[^0-9.]/g, ""));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const jsonLd = text.match(/"price"\s*:\s*"?\$?([\d,]+(?:\.\d+)?)"?/i);
+  if (jsonLd) out.price = num(jsonLd[1]);
+  const desc = (text.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)
+    || text.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i) || [])[1] || "";
+  const hay = `${desc} ${text.slice(0, 4000)}`;
+  const price = hay.match(/\$\s?([\d][\d,]{4,})/);
+  if (price && !out.price) out.price = num(price[1]);
+  const beds = hay.match(/([\d.]+)\s*(?:bd\b|beds?\b|bedrooms?\b)/i);
+  if (beds) out.beds = num(beds[1]);
+  const baths = hay.match(/([\d.]+)\s*(?:ba\b|baths?\b|bathrooms?\b)/i);
+  if (baths) out.baths = num(baths[1]);
+  const sqft = hay.match(/([\d,]{3,})\s*(?:sqft\b|sq\.?\s?ft\b|square\s+feet)/i);
+  if (sqft) out.sqft = num(sqft[1]);
+  // Sanity rails — a bad parse must never overwrite a good RentCast value.
+  if (out.beds != null && (out.beds > 30 || out.beds < 1)) delete out.beds;
+  if (out.baths != null && (out.baths > 30 || out.baths < 1)) delete out.baths;
+  if (out.sqft != null && (out.sqft < 150 || out.sqft > 60000)) delete out.sqft;
+  if (out.price != null && (out.price < 10000 || out.price > 500000000)) delete out.price;
+  return Object.keys(out).length ? out : null;
+}
+
 // v58.2: canonical Realtor.com links are ID-only
 // (/realestateandhomes-detail/M2202013685 — no address in the slug), so when
 // the URL parser comes up empty the page itself is the address source.
@@ -574,11 +613,18 @@ export default async function handler(request, response) {
   // way to tell "this listing has 5 photos" from "we only reached 5 of 73" —
   // and those two need completely different responses from us.
   let expectedPhotos = 0;
-  if (rc.photos.length > 0) {
-    // Licensed media is typically full-size already — no rewrite, no fallback.
-    pagePhotoUrls = rc.photos.slice(0, MAX_PHOTOS).map((u) => ({ url: u, fallbackUrl: "" }));
-    photoSource = "licensed_listing_data";
-  } else {
+  // v62.21: facts parsed from the listing page itself (see factsFromHtml).
+  let pageFacts = null;
+  /* v62.21 — RENTCAST NO LONGER PREEMPTS THE PAGE.
+     This used to read `if (rc.photos.length > 0) { use them } else { scrape }`,
+     so ANY licensed media — one photo or five — meant the listing page was
+     never fetched at all. Two things wrong with that. It silently caps a
+     73-photo listing at whatever the records API happens to carry, and it
+     makes the photo source unknowable from the outside: a thin import looks
+     identical whether the scraper failed or RentCast simply returned five.
+     The page is now always attempted and licensed media is a FALLBACK,
+     used only when it beats what the page yielded. */
+  {
     // v58 (live 3-portal test, Jul 23): direct fetches are dead on every
     // major portal — Zillow bot-walls (fast 403/challenge, 0 photos),
     // Redfin and Realtor.com hang past any serverless budget. RentCast has
@@ -684,6 +730,8 @@ export default async function handler(request, response) {
       }
     }
     if (pagePhotoUrls.length > 0) photoSource = proxyKey ? "listing_page_proxy" : "listing_page";
+    // v62.21: the page we already paid to fetch carries the listing facts.
+    if (html) pageFacts = factsFromHtml(html);
     if (html && !address) {
       // v58.2: ID-only links (realtor.com M-ids) carry no address — pull it
       // from the page markup, then backfill facts from RentCast.
@@ -693,6 +741,16 @@ export default async function handler(request, response) {
         rc = { facts: late.facts, photos: rc.photos };
       }
     }
+  }
+
+  // v62.21: licensed media is a FALLBACK now, not a preemption — it only
+  // wins when it actually beats the page. On the free records tier this is
+  // almost always an empty array, which is exactly why it must not have
+  // been gating the scrape.
+  if (rc.photos.length > pagePhotoUrls.length) {
+    console.log(`[import] licensed media (${rc.photos.length}) beat the page (${pagePhotoUrls.length}) — using it.`);
+    pagePhotoUrls = rc.photos.slice(0, MAX_PHOTOS).map((u) => ({ url: u, fallbackUrl: "" }));
+    photoSource = "licensed_listing_data";
   }
 
   // Download + store, parallel with a small concurrency cap.
@@ -765,7 +823,13 @@ export default async function handler(request, response) {
     address: address
       ? { line: address.line, city: address.city, state: address.state, zip: address.zip, display: address.display }
       : null,
-    facts: rc.facts,
+    // v62.21: page facts win where present, records fill the gaps. The page
+    // is the listing as published (a price cut shows up there first); the
+    // records API is a monthly-refreshed database. Either alone is enough
+    // for the four fields the app reads, so an import no longer depends on
+    // the RentCast subscription being active.
+    facts: (pageFacts || rc.facts) ? { ...(rc.facts || {}), ...(pageFacts || {}) } : null,
+    factsSource: pageFacts && rc.facts ? "page+records" : pageFacts ? "page" : rc.facts ? "records" : "none",
     photoSource,
     photos: stored.map(({ order, ...p }) => p),
     warnings
