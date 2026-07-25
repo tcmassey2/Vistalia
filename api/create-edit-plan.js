@@ -767,7 +767,12 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
             text: [
               "You are Vistalia Motion Director, a professional real estate video editor.",
               "Build a cinematic edit plan from the uploaded listing photos.",
-              "USE EVERY PHOTO PROVIDED — do not skip any. Each photo becomes one scene.",
+              // v62.14: this used to read "USE EVERY PHOTO PROVIDED — do not
+              // skip any", which directly contradicted the scene budget
+              // whenever the gallery held more photos than the chosen
+              // duration can carry. The video's length is the promise we
+              // made the customer; the photo list is raw material.
+              `The customer chose a ${targetSceneCount}-scene video. Select the ${targetSceneCount} STRONGEST photos for the tour and give each exactly one scene. Leaving weaker or redundant photos out is correct and expected — never pad the tour past ${targetSceneCount} scenes to fit more photos in.`,
               "Order the scenes as a professional property tour: exterior hero → entry → kitchen → living/great room → dining → primary bedroom → other bedrooms → bathrooms → outdoor/pool → neighborhood/amenities → detail/outro.",
               "Never invent property features, views, amenities, upgrades, materials, or room names.",
               "Only describe details visible in the image or user-provided listing facts.",
@@ -805,7 +810,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
               exportFormat,
               engine,
               targetSceneCount,
-              instruction: `Generate exactly ${targetSceneCount} scenes — one per photo. Use every photo ID below. Photos with images visible to you should anchor the order; the rest should be inferred from filename and category.`,
+              instruction: `Generate exactly ${targetSceneCount} scenes for a ${targetDurationSec}-second video — one scene per photo, each photo used at most once. There are ${allPhotos.length} photos available and only ${targetSceneCount} scenes: choose the ${targetSceneCount} best and DROP the rest (duplicates, weaker angles of a space you already covered, anything redundant). Photos with images visible to you should anchor the order; the rest should be inferred from filename and category.`,
               photos: allPhotos.map((photo, index) => ({
                 id: photo.id,
                 fileName: photo.fileName,
@@ -1653,8 +1658,14 @@ function editPlanTextFormat(photoIds, targetSceneCount, options = {}) {
 function editPlanSchema(photoIds, targetSceneCount, { includeNarration = false } = {}) {
   // Min/max scenes: aim for the target but allow ±1 slack so the AI doesn't
   // get stuck if a photo is genuinely unusable (e.g. duplicated from upload).
+  // v62.14 DURATION IS THE CONTRACT (Troy: "I rendered a 30 second render
+  // not a 60. So why did I receive a 52 second video?"). maxScenes used to
+  // be the PHOTO COUNT, so a 13-photo gallery could produce 13 scenes on a
+  // 30s ask (which budgets 9) — and under voice-first the per-scene lines
+  // then joined into a 124-word script and shipped a 52s video. The
+  // customer's chosen duration now bounds the plan: targetSceneCount ± 1.
   const minScenes = Math.max(3, Math.min(targetSceneCount - 1, photoIds.length));
-  const maxScenes = Math.min(MAX_PLAN_SCENES, photoIds.length);
+  const maxScenes = Math.max(minScenes, Math.min(MAX_PLAN_SCENES, photoIds.length, targetSceneCount + 1));
 
   return {
     type: "object",
@@ -2007,12 +2018,41 @@ function normalizeEditPlan(plan, photos, context) {
   const cadenceStretched = targetCadence > styleCadence + 0.05;
   const snapUnit = chooseSnapUnitSec(beatGrid, targetCadence);
 
-  const baseScenes = [...(plan.scenes || [])]
+  // v62.14 DURATION HARD CAP. The schema bound above is a SOFT control — the
+  // Gemini failover path (v61.3) returns free-form JSON and never sees it,
+  // and a model can always over-deliver. This is the guarantee: the plan can
+  // never carry more scenes than the customer's chosen duration budgets.
+  // Without it a 13-photo gallery shipped 13 scenes on a 30s ask, whose
+  // per-scene lines then joined into a 124-word script and a 52s video.
+  const sceneBudget = Math.min(
+    MAX_PLAN_SCENES,
+    Math.max(4, Math.round((Number(context.targetDurationSec) || DEFAULT_TARGET_DURATION_SEC) / avgSecPerScene({ engine })))
+  );
+  const submittedSceneCount = (plan.scenes || []).filter((s) => photoIds.has(s.photoId)).length;
+  if (submittedSceneCount > sceneBudget) {
+    console.warn(
+      `[plan] SCENE BUDGET: model returned ${submittedSceneCount} scenes for a ` +
+      `${context.targetDurationSec || DEFAULT_TARGET_DURATION_SEC}s video (budget ${sceneBudget}) — ` +
+      `trimming the trailing ${submittedSceneCount - sceneBudget}. Duration is the contract.`
+    );
+  }
+  const orderedSubmitted = [...(plan.scenes || [])]
     .filter((scene) => photoIds.has(scene.photoId))
-    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
-    // Cap at MAX_PLAN_SCENES (24) — was hard-capped at 12, which is why
-    // 2-minute renders silently turned into 1-minute renders.
-    .slice(0, MAX_PLAN_SCENES)
+    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+  // Trim from the MIDDLE by quality, never the tail: tour flow deliberately
+  // saves its strongest closing shot for last (pool at dusk, twilight rear
+  // exterior), so a plain slice() would amputate the ending.
+  const budgeted = orderedSubmitted.length <= sceneBudget
+    ? orderedSubmitted
+    : (() => {
+        const first = orderedSubmitted[0];
+        const last = orderedSubmitted[orderedSubmitted.length - 1];
+        const middle = orderedSubmitted.slice(1, -1)
+          .sort((a, b) => Number(b.qualityScore || 0) - Number(a.qualityScore || 0))
+          .slice(0, Math.max(0, sceneBudget - 2));
+        return [first, ...middle, last].sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+      })();
+  const baseScenes = budgeted
     .map((scene, index) => {
       // v33.3 ROOM RECONCILIATION: the per-photo classifier (curate/classify,
       // one image per call) is more reliable than the Motion Director's
