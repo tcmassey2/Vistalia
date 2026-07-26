@@ -20,8 +20,10 @@ import { downloadVideo, deliverableFilename } from "../lib/download";
  *
  * NEW (v16): per-scene regenerate. The scenes grid lets the agent surgically
  * re-render a single bad scene without re-running all 24. Two modes:
- *   - "Regen AI"      — re-roll the same Runway prompt (~$0.25, ~90s).
- *   - "Replace KB"    — swap the scene for a Ken Burns motion clip (free).
+ *   - "Replace with steady shot" — swap the scene for a deterministic
+ *     steady camera move at the exact same length. v62.38: AI re-rolls are
+ *     gone — the replacement is video-only, so the voiceover, music, and
+ *     captions are preserved from the original master byte-for-byte.
  * On success the modal triggers `onUpdated()` so the dashboard reloads
  * the library and the swapped scene is picked up everywhere.
  */
@@ -652,10 +654,10 @@ function ScenesRegenGrid({
           ))}
       </div>
       <div className="text-[11px] text-ink-dim leading-relaxed">
-        Tap any scene to play it on its own. Redo with AI re-creates a scene with fresh
-        cinematic motion and re-stitches your video (60–180 seconds). Photo Motion swaps
-        in a clean, artifact-free camera move — instant peace of mind for
-        compliance-sensitive listings.
+        Tap any scene to play it on its own. Replace with steady shot swaps a scene for a
+        clean, artifact-free camera move at the exact same length — your voiceover, music,
+        and captions are preserved untouched. Instant peace of mind for compliance-sensitive
+        listings.
       </div>
       {preview && (
         <ScenePreviewLightbox
@@ -754,22 +756,15 @@ function ScenePreviewLightbox({
             className="w-full max-h-[70vh] object-contain bg-black"
           />
         </div>
-        <div className="grid grid-cols-2 gap-2 mt-3">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onRegen(scene.sceneIndex, "ai")}
-            className="px-3 py-2 text-[11px] uppercase tracking-wider font-semibold bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 hover:border-gold rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            Redo with AI
-          </button>
+        <div className="grid grid-cols-1 gap-2 mt-3">
           <button
             type="button"
             disabled={busy}
             onClick={() => onRegen(scene.sceneIndex, "kenburns")}
-            className="px-3 py-2 text-[11px] uppercase tracking-wider font-semibold bg-surface-raised hover:bg-surface-input text-ink-muted hover:text-ink border border-edge hover:border-ink-muted rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Swaps this scene for a clean, steady camera move at the exact same length — your voiceover, music, and captions stay exactly as they are."
+            className="px-3 py-2 text-[11px] uppercase tracking-wider font-semibold bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 hover:border-gold rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            Photo Motion
+            Replace with steady shot
           </button>
         </div>
       </div>
@@ -857,7 +852,9 @@ function SceneCell({
               <div>
                 <div className="text-rose-300 text-xs font-semibold mb-1">Failed</div>
                 <div className="text-[10px] text-ink-muted leading-tight">
-                  {(activeJob.error || "Regen failed").slice(0, 70)}
+                  {/* v62.38: 70 chars cut the refusal messages mid-sentence —
+                      "re-render the listing once" is the actionable half. */}
+                  {(activeJob.error || "Scene replacement failed").slice(0, 200)}
                 </div>
               </div>
             ) : (
@@ -878,24 +875,15 @@ function SceneCell({
           <span className="text-ink font-medium">{sceneLabel}</span>
           {roomLabel && <span className="text-ink-muted">{roomLabel}</span>}
         </div>
-        <div className="grid grid-cols-2 gap-1">
-          <button
-            type="button"
-            disabled={disabled || isActive || !scene.clipUrl}
-            onClick={() => onRegen(scene.sceneIndex, "ai")}
-            title={!scene.clipUrl ? "This scene wasn't saved with the render — re-render the listing to enable fixes." : "Re-create this scene with fresh cinematic motion"}
-            className="px-2 py-1.5 text-[10px] uppercase tracking-wider font-semibold bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 hover:border-gold rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            Redo with AI
-          </button>
+        <div className="grid grid-cols-1 gap-1">
           <button
             type="button"
             disabled={disabled || isActive || !scene.clipUrl}
             onClick={() => onRegen(scene.sceneIndex, "kenburns")}
-            title={!scene.clipUrl ? "This scene wasn't saved with the render — re-render the listing to enable fixes." : "Replace with a clean, artifact-free camera move"}
-            className="px-2 py-1.5 text-[10px] uppercase tracking-wider font-semibold bg-surface-raised hover:bg-surface-input text-ink-muted hover:text-ink border border-edge hover:border-ink-muted rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            title={!scene.clipUrl ? "This scene wasn't saved with the render — re-render the listing to enable fixes." : "Swaps this scene for a clean, steady camera move at the same length — voiceover, music, and captions untouched."}
+            className="px-2 py-1.5 text-[10px] uppercase tracking-wider font-semibold bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 hover:border-gold rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            Photo Motion
+            Replace with steady shot
           </button>
         </div>
       </div>

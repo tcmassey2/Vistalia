@@ -997,6 +997,12 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     narrationLineCount: placements.length,
     aligned: true,
     captionsApplied: Boolean(captionsAssPath),
+    // v62.38: the MASTER-canvas track too, not just the square sibling —
+    // runway-job persists it next to master.mp4 so the steady-shot regen
+    // can re-burn the exact captions. Found by adversarial review: the
+    // upload gate read this field and no return ever carried it, which
+    // made the entire regen feature unreachable on captioned renders.
+    captionsAssPath,
     captionsSquareAssPath
   };
 }
@@ -1403,6 +1409,8 @@ export async function applyVoiceFirstMix({
     voiceId: voiceFirst.voiceId,
     narrationLineCount: (sentences || []).length,
     captionsApplied: Boolean(captionsAssPath),
+    // v62.38: see the aligned-path return — same omission, same fix.
+    captionsAssPath,
     captionsSquareAssPath
   };
 }

@@ -72,9 +72,13 @@ export default async function handler(request, response) {
       response.status(400).json({ status: "failed", error: "regenerate-scene requires sceneIndex (non-negative integer)." });
       return;
     }
-    const normalizedMode = String(mode || "ai").toLowerCase();
-    if (!["ai", "kenburns"].includes(normalizedMode)) {
-      response.status(400).json({ status: "failed", error: "mode must be 'ai' or 'kenburns'." });
+    // v62.38: AI regen is retired — every replacement is a deterministic
+    // steady shot at the original scene's exact length, so the voiceover is
+    // preserved rather than re-synthesized. Legacy mode values are accepted
+    // (older clients still send them) and all mean the same thing now.
+    const normalizedMode = String(mode || "steady").toLowerCase();
+    if (!["ai", "kenburns", "steady"].includes(normalizedMode)) {
+      response.status(400).json({ status: "failed", error: "mode must be 'steady' (legacy 'ai'/'kenburns' accepted)." });
       return;
     }
     if (!manifest || !Array.isArray(manifest.scenes) || manifest.scenes.length === 0) {
@@ -82,11 +86,10 @@ export default async function handler(request, response) {
       return;
     }
 
-    // Tier guard — regen still costs Runway credits when mode=ai, so enforce
-    // the same engine availability rules a full render would. Ken-Burns-only
-    // regen is free for any tier with rendering enabled.
-    const tierEngine = normalizedMode === "kenburns" ? "remotion" : "runway";
-    const tierGuard = await enforceTierGuard(request, { ...manifest, engine: tierEngine });
+    // Tier guard — v62.38: the steady-shot replacement spends no fal or
+    // ElevenLabs money (deterministic floor + restitch), so it's gated like
+    // the free engine: any tier with rendering enabled can fix a scene.
+    const tierGuard = await enforceTierGuard(request, { ...manifest, engine: "remotion" });
     if (!tierGuard.ok) {
       response.status(tierGuard.status || 402).json({
         status: "failed",
@@ -141,7 +144,10 @@ export default async function handler(request, response) {
       body: JSON.stringify({
         jobId,
         sceneIndex,
-        mode: normalizedMode,
+        // v62.38: the worker ignores mode (all replacements are steady
+        // shots), but a mid-deploy OLD worker still branches on it —
+        // "kenburns" is the value both generations treat as "no AI spend".
+        mode: "kenburns",
         manifest
       })
     }, DEFAULT_TIMEOUT_MS);
@@ -216,15 +222,16 @@ async function enforceTierGuard(request, manifest) {
 
   const auth = String(request.headers.authorization || "");
   if (!auth.startsWith("Bearer ")) {
-    if (String(manifest.engine || "remotion").toLowerCase() === "runway") {
-      return {
-        ok: false,
-        status: 401,
-        error: "Sign in to regenerate scenes with Cinematic AI.",
-        upgradeRequired: true
-      };
-    }
-    return { ok: true };
+    // v62.38 (adversarial review): this used to fail OPEN for non-runway
+    // engines — and v62.38 hardcodes engine "remotion", so an
+    // unauthenticated request skipped the tier lookup entirely,
+    // tierGuard.state stayed undefined, the trial watermark re-derivation
+    // never ran, and the worker trusted the CLIENT-posted
+    // freeRenderWatermark. Executed proof: omit the Authorization header →
+    // 202 → unmarked master overwrites the trial's marked one at the same
+    // public URL. Regen operates on an authenticated user's library entry;
+    // there is no anonymous regen. Fail closed.
+    return { ok: false, status: 401, error: "Sign in to replace scenes." };
   }
 
   const token = auth.slice(7);
@@ -288,7 +295,7 @@ async function enforceTierGuard(request, manifest) {
     return {
       ok: false,
       status: 402,
-      error: `${engineLabel} regen isn't included in your current plan (${state.tier}). Try the "Replace with Ken Burns" option instead — it's free on any plan.`,
+      error: `${engineLabel} isn't included in your current plan (${state.tier}). Scene replacement is available on every plan with rendering enabled.`,
       upgradeRequired: true,
       currentTier: state.tier,
       requestedEngine

@@ -103,8 +103,11 @@ function sweepStaleTempDirs() {
     .catch(() => {}); // best-effort — never block or fail a render
 }
 
-const ENCODE_PRESET = "superfast";
-const ENCODE_CRF_MASTER = "19";
+// v62.38: exported — the steady-shot regen encodes its caption/watermark
+// passes with the SAME settings, so a regenerated master is visually
+// indistinguishable from a first-pass one.
+export const ENCODE_PRESET = "superfast";
+export const ENCODE_CRF_MASTER = "19";
 const ENCODE_CRF_DERIVED = "20";
 const X264_PARAMS = "rc-lookahead=10:ref=2:bframes=2:keyint=60:scenecut=0";
 const BUFSIZE = "2M";
@@ -1520,6 +1523,20 @@ export async function renderRunwayJob(body, options = {}) {
     pathPrefix: "runway"
   });
 
+  // v62.38: persist the caption track next to master.mp4. The captions are
+  // burned into the master's PIXELS, so any later video-only rebuild (the
+  // steady-shot scene replacement) must re-burn them — and until now the ASS
+  // was a temp file that died with the job. A few KB buys regen the ability
+  // to reproduce the master's captions exactly. Fail-soft: a miss only means
+  // this render can't be scene-replaced until re-rendered.
+  if (narration?.captionsAssPath) {
+    await uploadCaptionsArtifact({
+      manifest, jobId,
+      assPath: narration.captionsAssPath,
+      pathPrefix: "runway"
+    }).catch((err) => console.warn(`[upload] captions.ass upload failed (${err.message}) — scene replacement will require a re-render.`));
+  }
+
   // Cleanup per-scene local files now that they're uploaded.
   for (const clip of normalizedClips) {
     await fs.unlink(clip.clipPath).catch(() => {});
@@ -2462,10 +2479,17 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // grain so typography stays crisp.
     const postHalation = [
       ...(!isPre && film.grain ? [film.grain] : []),
-      ...(watermarkFilter ? [watermarkFilter] : []),
+      // v62.38 (audit): brand watermark and address card gate on !isPre now.
+      // preNormalized clips (regen path) ALREADY carry both burned in from
+      // their original render — re-applying stacked a second semi-transparent
+      // watermark and drew the title card over the existing one, darker and
+      // bolder each regen. This was the best mechanical explanation for the
+      // "weird address card" sighting: a regen double-carded scene 1, and the
+      // next full render (no preNormalized clips) drew one clean card again.
+      ...(!isPre && watermarkFilter ? [watermarkFilter] : []),
       // v55: freeRenderWatermark no longer applied here — see the
       // dual-master final pass in the main flow.
-      ...(addressIntroFilter ? [addressIntroFilter] : [])
+      ...(!isPre && addressIntroFilter ? [addressIntroFilter] : [])
     ].join(",");
     const useHalation = !isPre && film.halation;
     const encodeArgs = [
@@ -2480,25 +2504,31 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       normalized
     ];
 
+    // v62.38 (adversarial review): the headshot composites per-clip like the
+    // watermark and card do — and like them it is already IN a preNormalized
+    // clip's pixels. Re-compositing was near-invisible (same asset, same
+    // position) until the user updates their brand kit, at which point a
+    // regen would stack the NEW headshot over the old one.
+    const clipHeadshot = isPre ? null : cornerHeadshotPath;
     if (useHalation) {
       // Halation needs a split/blend sub-graph → filter_complex always.
       const graph =
         `[0:v]${preHalation}[fbase];` +
         film.halationGraph("fbase", "fglow") + ";" +
         `[fglow]${postHalation || "null"}[vout]` +
-        (cornerHeadshotPath ? `;[vout][1:v]overlay=${cornerOverlayX}:${cornerOverlayY}[vfinal]` : "");
+        (clipHeadshot ? `;[vout][1:v]overlay=${cornerOverlayX}:${cornerOverlayY}[vfinal]` : "");
       await runFFmpeg([
         "-y",
         "-threads", ENCODE_THREADS,
         "-i", clip.clipPath,
-        ...(cornerHeadshotPath ? ["-i", cornerHeadshotPath] : []),
+        ...(clipHeadshot ? ["-i", clipHeadshot] : []),
         "-filter_complex", graph,
-        "-map", cornerHeadshotPath ? "[vfinal]" : "[vout]",
+        "-map", clipHeadshot ? "[vfinal]" : "[vout]",
         ...encodeArgs
       ], { timeoutMs: 180000, label: `runway:normalize-${clip.sceneIndex}` });
     } else {
       const baseFilters = [preHalation, postHalation].filter(Boolean).join(",");
-      if (cornerHeadshotPath) {
+      if (clipHeadshot) {
         // Two-input filter_complex: base video → grade + watermark → overlay headshot.
         const filterComplex =
           `[0:v]${baseFilters}[bg];` +
@@ -2507,7 +2537,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
           "-y",
           "-threads", ENCODE_THREADS,
           "-i", clip.clipPath,
-          "-i", cornerHeadshotPath,
+          "-i", clipHeadshot,
           "-filter_complex", filterComplex,
           "-map", "[vout]",
           ...encodeArgs
@@ -2831,7 +2861,7 @@ function runwayDimensions(manifest) {
 // enough to nudge the upgrade and credit the brand if the video gets
 // posted; subtle enough that posting it is still tempting. Static text
 // only — no user input reaches this filter.
-function buildFreeRenderWatermark(dimensions) {
+export function buildFreeRenderWatermark(dimensions) {
   // v46.1 (Troy): ~20% larger than the launch size (/36 → /30). The mark is
   // the upgrade nudge — Reel-E closed Troy himself on exactly this feeling.
   const fontSize = Math.max(24, Math.round(dimensions.width / 30));
@@ -3293,6 +3323,29 @@ async function downloadImageValidated(url, destPath, label) {
 // Failures here are warned-and-skipped; regen for that one scene will
 // fall back to "not available" in the UI but the rest of the render
 // still ships.
+// v62.38: the burned caption track, persisted for video-only rebuilds.
+// Lives at <owner>/<prefix>/<jobId>/captions.ass — derivable from the
+// master URL (same folder), so no new audit column is needed.
+export async function uploadCaptionsArtifact({ manifest, jobId, assPath, pathPrefix }) {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const bucket = process.env.SUPABASE_GENERATED_VIDEOS_BUCKET || "generated-videos";
+  if (!supabaseUrl || !serviceRoleKey) return "";
+  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+  const ownerId = slug(manifest.project?.userId || manifest.project?.id || "demo");
+  const storagePath = `${ownerId}/${pathPrefix}/${jobId}/captions.ass`;
+  const buffer = await fs.readFile(assPath);
+  const result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
+    contentType: "text/plain; charset=utf-8",
+    upsert: true
+  });
+  if (result.error) throw new Error(result.error.message);
+  console.info(`[upload] captions.ass persisted (${buffer.length} bytes) — steady-shot regen enabled for this render.`);
+  return supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;
+}
+
 export async function uploadPerSceneClips({ manifest, jobId, normalizedClips, clipResults, pathPrefix }) {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";

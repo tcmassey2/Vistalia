@@ -621,7 +621,10 @@ export async function curatePhotos(args: {
    /api/regenerate-scene — surgical single-scene re-render
    ============================================================ */
 
-export type RegenerateMode = "ai" | "kenburns";
+// v62.38: every replacement is a steady shot now — "kenburns" is the wire
+// value both old and new workers treat as "no AI spend"; "ai" is accepted
+// server-side for stale clients and means the same thing.
+export type RegenerateMode = "ai" | "kenburns" | "steady";
 
 export interface RegenerateSceneResult {
   status: "queued" | "rendering" | "completed" | "failed";

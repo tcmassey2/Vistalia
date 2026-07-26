@@ -898,6 +898,12 @@ async function runRegenerateJob(progressKey, body) {
     console.info(`[server] regen ${progressKey} completed in ${elapsedMin} min`);
     updateJob(progressKey, {
       ...result,
+      // v62.38: result.jobId is the ORIGINAL render's id — spreading it
+      // last made the persisted status row self-identify as the wrong job
+      // (worker fast path and DB fallback disagreed). The progress key is
+      // this row's identity.
+      jobId: progressKey,
+      originalJobId: result?.jobId || body?.jobId || "",
       status: "completed",
       phase: "Ready to download",
       progress: 100

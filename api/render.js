@@ -598,7 +598,11 @@ async function fetchRenderJobFromSupabase(jobId) {
       engine: row.engine || persisted.engine || "remotion",
       formats: persisted.formats || undefined,
       socialShorts: persisted.socialShorts || undefined,
-      error: row.error || ""
+      error: row.error || "",
+      // v62.38: without this, a regen refusal's machine-readable code (e.g.
+      // REGEN_PREDATES_CAPTION_ARTIFACT) died at the DB fallback — the
+      // common path, since the worker restarts on every deploy.
+      errorCode: row.error_code || persisted.errorCode || undefined
     };
   } catch {
     return null;

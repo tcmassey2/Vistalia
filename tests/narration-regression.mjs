@@ -489,6 +489,66 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     wjSrc.indexOf("does not reconcile") < wjSrc.indexOf("photoScenes.length = 0"));
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   v62.38 — steady-shot regen: every adversarially-proven defect, pinned.
+   The e2e harness (render-worker/tests/regen-splice.e2e.test.mjs) proves
+   the behaviours; these source lints make the specific regressions loud.
+   ══════════════════════════════════════════════════════════════════════ */
+{
+  const vmSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/voice-mixer.mjs"), "utf8");
+  const rjSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/runway-job.mjs"), "utf8");
+  const rgSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/regenerate-job.mjs"), "utf8");
+  const apiSrc = fs.readFileSync(path.join(ROOT, "api/regenerate-scene.js"), "utf8");
+
+  // B0: the upload gate reads narration.captionsAssPath — BOTH mixer paths
+  // must return it, or the entire regen feature is unreachable dead code
+  // that fails every captioned render with advice that reproduces itself.
+  const returnsWithSquare = vmSrc.match(/captionsSquareAssPath\s*[,}]/g) || [];
+  const returnsWithMaster = vmSrc.match(/^\s*captionsAssPath,\s*$/gm) || [];
+  check("v62.38: both mixer returns carry captionsAssPath (the upload gate's field)",
+    returnsWithMaster.length >= 2, `${returnsWithMaster.length} of ${returnsWithSquare.length}`);
+  check("v62.38: the render actually persists captions.ass",
+    /uploadCaptionsArtifact\(\{/.test(rjSrc) && /narration\?\.captionsAssPath/.test(rjSrc));
+
+  // A4/A5: -shortest inside the ±tolerance deleted the voiceover's final
+  // word. The mux must pad, never truncate, and prove the audio after.
+  check("v62.38: regen mux has NO -shortest argument",
+    !/"-shortest"/.test(rgSrc)); // quoted = an actual ffmpeg arg; comments explain its absence
+  check("v62.38: length tolerance is sub-frame-ish (≤0.06s)",
+    /LENGTH_TOLERANCE_SEC = 0\.0[0-6]/.test(rgSrc));
+  check("v62.38: post-mux audio duration is asserted",
+    /probeAudioDurationSec\(cleanMaster\)/.test(rgSrc) && /voiceover was not preserved intact/.test(rgSrc));
+
+  // C: the replacement speaks METADATA (the timeline's author), never the
+  // measurement — measurement is a cross-check log only.
+  check("v62.38: floor renders at the audit duration",
+    /durationSec: auditDuration/.test(rgSrc) && /rebuilding at the audit value/.test(rgSrc));
+
+  // E: the watermark-laundering door — the tier guard must fail CLOSED on
+  // missing auth (the old open branch let an unauthenticated request carry
+  // a client-posted freeRenderWatermark straight to the worker).
+  const nonBearerBranch = apiSrc.slice(apiSrc.indexOf('auth.startsWith("Bearer ")'), apiSrc.indexOf('auth.slice(7)'));
+  check("v62.38: regen auth fails closed (no ok:true in the non-Bearer branch)",
+    !/ok:\s*true/.test(nonBearerBranch), nonBearerBranch.slice(0, 120));
+
+  // F: an upload failure must never patch the audit row — an empty URL in
+  // a PATCH is a delete of the customer's finished video.
+  check("v62.38: upload failure throws before any audit patch",
+    /if \(!newMasterUrl && !upload\?\.storageSkipped\)/.test(rgSrc) &&
+    rgSrc.indexOf("the original render is untouched") < rgSrc.indexOf("updateRenderAudit({"));
+  check("v62.38: audit patch only writes truthy URLs",
+    /if \(newMasterUrl\) \{[\s\S]{0,200}updateRenderAudit/.test(rgSrc));
+
+  // D residue: headshot compositing gates on !isPre like card/watermark.
+  check("v62.38: preNormalized clips skip the headshot re-composite",
+    /const clipHeadshot = isPre \? null : cornerHeadshotPath/.test(rjSrc));
+
+  // G: QC provenance survives the regen round-trip.
+  check("v62.38: regen carries sweepReplaced/floorReason/attempts through",
+    /usedPhotoMotionFloor: d\.scene\.engineUsed === "photo_motion"/.test(rgSrc) &&
+    /sweepReplaced: Boolean\(d\.scene\.sweepReplaced\)/.test(rgSrc));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

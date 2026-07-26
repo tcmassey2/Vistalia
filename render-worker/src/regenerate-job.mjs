@@ -1,378 +1,379 @@
-// Vistalia — Per-scene regenerate orchestrator.
+// Vistalia — Per-scene STEADY-SHOT replacement (v62.38).
 //
-// The production-grade fix for hallucinated AI scenes. When one of the 24
-// Runway scenes comes out wrong (microwave-on-fridge, ceiling fan doubled,
-// phantom wall), the user clicks "Regen this one" and we:
+// The old regen re-generated one clip with AI and then rebuilt the entire
+// soundtrack from the legacy per-scene-lines machinery — because the
+// voice-first stem was never persisted, "fix one wobbling scene" silently
+// replaced the whole video's voice with a different, stiffer read of
+// different sentences, and (post-v62.36) laid a pre-trim narration timeline
+// over a post-trim video. Six audited defects, one root cause: regen tried
+// to rebuild audio it could instead leave alone.
 //
-//   1. Look up the original audit row by jobId (which has scenes[])
-//   2. Generate ONE new clip for the target sceneIndex (Runway OR Ken Burns)
-//   3. Download the other N-1 scene clips from Supabase Storage
-//   4. Re-stitch + re-derive variants + re-cut shorts
-//   5. Re-upload master + variants + shorts + thumbnail (overwriting)
-//   6. Update the audit row with the new master URL + replaced scene entry
+// The v62.38 contract inverts it. The replacement clip is a DETERMINISTIC
+// steady shot (the same homography-drift floor the QC ladder ships) rendered
+// at the MEASURED duration of the clip it replaces — so the rebuilt video's
+// timeline is identical to the original's, and the original master's audio
+// stream remuxes onto it byte-for-byte. The voice, music, and ducking are
+// untouched by construction, not by care. Captions are re-burned from the
+// captions.ass the render persisted (v62.38 main-flow change).
 //
-// Cost-vs-credits tradeoff: ONE Runway clip = ~$0.25 instead of $6.00 for a
-// full re-render. ~24× cheaper, ~10× faster (one clip plus stitch instead of
-// 24 clips concurrent then stitch).
+//   1. Audit row → scene list (post-trim truth), clip URLs, master URL
+//   2. Download the master (audio + length reference), ALL N clips, and
+//      captions.ass (404 + captions-on original ⇒ refuse: pre-v62.38 render)
+//   3. ffprobe the target clip → exact duration; render the steady shot at it
+//   4. Restitch: N−1 clips preNormalized (grade/card/watermark already
+//      burned — normalize now skips them), the new clip normalized fresh
+//   5. ASSERT the rebuilt video's length matches the original master's —
+//      refuse and change nothing on mismatch (the customer can never end
+//      up worse than they started)
+//   6. Burn captions.ass + mux the ORIGINAL audio in one pass
+//   7. Trial renders: re-apply the free-render mark (dual-master, same as
+//      the main flow) — the clean master refreshes too, so a regen followed
+//      by the instant unlock serves the FIXED video, not the pre-regen one
+//   8. Upload master (+clean), thumbnail, per-scene clips; patch audit row
 //
-// Failure modes handled:
-//   - Audit row missing → can't regen, surface to user
-//   - Scene clip URL missing in audit row → that scene was never persisted
-//   - Runway daily cap → bubble up so frontend can prompt for upgrade
-//   - Runway returns garbage again → user can re-click regen with mode=kenburns
+// Deterministic replacement means: no QC needed (the floor cannot
+// hallucinate — that is its contract), no fal spend, no ElevenLabs spend.
+// mode is accepted for backward compatibility and ignored — every
+// replacement is a steady shot now.
 
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { execFile } from "node:child_process";
 import {
-  generateClip,
   generateKenBurnsFallback,
-  generateVeoSceneClip,
   stitchClipsAndOverlays,
   uploadPerSceneClips,
-  uploadDeliverables
+  uploadDeliverables,
+  buildFreeRenderWatermark,
+  ENCODE_PRESET,
+  ENCODE_CRF_MASTER
 } from "./runway-job.mjs";
+import { runFFmpeg, ENCODE_THREADS } from "./ffmpeg-runner.mjs";
+import { subtitlesFilterPath, CAPTIONS_FONTS_DIR } from "./captions.mjs";
 import { readRenderAudit, updateRenderAudit } from "./audit-log.mjs";
-import { deriveAspectVariants, buildSocialShorts } from "./aspect-variants.mjs";
-import { applyVoiceNarration } from "./voice-mixer.mjs";
+
+// The rebuilt timeline must equal the original's. The stitch is
+// deterministic and metadata-driven, and the replacement is rendered at the
+// same metadata the original stitch used — so the reproduction is exact to
+// container framing. Anything past ~a frame means an input genuinely
+// changed: refuse rather than desync the remuxed audio. (Adversarial
+// review proved the first cut's 0.35s tolerance was 10.5 frames wide, and
+// -shortest quietly deleted that much of the customer's final word.)
+const LENGTH_TOLERANCE_SEC = 0.06;
 
 export async function regenerateScene(body, options = {}) {
-  const { jobId, sceneIndex, mode = "ai", manifest } = body || {};
+  const { jobId, sceneIndex, manifest } = body || {};
   if (!jobId) throw new Error("regenerateScene: jobId required.");
   if (!Number.isInteger(sceneIndex) || sceneIndex < 0) {
     throw new Error("regenerateScene: sceneIndex (non-negative integer) required.");
   }
   if (!manifest) throw new Error("regenerateScene: manifest required.");
 
-  // v26.3: AI regen now runs Veo 3.1 Fast (matching the production cutover
-  // in dispatchRender). Rollback mirror: VEO_PRODUCTION=false restores
-  // Runway regen. mode='kenburns' still works for legacy renders until the
-  // Phase 3 UI strip.
-  const useVeo = process.env.VEO_PRODUCTION !== "false" && Boolean(process.env.FAL_KEY);
-  if (mode === "ai" && !useVeo && !process.env.RUNWAY_API_KEY) {
-    throw new Error("FAL_KEY (Veo) or RUNWAY_API_KEY is required for AI regenerate. Use mode='kenburns' to skip AI.");
-  }
-
   options.onProgress?.({ phase: "Looking up original render", progress: 4 });
 
-  // Step 1: read the audit row so we can find the per-scene clip URLs.
   const auditRow = await readRenderAudit(jobId);
   if (!auditRow) {
     throw new Error(
-      `Audit row not found for jobId ${jobId}. Per-scene regenerate only works on renders made with worker v16+ — older renders need a full re-render.`
+      `Audit row not found for jobId ${jobId}. Scene replacement only works on renders made with worker v16+ — older renders need a full re-render.`
     );
   }
-
   const originalScenes = Array.isArray(auditRow.scenes) ? auditRow.scenes : [];
   if (!originalScenes.length) {
-    throw new Error(
-      `Audit row for ${jobId} has no scenes array. Re-render this listing once with the latest worker to enable per-scene regen.`
-    );
+    throw new Error(`Audit row for ${jobId} has no scenes array. Re-render this listing once to enable scene replacement.`);
   }
-
   const targetScene = originalScenes.find((s) => Number(s.sceneIndex) === Number(sceneIndex));
-  if (!targetScene) {
-    throw new Error(`Scene ${sceneIndex} is not in the audit row for ${jobId}.`);
-  }
+  if (!targetScene) throw new Error(`Scene ${sceneIndex} is not in the audit row for ${jobId}.`);
 
-  // Validate that every OTHER scene has a clipUrl we can pull from Supabase.
-  // If even one is missing we can't reassemble the video, so fail loudly.
-  const otherScenes = originalScenes.filter((s) => Number(s.sceneIndex) !== Number(sceneIndex));
-  const missing = otherScenes.filter((s) => !s.clipUrl);
+  // EVERY clip must be pullable — the N−1 for the rebuild, the target for
+  // its measured duration.
+  const missing = originalScenes.filter((s) => !s.clipUrl);
   if (missing.length) {
     const indexes = missing.map((s) => s.sceneIndex).join(", ");
     throw new Error(
-      `Cannot regen — scenes ${indexes} have no persisted clipUrl in the audit row. ` +
-      `This usually means the original render predates v16 per-scene persistence. Run a full re-render once to enable regen.`
+      `Cannot replace — scenes ${indexes} have no persisted clipUrl in the audit row. Run a full re-render once to enable scene replacement.`
     );
+  }
+  const masterUrl = auditRow.master_mp4_url || "";
+  if (!masterUrl) {
+    throw new Error(`Audit row for ${jobId} has no master URL — the original audio cannot be preserved. Re-render this listing.`);
   }
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "estatemotion-regen-"));
-
-  // Step 2: locate the manifest scene for the target so we have prompt + photo.
-  // We trust the audit row's runwayPrompt over manifest.scenes[sceneIndex]
-  // because the manifest the frontend just posted may have been regenerated
-  // and have slightly different prompts than the original render — and we want
-  // regen to produce a clip that drops into the EXISTING stitch unchanged.
-  const manifestScene = buildSceneForRegen(targetScene, manifest);
-
-  // Step 3: generate the replacement clip.
-  const replacementPhase = mode === "kenburns" ? "Generating Ken Burns scene" : "Regenerating with AI";
-  options.onProgress?.({ phase: replacementPhase, progress: 8 });
-
-  let replacementClip;
   try {
-    if (mode === "kenburns") {
-      replacementClip = await generateKenBurnsFallback(manifestScene, manifest, tempDir, sceneIndex);
-    } else if (useVeo) {
-      // v26.3: Veo regen. A user regenerating a scene is usually unhappy
-      // with hallucinated detail, so regen runs CONSTRAINED by default —
-      // maximal fidelity is the whole point of the click. Retry once on
-      // failure; no Ken Burns downgrade on the Veo path.
-      // v62.17: constrained maps to motionStyle "steady" on Kling, so a
-      // regenerated scene came back visibly calmer than the nine around it
-      // — the fix for one bad scene announced itself as a different bad
-      // scene. First attempt now runs the SAME rung as its neighbours; the
-      // retry drops to constrained, which is the ladder working as designed.
-      try {
-        replacementClip = await generateVeoSceneClip(manifestScene, manifest, tempDir, sceneIndex, {});
-      } catch (veoErr) {
-        console.warn(`[regen] veo regen failed (${veoErr.message}). Retrying constrained.`);
-        replacementClip = await generateVeoSceneClip(manifestScene, manifest, tempDir, sceneIndex, { constrained: true });
-      }
-    } else {
-      replacementClip = await generateClip(manifestScene, manifest, tempDir, sceneIndex);
+    return await rebuildWithSteadyScene({
+      jobId, sceneIndex, manifest, auditRow, originalScenes, targetScene, masterUrl, tempDir, options
+    });
+  } finally {
+    // Success or failure, the workspace goes. Uploads happen before this.
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function rebuildWithSteadyScene({ jobId, sceneIndex, manifest, auditRow, originalScenes, targetScene, masterUrl, tempDir, options }) {
+  // ── Captions: the master's captions live in its PIXELS, so a video-only
+  // rebuild must re-burn them. v62.38 renders persist captions.ass next to
+  // master.mp4; its URL is derived, not stored.
+  const captionsUrl = masterUrl.replace(/master\.mp4(\?.*)?$/i, "captions.ass");
+  let assPath = null;
+  if (captionsUrl !== masterUrl) {
+    const candidate = path.join(tempDir, "captions.ass");
+    const got = await downloadFile(captionsUrl, candidate).then(() => true).catch(() => false);
+    if (got) {
+      // Guard against a storage 404 page saved as a "file".
+      const head = (await fs.readFile(candidate, "utf8").catch(() => "")).slice(0, 64);
+      if (/\[Script Info\]/i.test(head)) assPath = candidate;
     }
-  } catch (err) {
-    if (err.code === "RUNWAY_DAILY_CAP") throw err;
-    if (useVeo && mode === "ai") {
-      // No silent KB downgrade on Veo — surface the failure honestly.
-      const wrapped = new Error(`Veo regenerate failed twice for scene ${sceneIndex + 1}: ${err.message}`);
-      wrapped.code = "VEO_REGEN_FAILED";
-      throw wrapped;
-    }
-    console.warn(`[regen] ${mode} regen failed (${err.message}). Falling back to Ken Burns.`);
-    replacementClip = await generateKenBurnsFallback(manifestScene, manifest, tempDir, sceneIndex);
+  }
+  if (!assPath && manifest?.captionsEnabled !== false) {
+    // The original very likely has captions burned in and we cannot
+    // reproduce them. Shipping a captionless replacement master would be a
+    // silent downgrade — refuse with a path forward instead.
+    const err = new Error(
+      "This video was rendered before scene replacement shipped (no caption track was persisted). " +
+      "Re-render the listing once — every new render supports scene replacement."
+    );
+    err.code = "REGEN_PREDATES_CAPTION_ARTIFACT";
+    throw err;
   }
 
-  // Step 4: download the OTHER N-1 scene clips from Supabase Storage in
-  // parallel. These are the already-normalized scene-NNN.mp4 files we
-  // uploaded at the end of the original render.
-  options.onProgress?.({ phase: `Loading remaining ${otherScenes.length} scenes`, progress: 32 });
+  // ── Pull the original master (audio + length reference) and all N clips.
+  options.onProgress?.({ phase: "Loading original render", progress: 8 });
+  const originalMasterPath = path.join(tempDir, "original-master.mp4");
+  await downloadFile(masterUrl, originalMasterPath);
+  const originalLen = await probeDurationSec(originalMasterPath);
+  if (!Number.isFinite(originalLen) || originalLen <= 0) {
+    throw new Error("Could not measure the original master — refusing to rebuild against an unknown length.");
+  }
 
-  // Capped parallelism on downloads — Render Standard has limited bandwidth
-  // and 24 parallel downloads can saturate it and time out individual ones.
-  const downloadConcurrency = Math.min(6, otherScenes.length || 1);
-  const downloaded = await pMap(otherScenes, async (s) => {
+  const downloadConcurrency = Math.min(6, originalScenes.length);
+  const downloaded = await pMap(originalScenes, async (s) => {
     const localPath = path.join(tempDir, `clip-${String(s.sceneIndex).padStart(3, "0")}.mp4`);
     await downloadFile(s.clipUrl, localPath);
-    return {
-      sceneIndex: Number(s.sceneIndex),
-      photoId: s.photoId || "",
-      clipPath: localPath,
-      duration: Number(s.duration || 5),
-      transition: "crossfade",
-      overlay: null,
-      runwayTaskId: null,
-      fallback: Boolean(s.wasFallback),
-      // Mark as pre-normalized so stitchClipsAndOverlays can skip re-encoding.
-      preNormalized: true,
-      roomType: s.roomType || "",
-      cameraMotion: s.cameraMotion || "",
-      runwayPrompt: s.runwayPrompt || ""
-    };
+    return { scene: s, localPath };
   }, { concurrency: downloadConcurrency });
 
-  // Step 5: assemble the full clipResults array in sceneIndex order.
-  const clipResults = [...downloaded, replacementClip].sort(
-    (a, b) => a.sceneIndex - b.sceneIndex
-  );
+  // ── The replacement speaks METADATA, not measurement. The original
+  // stitch computed its xfade offsets from the audit row's duration values;
+  // to reproduce that timeline exactly, the steady shot must be rendered at
+  // the SAME value — even if the stored file secretly diverges from it
+  // (the documented pre-v62 Kling short-delivery class). Adversarial
+  // review proved the measurement-driven version re-authored a DIFFERENT
+  // timeline for exactly those renders, slid the drift under the old
+  // tolerance, and cost real voiceover bytes. Measurement demotes to a
+  // cross-check log.
+  const auditDuration = Number(targetScene.durationSec || targetScene.duration || 5);
+  const targetLocal = downloaded.find((d) => Number(d.scene.sceneIndex) === Number(sceneIndex));
+  const measured = await probeDurationSec(targetLocal.localPath);
+  if (Number.isFinite(measured) && Math.abs(measured - auditDuration) > 0.1) {
+    console.warn(
+      `[regen] scene ${sceneIndex + 1}: stored clip measures ${measured.toFixed(3)}s but the audit row says ` +
+      `${auditDuration.toFixed(3)}s — rebuilding at the audit value (the timeline's author). If the length gate ` +
+      `refuses below, this render's metadata never matched its media.`
+    );
+  }
+  console.info(`[regen] scene ${sceneIndex + 1}: replacing a ${auditDuration.toFixed(3)}s slot with a steady shot of the same length.`);
 
-  // Step 6: stitch. The existing stitchClipsAndOverlays helper re-normalizes
-  // every clip (applies the cinematic grade + watermark consistently). For
-  // already-normalized clips from Supabase, the normalization pass is mostly
-  // re-applying the brand watermark — which is exactly what we want if the
-  // user updated their brand kit between the original render and this regen.
-  options.onProgress?.({ phase: "Re-stitching video", progress: 50 });
-  const finalMp4 = path.join(tempDir, `${jobId}.mp4`);
+  options.onProgress?.({ phase: "Rendering steady replacement", progress: 22 });
+  const sceneForFloor = buildSceneForRegen(targetScene, manifest);
+  const replacementClip = await generateKenBurnsFallback(sceneForFloor, manifest, tempDir, sceneIndex, {
+    durationSec: auditDuration
+  });
+  // Trust the floor's RETURNED duration (it clamps to [1.6,10]); if the
+  // clamp ever bites, metadata and file agree with each other and the
+  // length gate below decides honestly.
+  replacementClip.duration = Number(replacementClip.duration) || auditDuration;
+  replacementClip.preNormalized = false; // fresh clip: gets grade/card/watermark in normalize
+
+  const clipResults = [
+    ...downloaded
+      .filter((d) => Number(d.scene.sceneIndex) !== Number(sceneIndex))
+      .map((d) => ({
+        sceneIndex: Number(d.scene.sceneIndex),
+        photoId: d.scene.photoId || "",
+        clipPath: d.localPath,
+        duration: Number(d.scene.durationSec || d.scene.duration || 5),
+        transition: "crossfade",
+        overlay: null,
+        runwayTaskId: null,
+        fallback: Boolean(d.scene.wasFallback),
+        preNormalized: true, // grade/card/watermark already burned — normalize skips them (v62.38)
+        roomType: d.scene.roomType || "",
+        cameraMotion: d.scene.cameraMotion || "",
+        runwayPrompt: d.scene.runwayPrompt || "",
+        // Carry QC provenance THROUGH the regen — uploadPerSceneClips
+        // rebuilds the audit scene entries from these objects, and dropping
+        // the fields rewrote every untouched scene's history (sweepReplaced
+        // → false, fallbackReason → null) on each regen.
+        usedPhotoMotionFloor: d.scene.engineUsed === "photo_motion",
+        floorReason: d.scene.fallbackReason || null,
+        attemptsUsed: Number.isFinite(d.scene.attempts) ? d.scene.attempts : undefined,
+        sweepReplaced: Boolean(d.scene.sweepReplaced)
+      })),
+    replacementClip
+  ].sort((a, b) => a.sceneIndex - b.sceneIndex);
+
+  // ── Restitch, video-only (skipMusic: the original audio is the audio).
+  options.onProgress?.({ phase: "Rebuilding video", progress: 40 });
+  const silentStitched = path.join(tempDir, `${jobId}-restitch.mp4`);
   const thumbnailPath = path.join(tempDir, `${jobId}.png`);
   const { normalizedClips } = await stitchClipsAndOverlays(
     clipResults,
-    manifest,
-    finalMp4,
+    { ...manifest, skipMusic: true },
+    silentStitched,
     thumbnailPath,
     {
       onProgress: (patch) => {
-        // Map the stitch's internal 76-81% progress to our 50-72% window.
         const inner = patch?.progress || 76;
-        const mapped = 50 + Math.min(22, Math.max(0, Math.round(((inner - 76) / 5) * 22)));
-        options.onProgress?.({ phase: patch?.phase || "Re-stitching", progress: mapped });
+        const mapped = 40 + Math.min(30, Math.max(0, Math.round(((inner - 76) / 5) * 30)));
+        options.onProgress?.({ phase: patch?.phase || "Rebuilding video", progress: mapped });
       }
     }
   );
 
-  // Step 7: optional narration re-apply. If the original render had narration
-  // and the brand kit + scene texts haven't changed, we *could* try to reuse
-  // the original narration tracks — but the scene durations and music ducking
-  // are tightly coupled to the stitched timeline, and resplicing audio across
-  // a swapped scene is error-prone. v1 approach: re-synthesize end-to-end.
-  // Bypassable via manifest.skipNarration or manifest.regenSkipNarration.
-  let narration = { narrationApplied: false, reason: "skipped" };
-  if (manifest?.skipNarration || manifest?.regenSkipNarration) {
-    console.info("[regen] narration skipped via manifest flag.");
-  } else {
-    // v62 KNOWN SEAM: a voice-first original (manifest.narration present) is
-    // re-voiced here via the legacy aligned path — the original stem is not
-    // persisted, and re-performing it would re-cut a grid the existing clips
-    // no longer match. Scene-locked and correct, but the read's character
-    // may differ from the original master. Revisit if regen volume grows.
-    if (manifest?.narration?.monologue) {
-      console.warn("[regen] original render was VOICE-FIRST — regen re-voices via the legacy aligned path (stem not persisted).");
-    }
-    options.onProgress?.({ phase: "Re-applying narration", progress: 74 });
-    const NARRATION_TIME_BUDGET_MS = 120 * 1000;
-    try {
-      narration = await Promise.race([
-        applyVoiceNarration({
-          masterMp4: finalMp4,
-          scenes: manifest.scenes,
-          // v62.18: same canvas the regenerated master is stitched at (see
-          // the packaging step below) — captions authored for 1080x1920 land
-          // off-frame on a 1:1 master.
-          deliveryDims: String(manifest?.runwayConfig?.ratio || manifest?.exportFormat || "")
-            .toLowerCase()
-            .match(/^(1:1|square)$/)
-            ? { width: 1080, height: 1080 }
-            : { width: 1080, height: 1920 },
-          // v31 pipeline-audit fix: regen never passed the ACTUAL clip
-          // durations (the v26.9 narration-sync fix) — the mixer fell back
-          // to manifest durations, which post-v31 are the snapped values,
-          // not the +0.5-padded clips on disk. Pass the real durations +
-          // crossfade overlap so regen narration lands on the same visible
-          // timeline as full renders.
-          sceneDurationsByPhoto: Object.fromEntries(
-            clipResults.filter((c) => c && c.photoId).map((c) => [c.photoId, Number(c.duration) || 0])
-          ),
-          crossfadeOverlapSec: manifest?.runwayConfig?.useCrossfades !== false ? 0.5 : 0,
-          // v32: continuous script (same one the original render used) so a
-          // single-scene regen re-lays the identical voiceover.
-          narrationScript: manifest?.narrationScript || "",
-          brandKit: manifest.brandKit || {},
-          tempDir,
-          jobId,
-          onProgress: () => {} // muted — we drive progress at the outer level
-        }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Narration re-apply exceeded 2 minutes — shipping music-only audio.")), NARRATION_TIME_BUDGET_MS)
-        )
-      ]);
-    } catch (err) {
-      console.warn(`[regen] narration re-apply failed (${err.message}). Continuing music-only.`);
-      narration = { narrationApplied: false, reason: err.message || "narration_failed" };
-    }
+  // ── THE CONTRACT: same timeline or no deal.
+  const rebuiltLen = await probeDurationSec(silentStitched);
+  if (!Number.isFinite(rebuiltLen) || Math.abs(rebuiltLen - originalLen) > LENGTH_TOLERANCE_SEC) {
+    throw new Error(
+      `Rebuilt video is ${Number.isFinite(rebuiltLen) ? rebuiltLen.toFixed(2) : "?"}s vs the original ${originalLen.toFixed(2)}s ` +
+      `— refusing to remux the original audio onto a drifted timeline. The original render is untouched.`
+    );
   }
-  const masterForVariants = narration.narrationApplied ? narration.masterMp4 : finalMp4;
 
-  // Step 8: package the master.
-  //
-  // v62.18: this used to call deriveAspectVariants(), which crops the master
-  // into 1:1 and pillarboxes it into 16:9. Two problems, and the square
-  // delivery format makes both load-bearing:
-  //   1. The main render path retired derived variants in v24 (ONE-MASTER).
-  //      A regenerated job therefore came back with MORE formats than the
-  //      original render had — the library would show 3 pills where the
-  //      customer's own render showed 1.
-  //   2. On a 1:1 master the crop is a no-op duplicate and the 16:9 pass is
-  //      a blurred-pillar file of a square source: minutes of CPU for a
-  //      deliverable the product doesn't sell.
-  // Regen now ships exactly what the render shipped — the master, in its own
-  // shape. deriveAspectVariants stays imported for the future Formats pack.
-  options.onProgress?.({ phase: "Packaging your video", progress: 82 });
-  const regenRatio = String(
-    manifest?.runwayConfig?.ratio || manifest?.exportFormat || "vertical"
-  ).toLowerCase();
-  const regenDims = regenRatio === "16:9" || regenRatio === "wide" ? { width: 1920, height: 1080 }
-                  : regenRatio === "1:1" || regenRatio === "square" ? { width: 1080, height: 1080 }
-                  : { width: 1080, height: 1920 };
+  // ── Captions + original audio, one pass. Without captions the video
+  // stream copies untouched (zero generation loss). NO -shortest: within
+  // the (sub-frame) tolerance the residue must PAD, never truncate —
+  // adversarial review measured -shortest deleting the voiceover's entire
+  // final word inside the old tolerance. The audio maps whole; a video
+  // ending a frame early just holds its last frame.
+  options.onProgress?.({ phase: "Restoring voiceover", progress: 74 });
+  const cleanMaster = path.join(tempDir, `${jobId}-clean.mp4`);
+  const vfArgs = assPath
+    ? ["-vf", `subtitles='${subtitlesFilterPath(assPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'`,
+       "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER]
+    : ["-c:v", "copy"];
+  await runFFmpeg([
+    "-y", "-threads", ENCODE_THREADS,
+    "-i", silentStitched,
+    "-i", originalMasterPath,
+    "-map", "0:v:0", "-map", "1:a:0?",
+    ...vfArgs,
+    "-c:a", "copy",
+    cleanMaster
+  ], { timeoutMs: assPath ? 240000 : 90000, label: "regen:caption-burn+audio-mux" });
+
+  // ── PROVE the audio survived whole. The stream copy plus no -shortest
+  // makes truncation impossible in theory; this makes it impossible in
+  // practice. (The class this catches: any future edit that reintroduces
+  // -shortest or re-encodes the audio.)
+  const originalAudioSec = await probeAudioDurationSec(originalMasterPath);
+  const outputAudioSec = await probeAudioDurationSec(cleanMaster);
+  if (Number.isFinite(originalAudioSec) && Number.isFinite(outputAudioSec) &&
+      Math.abs(outputAudioSec - originalAudioSec) > 0.06) {
+    throw new Error(
+      `Rebuilt master's audio is ${outputAudioSec.toFixed(3)}s vs the original ${originalAudioSec.toFixed(3)}s ` +
+      `— the voiceover was not preserved intact. The original render is untouched.`
+    );
+  }
+
+  // ── Trial mark (dual-master, mirrors the main flow). Fixes both audited
+  // money bugs at once: a trial regen ships MARKED again (no more watermark
+  // laundering), and clean.mp4 refreshes so a post-regen unlock serves the
+  // fixed video.
+  const masterDims = regenDims(manifest);
+  let deliverablePath = cleanMaster;
+  let includeClean = Boolean(auditRow.master_clean_url);
+  if (manifest.freeRenderWatermark) {
+    const markedPath = path.join(tempDir, `${jobId}-marked.mp4`);
+    await runFFmpeg([
+      "-y", "-threads", ENCODE_THREADS,
+      "-i", cleanMaster,
+      "-vf", buildFreeRenderWatermark(masterDims),
+      "-c:v", "libx264", "-pix_fmt", "yuv420p",
+      "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER,
+      "-c:a", "copy",
+      markedPath
+    ], { timeoutMs: 240000, label: "regen:trial-mark" });
+    deliverablePath = markedPath;
+    includeClean = true;
+    console.info("[regen] trial mark re-applied — clean master retained for instant unlock.");
+  }
+
   const variants = {
     vertical: {
-      format: regenDims.width === regenDims.height ? "square" : "vertical",
-      path: masterForVariants,
-      dimensions: regenDims
-    }
+      format: masterDims.width === masterDims.height ? "square" : "vertical",
+      path: deliverablePath,
+      dimensions: masterDims
+    },
+    ...(includeClean ? { clean: { format: "clean", path: cleanMaster, dimensions: masterDims } } : {})
   };
 
-  // Step 9: re-cut social shorts.
-  options.onProgress?.({ phase: "Re-cutting social shorts", progress: 88 });
-  let shorts = [];
-  try {
-    shorts = await buildSocialShorts({
-      masterMp4: masterForVariants,
-      scenes: manifest.scenes,
-      tempDir,
-      jobId,
-      count: 3
-    });
-  } catch (err) {
-    console.warn(`[regen] shorts failed (${err.message}). Continuing without shorts.`);
-    shorts = [];
-  }
-
-  // Step 10: upload deliverables — overwrites the existing master/variants/
-  // shorts/thumbnail at the same storage paths so the library entry stays
-  // pointed at the same URLs and the frontend just gets fresh content on
-  // next reload.
-  options.onProgress?.({ phase: "Uploading regenerated render", progress: 92 });
+  // ── Upload. Same storage paths as the original render — the library entry
+  // just gets fresh content. No shorts: regen ships exactly what the render
+  // shipped (v62.18 rule), and the main render ships none.
+  options.onProgress?.({ phase: "Uploading replacement", progress: 86 });
   const upload = await uploadDeliverables({
-    manifest,
-    jobId,
-    variants,
-    shorts,
-    thumbnailPath,
-    pathPrefix: "runway",
+    manifest, jobId, variants, shorts: [], thumbnailPath, pathPrefix: "runway",
     onProgress: (info) => {
-      options.onProgress?.({
-        phase: info.phase || "Uploading deliverables",
-        progress: 92 + Math.floor((info.fraction || 0) * 5)
-      });
+      options.onProgress?.({ phase: info.phase || "Uploading", progress: 86 + Math.floor((info.fraction || 0) * 8) });
     }
   });
 
-  // Step 11: re-upload per-scene clips. The replacement scene needs its new
-  // clipUrl persisted; the other 23 scenes are unchanged but re-uploading
-  // them keeps the scene-NNN.mp4 files consistent with what's currently
-  // stitched into the master. Idempotent (upsert: true).
-  options.onProgress?.({ phase: "Persisting scene library", progress: 97 });
+  // ── An upload failure must NOT touch the audit row. The old expression
+  // patched master_mp4_url to "" on any storage failure while reporting
+  // success — the customer's finished video vanished from their library
+  // with no error anywhere (adversarial review, executed). A patch with an
+  // empty URL is a delete; refuse instead. (storageSkipped = no Supabase
+  // configured — dev/harness — where there is no audit row to protect.)
+  const newMasterUrl = upload?.formats?.vertical?.mp4Url || "";
+  if (!newMasterUrl && !upload?.storageSkipped) {
+    throw new Error(
+      `Replacement master upload failed (${upload?.storageWarning || "storage error"}) — ` +
+      `the original render is untouched.`
+    );
+  }
+
+  options.onProgress?.({ phase: "Persisting scene library", progress: 96 });
   const scenesMeta = await uploadPerSceneClips({
-    manifest,
-    jobId,
-    normalizedClips,
-    clipResults,
-    pathPrefix: "runway"
+    manifest, jobId, normalizedClips, clipResults, pathPrefix: "runway"
   });
 
-  // Cleanup local per-scene normalized clips.
-  for (const clip of normalizedClips) {
-    await fs.unlink(clip.clipPath).catch(() => {});
-  }
-  // Also clean up the downloaded source clips.
-  for (const clip of clipResults) {
-    if (clip?.clipPath) await fs.unlink(clip.clipPath).catch(() => {});
-  }
-
-  // Step 12: update the audit row. Patch the master URL, thumbnail, scenes
-  // array (so subsequent regens see the latest clipUrl), and bump status.
-  // Failures here are non-fatal — the new master is already live.
+  // ── Audit patch. Narration fields are deliberately untouched — the audio
+  // IS the original's. Only fields with real values are written; a falsy
+  // value in a PATCH is a delete, never a default.
   options.onProgress?.({ phase: "Updating render history", progress: 99 });
-  const patch = {
-    master_mp4_url: upload?.formats?.vertical?.mp4Url || "",
-    thumbnail_url: upload?.thumbnailUrl || "",
-    social_short_count: Array.isArray(upload?.socialShorts) ? upload.socialShorts.length : 0,
-    formats_count: Object.keys(upload?.formats || {}).length || 1,
-    narration_applied: Boolean(narration?.narrationApplied),
-    narration_voice_id: narration?.voiceId || null,
-    scenes: scenesMeta,
-    status: "completed"
-  };
-  await updateRenderAudit({ jobId, patch });
+  if (newMasterUrl) {
+    await updateRenderAudit({
+      jobId,
+      patch: {
+        master_mp4_url: newMasterUrl,
+        ...(upload?.formats?.clean?.mp4Url ? { master_clean_url: upload.formats.clean.mp4Url } : {}),
+        ...(upload?.thumbnailUrl ? { thumbnail_url: upload.thumbnailUrl } : {}),
+        scenes: scenesMeta,
+        status: "completed"
+      }
+    });
+  }
 
   options.onProgress?.({ phase: "Ready to download", progress: 100 });
-
   return {
     status: "complete",
     engine: "runway",
-    mode,
+    mode: "steady",
     jobId,
     regeneratedSceneIndex: sceneIndex,
     mp4Url: upload?.formats?.vertical?.mp4Url || "",
     thumbnailUrl: upload?.thumbnailUrl || "",
     formats: upload?.formats || {},
-    socialShorts: upload?.socialShorts || [],
+    socialShorts: [],
     scenes: scenesMeta,
-    narration: narration.narrationApplied
-      ? { applied: true, voiceId: narration.voiceId, lineCount: narration.narrationLineCount }
-      : { applied: false, reason: narration.reason }
+    // The whole point: the voiceover was never re-synthesized.
+    narration: { applied: true, preserved: true },
+    // Harness-only: local artifact paths for assertions, never in production
+    // responses (the server would forward them to the client).
+    ...(process.env.REGEN_TEST_EXPOSE_LOCAL === "1"
+      ? { __local: { cleanMaster, deliverablePath, silentStitched, thumbnailPath, rebuiltLen, originalLen } }
+      : {})
   };
 }
 
@@ -380,41 +381,47 @@ export async function regenerateScene(body, options = {}) {
    Helpers
    ================================================================= */
 
-// Build a synthetic "scene" object suitable for feeding into generateClip /
-// generateKenBurnsFallback. Prefers the audit-row data (so regen reproduces
-// the original render context) but falls back to the manifest if anything
-// is missing.
-function buildSceneForRegen(auditScene, manifest) {
-  // Try to match the manifest scene by photoId so we can pull a fresh
-  // runwayPrompt if the user re-generated their edit plan.
-  const manifestScene =
-    (manifest.scenes || []).find((s) => s.photoId === auditScene.photoId) || {};
+function regenDims(manifest) {
+  const ratio = String(manifest?.runwayConfig?.ratio || manifest?.exportFormat || "vertical").toLowerCase();
+  if (ratio === "16:9" || ratio === "wide") return { width: 1920, height: 1080 };
+  if (ratio === "1:1" || ratio === "square") return { width: 1080, height: 1080 };
+  return { width: 1080, height: 1920 };
+}
 
+// Feed for generateKenBurnsFallback: audit truth first, manifest fallback.
+function buildSceneForRegen(auditScene, manifest) {
+  const manifestScene = (manifest.scenes || []).find((s) => s.photoId === auditScene.photoId) || {};
   return {
     photoId: auditScene.photoId || manifestScene.photoId,
     roomType: manifestScene.roomType || auditScene.roomType || "",
     cameraMotion: manifestScene.cameraMotion || auditScene.cameraMotion || "push_in",
-    // v62.17: the AUDIT row wins on duration. It records `durationSec` =
-    // what the scene ACTUALLY shipped at, while the manifest carries the
-    // planner's value — and under voice-first those diverge by design,
-    // because the grid rewrites scene durations from the narration and
-    // never writes back to the posted manifest. Regenerating from the plan
-    // duration therefore produced a clip shorter or longer than the hole it
-    // has to fill, so the replaced scene desynced from a voiceover that was
-    // never re-cut. Prefer shipped truth; fall back to the plan.
     duration: Number(auditScene.durationSec || auditScene.duration || manifestScene.duration || 5),
-    // Prefer the manifest's prompt — it reflects the latest anti-hallucination
-    // tweaks. Fall back to the audit row's prompt if the manifest scene wasn't
-    // re-generated.
-    runwayPrompt: manifestScene.runwayPrompt || manifestScene.runway_prompt || auditScene.runwayPrompt || "",
     durableUrl: manifestScene.durableUrl || manifestScene.durable_url || auditScene.photoUrl || "",
     transition: manifestScene.transition || "crossfade",
     overlay: manifestScene.overlay || null
   };
 }
 
-// Local downloader with timeout. Mirrors the one in runway-job.mjs but kept
-// here so this module doesn't depend on an export of an internal helper.
+function probeDurationSec(file) {
+  return new Promise((resolve) => {
+    execFile("ffprobe",
+      ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file],
+      { timeout: 15000 },
+      (err, stdout) => resolve(err ? NaN : Number(String(stdout).trim()))
+    );
+  });
+}
+
+function probeAudioDurationSec(file) {
+  return new Promise((resolve) => {
+    execFile("ffprobe",
+      ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0", file],
+      { timeout: 15000 },
+      (err, stdout) => resolve(err ? NaN : Number(String(stdout).trim()))
+    );
+  });
+}
+
 async function downloadFile(url, destPath) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60000);
@@ -454,3 +461,8 @@ async function pMap(items, fn, { concurrency = 4 } = {}) {
   }
   return results;
 }
+
+// Exported for the harness: drives the full rebuild against local/HTTP
+// fixtures without Supabase (the caller supplies what readRenderAudit
+// would have returned).
+export { rebuildWithSteadyScene as __testRebuildWithSteadyScene };
