@@ -644,10 +644,36 @@ if (QUEUE_ENABLED) {
   setInterval(pollAndProcess, 2500).unref();
   setInterval(() => { sbRpc("requeue_stuck_render_jobs", { p_timeout_minutes: 20 }).catch(() => {}); }, 5 * 60 * 1000).unref();
   console.info(`[queue] pull-queue ON · worker=${WORKER_ID} · concurrency=${RENDER_CONCURRENCY}`);
-  // v56: first boot of a NEW deploy fires one internal canary render
-  // (fail-open, once per commit — see src/canary.mjs). Delayed so the
-  // queue loop is live before the canary job lands in it.
-  setTimeout(() => { runCanaryOnBoot(); }, 15_000).unref();
+  /* v56: first boot of a NEW deploy fires one internal canary render
+     (fail-open, once per commit — see src/canary.mjs).
+
+     v62.33 — IT MUST NOT RACE THE CUSTOMER. Troy: "I never requested 2
+     renders so not sure why it did both." The Jul 26 02:13 log shows a
+     worker boot, then `active=2` and a second render generating alongside
+     his: the canary, enqueued 15s after boot. Once per commit sounds cheap
+     until you are shipping twenty commits in a session — every deploy fired
+     a full 12-photo render that competed for the 6-slot fal gate and the 4
+     CPUs, which is a large part of why that smoke test measured 22.4 min.
+     And during an active build session the developer IS the canary: a real
+     render on the new commit proves the same thing, better.
+
+     So: hold it for 10 minutes instead of 15 seconds — long enough that a
+     smoke test started right after a deploy runs ALONE — then fire only when
+     the worker is idle, re-checking every minute. If real work keeps the box
+     busy for half an hour the canary is skipped entirely and says so; the
+     deploy was exercised by real renders anyway, which is the point.
+     CANARY_ENABLED=false still disables it outright. */
+  const CANARY_HOLD_MS = Number(process.env.CANARY_HOLD_MS) || 10 * 60 * 1000;
+  const canaryGiveUpAt = Date.now() + CANARY_HOLD_MS + 30 * 60 * 1000;
+  const fireCanaryWhenIdle = () => {
+    if (activeRenders > 0) {
+      if (Date.now() < canaryGiveUpAt) { setTimeout(fireCanaryWhenIdle, 60_000).unref(); return; }
+      console.info("[canary] real renders kept this worker busy — skipping the canary for this deploy (it was exercised for real).");
+      return;
+    }
+    runCanaryOnBoot();
+  };
+  setTimeout(fireCanaryWhenIdle, CANARY_HOLD_MS).unref();
   // v57: listing-link auto-render — one lead per tick (see
   // src/lead-auto-render.mjs).
   startAutoRenderClock();
