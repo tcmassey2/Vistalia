@@ -138,6 +138,45 @@ export async function renderHomographyDrift({
     mv = MOVES[sceneIndex % 2 === 0 ? 1 : 4];
   const flip = sceneIndex % 2 === 0 ? 1 : -1;
 
+  // ── v62.35 DURATION COMPENSATION ────────────────────────────────────
+  // The palette above is a TOTAL displacement, traversed once across the
+  // clip whatever its length — so per-frame velocity is inversely
+  // proportional to duration. It was tuned when Veo scenes planned at
+  // 3-4s (durationFor: hero 4s, showcase 3.5s, rest 3s). v62 voice-first
+  // derives scene length from the narration instead, and routinely hands
+  // this floor 7-9.5s. Measured mean displacement, 1080x1920, MOVES[1]:
+  //
+  //     3.0s  0.722 px/frame        7.0s  0.307 px/frame
+  //     3.5s  0.618 px/frame      8.811s  0.244 px/frame   ← 34% of 3s
+  //
+  // That is the "KB fallbacks suck" report: the smoke-test scene 7 floor
+  // (8.811s) measured YDIF 0.40 against a ~0.7-1.2 floor baseline and a
+  // 1.0 slideshow-suspect line. The floor engine is fine — it was being
+  // asked to spread one 3.5s move over 8.8 seconds.
+  //
+  // Scale the move so per-frame VELOCITY is constant instead. Only ever
+  // scale UP (gain >= 1): every clip at or under the reference renders
+  // bit-identical to before, so this cannot regress the short-scene case
+  // nobody complained about. Geometry stays sound at gain — a homography
+  // maps lines to lines by construction, and the overscan guard below
+  // raises baseZoom to keep every corner inside the source. The only real
+  // budget is resolution: swept across all six moves, both flips, every
+  // roomType and every delivery size, the worst effective zoom at the 10s
+  // clip clamp is 1.463 against 1.5x supersampling — sample density
+  // 1.025, still above 1:1, so no softening. The overscan guard converges
+  // in at most 4 of its 8 passes over that same sweep (worst residual
+  // 0.47px, inside its own 0.5px tolerance), so nothing samples off-source.
+  const REF_DURATION_SEC = 3.5;
+  const gain = Math.min(2.8, Math.max(1, (Number(durationSec) || REF_DURATION_SEC) / REF_DURATION_SEC));
+  if (gain > 1) {
+    mv = {
+      yaw: [mv.yaw[0], mv.yaw[0] + (mv.yaw[1] - mv.yaw[0]) * gain],
+      pitch: [mv.pitch[0], mv.pitch[0] + (mv.pitch[1] - mv.pitch[0]) * gain],
+      roll: (mv.roll || 0) * gain,
+      zoom: [mv.zoom[0], mv.zoom[0] + (mv.zoom[1] - mv.zoom[0]) * gain]
+    };
+  }
+
   const poseAt = (s, baseZoom) => poseToSampleMap({
     yaw: (mv.yaw[0] + (mv.yaw[1] - mv.yaw[0]) * s) * DEG * flip,
     pitch: (mv.pitch[0] + (mv.pitch[1] - mv.pitch[0]) * s) * DEG,

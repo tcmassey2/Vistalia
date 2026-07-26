@@ -434,12 +434,33 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
   // skipped (a photo the plan mapped but the worker filtered must not sink
   // the whole render); a sentence left with no known photos becomes a linger.
   const ordinalByPhotoId = new Map(photoScenes.map((s, i) => [String(s.photoId), i]));
-  const sentences = narration.sentences.map((s) => ({
+  const mapped = narration.sentences.map((s, i) => ({
+    index: i,
     text: String(s.text || "").trim(),
+    asked: Array.isArray(s.photos) ? s.photos.length : 0,
     photos: (Array.isArray(s.photos) ? s.photos : [])
       .map((id) => ordinalByPhotoId.get(String(id)))
       .filter((x) => Number.isInteger(x))
-  })).filter((s) => s.text);
+  }));
+  // v62.35: a sentence that ARRIVED with photos and left with none had every
+  // one of its photoIds filtered above — the plan mapped a scene the worker
+  // no longer has. buildVoiceGrid then merges its words into the PREVIOUS
+  // run (that is the linger contract) and only warns when it is sentence 1,
+  // so mid-list this used to happen in total silence: the sentence plays
+  // over the room before it, and the scene count still matches so nothing
+  // reverts. Say it out loud — it is the signature of an upstream membership
+  // change and the only warning we would get.
+  for (const m of mapped) {
+    if (m.text && m.asked > 0 && m.photos.length === 0) {
+      console.warn(
+        `[voice-first] sentence ${m.index + 1} mapped ${m.asked} photoId(s) the worker does not have ` +
+        `— it will play over the PREVIOUS room: "${m.text.slice(0, 60)}"`
+      );
+    }
+  }
+  const sentences = mapped
+    .filter((s) => s.text)
+    .map((s) => ({ text: s.text, photos: s.photos }));
   if (!sentences.length) {
     console.warn("[voice-first] narration.sentences empty after photo mapping — legacy path will run.");
     return null;

@@ -848,7 +848,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   const monologueMax = Math.round(monologueTarget * 1.1);
   const narrationGuidance = includeNarration
     ? [
-        `MOST IMPORTANT — THE SPOKEN TOUR (v62): also return a top-level object "narration". The voiceover is now the SPINE of the video — scene timing is derived FROM the voice, so your sentences are never cut, sped up, or squeezed; write to sound good, not to fit windows. narration.monologue: ONE continuous spoken tour, ${monologueMin}-${monologueMax} words (count them). Voice it like a great human tour guide on a first walkthrough: conversational register, contractions ("it's", "you'll"), varied sentence lengths, zero brochure clichés (never "boasts", "nestled", "oasis", "dream home", "must-see"). ARC, in order: (1) HOOK — open on the property's single most arresting fact or feeling; (2) WALK-THROUGH — move through the photos in their exact scene order, giving each major space one natural moment with real connective transitions; (3) LIFESTYLE CLOSE — one sentence on what living here feels like; (4) CTA — final sentence under 8 words. EXPRESSIVE DELIVERY: place 2-5 bracketed audio tags — e.g. [warm], [pause], [excited], [softly] — immediately before the phrases they color. Tags are delivery directions, never spoken words; never place one mid-word. narration.direction: a short performance note for the voice (e.g. "warm, unhurried tour guide — proud of the home, never salesy"). narration.sentences: the SAME monologue split into its sentences IN ORDER — each item's "text" is the exact sentence WITHOUT any tags, and "photos" lists the photoIds that sentence covers, in scene order. RULES: every scene's photoId appears exactly once across all sentences, in the same order as the scenes array; a sentence may cover 1-3 photos; use photos: [] for a sentence that keeps lingering on the previous photo (hero shots, the close). The sentence texts joined with single spaces must EXACTLY equal the monologue with all [tags] removed. Never mention a space before its photo arrives. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
+        `MOST IMPORTANT — THE SPOKEN TOUR (v62): also return a top-level object "narration". The voiceover is now the SPINE of the video — scene timing is derived FROM the voice, so your sentences are never cut, sped up, or squeezed; write to sound good, not to fit windows. narration.monologue: ONE continuous spoken tour, ${monologueMin}-${monologueMax} words (count them). Voice it like a great human tour guide on a first walkthrough: conversational register, contractions ("it's", "you'll"), varied sentence lengths, zero brochure clichés (never "boasts", "nestled", "oasis", "dream home", "must-see"). ARC, in order: (1) HOOK — open on the property's single most arresting fact or feeling; (2) WALK-THROUGH — move through the photos in their exact scene order, giving each major space one natural moment with real connective transitions; (3) LIFESTYLE CLOSE — one sentence on what living here feels like; (4) CTA — final sentence under 8 words. GROUND EVERY SENTENCE IN ITS OWN PHOTOS — this outranks the arc: before you write a sentence, look at the images for the photoIds you are about to assign it, and describe what is actually there. If a room label and the image disagree, TRUST THE IMAGE. Never name a room — kitchen, bathroom, bedroom, living room, patio, pool — unless it is visible in that sentence's photos; when you are unsure what a space is, describe what you can see ("Light pours across the tile floors") instead of naming it. Do NOT write a generic walkthrough from memory and pin it to photos afterward: a tour that says "the bathroom's marble finishes" over a bedroom is worse than a plainer tour that is right. The opening sentence plays over scene 1 — write it for THAT photo, not for an exterior you wish were first. EXPRESSIVE DELIVERY: place 2-5 bracketed audio tags — e.g. [warm], [pause], [excited], [softly] — immediately before the phrases they color. Tags are delivery directions, never spoken words; never place one mid-word. narration.direction: a short performance note for the voice (e.g. "warm, unhurried tour guide — proud of the home, never salesy"). narration.sentences: the SAME monologue split into its sentences IN ORDER — each item's "text" is the exact sentence WITHOUT any tags, and "photos" lists the photoIds that sentence covers, in scene order. RULES: every scene's photoId appears exactly once across all sentences, in the same order as the scenes array; a sentence may cover 1-3 photos; use photos: [] for a sentence that keeps lingering on the previous photo (hero shots, the close). The sentence texts joined with single spaces must EXACTLY equal the monologue with all [tags] removed. Never mention a space before its photo arrives. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. SELL THE SPACE, NOT THE STAGING (v34.4): never describe movable furniture or decor — sofas, tables, chairs, beds, rugs, lamps, art, plants. The furniture leaves with the seller; buyers are buying light, space, views, ceilings, windows, flooring, and finishes (cabinetry, counters, fireplaces, and built-ins are part of the home — those are fine). "A glass table sits beside the window" → "Expansive windows frame the red-rock views". CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
         // v40.1: style-aware narration tone (master-21: MLS Clean shipped
@@ -1750,6 +1750,77 @@ function trimNarrationToBudget(narration, { targetDurationSec = 30 } = {}) {
   };
 }
 
+// v62.35: room vocabulary for the monologue↔photo contradiction check
+// below. Deliberately tight — every pattern must be a word that can ONLY
+// mean that room type. "bath" is here as \bbaths?\b so it can never catch
+// "bathed in light"; "entryway"/"foyer" are absent because ROOM_TYPES has
+// no entry type to contradict.
+const ROOM_WORDS = [
+  ["kitchen", /\bkitchens?\b/i],
+  // No bare "bath": listing copy opens on stats — "four bed, three bath" —
+  // and that is not a claim about the photo. No "vanity" either; it is as
+  // often a bedroom dressing table as a bathroom counter.
+  ["bathroom", /\b(bathrooms?|powder room|en-?suite)\b/i],
+  // No bare "bed", same reason.
+  ["bedroom", /\b(bedrooms?|primary suite|master suite|guest room)\b/i],
+  // No bare "den"/"lounge" — both read as verbs or adjectives often enough.
+  ["living", /\b(living room|great room|family room|sitting room)\b/i],
+  ["exterior", /\b(exteriors?|facade|façade|curb appeal|driveway|front elevation)\b/i],
+  // "pool table" (and "pool-table") is a game room, not a pool.
+  ["outdoor", /\b(patio|pool(?:s|side)?\b(?![\s-]*table)|backyard|back yard|courtyard|terrace|deck|firepit|fire pit|outdoor (?:living|seating|kitchen|space|area))\b/i]
+];
+
+// v62.35: label pairs the photo classifier itself cannot reliably separate,
+// so a sentence naming one over a scene labelled the other is not evidence
+// of anything. A deck IS the exterior of the house; a sitting area off the
+// primary IS part of the bedroom photo. Merging these costs no real
+// detection — every mismatch this check exists to catch (a bathroom named
+// over a bedroom, an outdoor space named over an interior, a kitchen named
+// over anything else) still crosses a class boundary.
+const ROOM_EQUIV = [["exterior", "outdoor"], ["living", "bedroom"]];
+function sameRoomClass(a, b) {
+  if (a === b) return true;
+  return ROOM_EQUIV.some((pair) => pair.includes(a) && pair.includes(b));
+}
+
+function roomTypesNamedIn(text) {
+  const named = new Set();
+  for (const [type, re] of ROOM_WORDS) if (re.test(text)) named.add(type);
+  return named;
+}
+
+// v62.35: sentences whose text names a room their own photos do not show.
+// Only judges a sentence that names EXACTLY ONE room type — "just beyond
+// the kitchen, the great room opens up" is a legitimate transition, not a
+// mistake. Lingers (no photos) continue the previous room and are skipped,
+// as are detail/amenity scenes, which are too vague to contradict.
+// `roomTypeByPhotoId` is a Map|object of photoId → reconciled roomType.
+function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
+  const lookup = (id) => (roomTypeByPhotoId instanceof Map
+    ? roomTypeByPhotoId.get(String(id))
+    : roomTypeByPhotoId?.[String(id)]);
+  const out = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    const photos = Array.isArray(s?.photos) ? s.photos : [];
+    if (!photos.length) continue;
+    const named = roomTypesNamedIn(String(s?.text || ""));
+    if (named.size !== 1) continue;
+    const [claim] = [...named];
+    const actual = photos.map(lookup).filter(Boolean);
+    if (!actual.length) continue;
+    if (actual.every((rt) => rt === "detail" || rt === "amenity")) continue;
+    if (actual.some((rt) => sameRoomClass(rt, claim))) continue;
+    out.push({
+      index: i,
+      claim,
+      actual,
+      detail: `s${i + 1} says "${claim}" over a ${actual.join("+")} scene: "${String(s.text).slice(0, 70)}"`
+    });
+  }
+  return out;
+}
+
 function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
   const scenes = (plan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
   const sceneOrderById = new Map(scenes.map((s, i) => [String(s.photoId), i]));
@@ -1841,6 +1912,51 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
       errors.push(`${missing}/${scenes.length} scenes unmapped`);
     } else if (missing > 0) {
       warnings.push(`${missing} unmapped scene(s) — worker lingers the nearest preceding sentence over them`);
+    }
+
+    // v62.35 ROOM CONTRADICTION. Under v62 the monologue IS the shipped
+    // voiceover, but the grounding rule ("describe what is VISIBLE in that
+    // scene's photo — if the label and the image disagree, TRUST THE
+    // IMAGE") only ever lived on the per-scene narrationLine guidance. The
+    // monologue guidance asked for an ARC — hook, walk-through, lifestyle,
+    // CTA — and nothing anchored it to the actual rooms, so a Director
+    // that half-sees the gallery (only the first OPENAI_VISION_PHOTO_LIMIT
+    // photos carry an image) can write a plausible generic tour and map it
+    // ascending, passing every check we had. That ships "the bathroom
+    // showcases elegant marble finishes" over a bedroom.
+    //
+    // The scene roomTypes here are the RECONCILED ones (v33.3: the
+    // one-photo-per-call classifier outranks the Director's 16-images-in-
+    // one-context guess) and this runs after verify-repair relabelled them
+    // from the image — so they are the most trustworthy labels we hold.
+    //
+    // Only judge a sentence that names EXACTLY ONE room type: "just beyond
+    // the kitchen, the great room opens up" is a legitimate transition,
+    // not a mistake. Lingers (no photos) continue the previous room and
+    // are skipped. detail/amenity scenes are too vague to contradict.
+    const roomTypeByPhotoId = new Map(scenes.map((s) => [String(s.photoId), s.roomType]));
+    const contradictions = narrationRoomMismatches(sentences, roomTypeByPhotoId);
+    for (const c of contradictions) console.warn(`[plan] narration ROOM MISMATCH: ${c.detail}`);
+    // One is a coin-flip on a classifier edge case (an ensuite photo that
+    // shows the bedroom); two or more is a Director narrating from memory.
+    // The per-scene lines it also wrote ARE image-grounded and were
+    // verify-repaired, so derived is stiffer but correct — and for a
+    // listing ad, naming the wrong room is the worse failure.
+    // ...but only when there is something to fall back TO. deriveFromLines
+    // returns null if no scene carries a usable narrationLine (verify blanks
+    // them when a window is too small), and a plan with NO narration is
+    // strictly worse than one that names a room wrong. Demoting into that
+    // hole would be trading a flaw for a hollow video.
+    const haveLinesToDeriveFrom = scenes.some((s) => String(s.narrationLine || "").trim());
+    if (contradictions.length >= 2 && haveLinesToDeriveFrom) {
+      errors.push(`${contradictions.length} sentences name a room the photo does not show`);
+    } else if (contradictions.length >= 2) {
+      warnings.push(
+        `${contradictions.length} sentences name a room the photo does not show, but no per-scene ` +
+        `lines exist to derive from — shipping the Director's monologue rather than nothing`
+      );
+    } else if (contradictions.length === 1) {
+      warnings.push("1 sentence names a room its photo may not show — shipping as written");
     }
 
     // Transcript integrity: sentence join == de-tagged monologue.
