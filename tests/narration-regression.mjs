@@ -282,6 +282,213 @@ for (const d of [3.5, 5.0, 7.0, 8.811, 9.5]) {
 }
 check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5 / 8.811) - 0.397) < 0.01);
 
+/* ══════════════════════════════════════════════════════════════════════
+   v62.36 — the duration contract, in seconds
+
+   The customer orders 30 or 60s. Under voice-first the video's length IS
+   the narration's length, but every gate on it was denominated in WORDS,
+   and words do not convert to seconds at a fixed rate: the pauses a voice
+   takes at a full stop scale with SENTENCE COUNT. An in-band 80-word
+   script shipped a 37.6s video on a 30s order.
+
+   These fixtures use a synthetic voice whose gap structure is real and
+   whose pace is swept across the band this repo already claims to have
+   measured (voice-first.mjs: "2.34-2.80 words/sec"). The point is not to
+   reproduce one render's seconds — it is that the machinery does the
+   right thing at every point in that band, and nothing at all outside it.
+   ══════════════════════════════════════════════════════════════════════ */
+{
+  const vf = await import(path.join(ROOT, "render-worker/src/voice-first.mjs"));
+  const INTRA = 0.07, INTER = 0.52;
+  // Hold ARTICULATION fixed (what a voice actually does) and let the
+  // sentence count move the total — the premise, stated as a test.
+  const synth = (wordsPerSentence, artic) => {
+    const words = [], sentences = [];
+    let t = 0.9;
+    wordsPerSentence.forEach((n, si) => {
+      const toks = [];
+      for (let i = 0; i < n; i++) {
+        words.push({ word: `w${si}_${i}`, start: +t.toFixed(4), end: +(t + artic).toFixed(4) });
+        toks.push(`w${si}_${i}`);
+        t += artic + (i === n - 1 ? INTER : INTRA);
+      }
+      sentences.push({ text: toks.join(" "), photos: [si] });
+    });
+    return { words, sentences };
+  };
+  // Solve articulation so the OVERALL pace is exactly `wps`.
+  const atPace = (wps, shape) => {
+    const W = shape.reduce((a, b) => a + b, 0), S = shape.length;
+    return synth(shape, (W / wps - (W - S) * INTRA - (S - 1) * INTER) / W);
+  };
+  const gridOf = (s) => vf.buildVoiceGrid({ sentences: s.sentences }, s.words);
+  const ceilingFor = (t) => t + Math.max(2, t * 0.08);
+  const SHAPE = [16, 11, 10, 10, 9, 9, 8, 7]; // 80 words / 8 sentences
+
+  /* the premise: at one articulation rate, sentence count alone moves both
+     the duration and the apparent w/s — so no single divisor can be right */
+  const rows = [[80], [40, 40], SHAPE, Array(12).fill(0).map((_, i) => (i < 8 ? 7 : 6))]
+    .map((sh) => gridOf(synth(sh, 0.33)))
+    .map((g) => ({ end: g.videoEndSec, wps: g.stats.wps }));
+  check("v62.36: more sentences = longer video at identical word count",
+    rows.every((r, i) => i === 0 || r.end > rows[i - 1].end), JSON.stringify(rows.map((r) => r.end)));
+  check("v62.36: apparent w/s falls as sentence count rises",
+    rows.every((r, i) => i === 0 || r.wps < rows[i - 1].wps), JSON.stringify(rows.map((r) => r.wps)));
+  check("v62.36: the spread is material on a 30s order (>3s)",
+    rows[rows.length - 1].end - rows[0].end > 3, `${(rows[rows.length - 1].end - rows[0].end).toFixed(2)}s`);
+
+  /* the gate: fires iff over the ceiling, across the measured pace band */
+  let fired = 0, held = 0;
+  for (const wps of [2.20, 2.34, 2.50, 2.68, 2.80]) {
+    const s = atPace(wps, SHAPE);
+    const g = gridOf(s);
+    const p = vf.planDurationTrim(vf.wordsToSentences(s.sentences, s.words), g.videoEndSec, 30,
+      { photosPerSentence: s.sentences.map((x) => x.photos.length) });
+    const over = g.videoEndSec > ceilingFor(30);
+    check(`v62.36: trim fires iff over ceiling @ ${wps} w/s`, over === !!p, `${g.videoEndSec.toFixed(1)}s, plan=${!!p}`);
+    if (p) {
+      fired++;
+      check(`v62.36: @${wps} w/s lands inside the order`, p.projectedSec <= ceilingFor(30), `${p.projectedSec}`);
+      check(`v62.36: @${wps} w/s does not undershoot`, p.projectedSec >= 30 * 0.75, `${p.projectedSec}`);
+      check(`v62.36: @${wps} w/s keeps hook and CTA`, !p.drop.includes(0) && !p.drop.includes(SHAPE.length - 1));
+    } else held++;
+  }
+  check("v62.36: the band straddles the ceiling", fired > 0 && held > 0, `${fired} fired / ${held} held`);
+
+  /* the apply: picture and voice must come out of the same arithmetic */
+  const S3 = atPace(2.20, SHAPE);
+  const g0 = gridOf(S3);
+  const per = vf.wordsToSentences(S3.sentences, S3.words);
+  const plan = vf.planDurationTrim(per, g0.videoEndSec, 30, { photosPerSentence: S3.sentences.map((s) => s.photos.length) });
+  check("v62.36: a trim is planned at the slow end of the band", !!plan);
+  if (plan) {
+    const dropSet = new Set(plan.drop);
+    const survivors = S3.sentences.filter((_, i) => !dropSet.has(i));
+    const keepOrd = survivors.flatMap((s) => s.photos).sort((a, b) => a - b);
+    const renum = new Map(keepOrd.map((o, i) => [o, i]));
+    const newSents = survivors.map((s) => ({ text: s.text, photos: s.photos.map((o) => renum.get(o)) }));
+    const newWords = vf.shiftWordsAfterCuts(S3.words, plan.spans);
+    const g1 = vf.buildVoiceGrid({ sentences: newSents }, newWords);
+    check("v62.36: rebuilt grid matches the prediction within 50ms",
+      Math.abs(g1.videoEndSec - plan.projectedSec) < 0.05, `predicted ${plan.projectedSec}, actual ${g1.videoEndSec}`);
+    check("v62.36: one scene per surviving photo", g1.scenes.length === keepOrd.length);
+    check("v62.36: rebuild drops no photos", g1.stats.droppedPhotos.length === 0);
+    check("v62.36: ordinals stay dense and ascending", g1.scenes.every((s, i) => s.photoOrdinal === i));
+    check("v62.36: first word untouched, so the audio offset holds", newWords[0].start === S3.words[0].start);
+    check("v62.36: timestamps stay ordered and non-negative",
+      newWords.every((w, i) => w.start >= 0 && w.end > w.start && (i === 0 || w.start >= newWords[i - 1].end - 1e-6)));
+    // Exactly the dropped sentences' words go — eating a neighbour's opening
+    // word, or leaving one behind, is the desync this whole file guards.
+    const expect = S3.words.filter((w) => !dropSet.has(Number(w.word.split("_")[0].slice(1))));
+    check("v62.36: cut removes exactly the dropped sentences' words",
+      newWords.length === expect.length && newWords.every((w, i) => w.word === expect[i].word),
+      `${newWords.length} vs ${expect.length}`);
+    check("v62.36: each survivor shifted by exactly the span time before it",
+      newWords.every((n) => {
+        const o = S3.words.find((w) => w.word === n.word);
+        const sh = plan.spans.filter((s) => o.start >= s.end).reduce((a, s) => a + (s.end - s.start), 0);
+        return Math.abs((o.start - sh) - n.start) < 1e-3;
+      }));
+  }
+
+  /* refusals — a gate that fires when it shouldn't is worse than none */
+  const okS = atPace(2.5, [10, 9, 9, 8, 8, 7]);
+  check("v62.36: in-band narration is left completely alone",
+    vf.planDurationTrim(vf.wordsToSentences(okS.sentences, okS.words), gridOf(okS).videoEndSec, 30) === null);
+  check("v62.36: a 60s order does not trim a 38s script",
+    vf.planDurationTrim(per, g0.videoEndSec, 60) === null);
+  check("v62.36: no target = no action", vf.planDurationTrim(per, g0.videoEndSec, 0) === null);
+  const tiny = atPace(2.2, [40, 40, 40]);
+  check("v62.36: a 3-sentence script is never cut (hook and CTA only)",
+    vf.planDurationTrim(vf.wordsToSentences(tiny.sentences, tiny.words), gridOf(tiny).videoEndSec, 30) === null);
+  const big = atPace(2.2, Array(14).fill(9));
+  const bigPlan = vf.planDurationTrim(vf.wordsToSentences(big.sentences, big.words), gridOf(big).videoEndSec, 30,
+    { photosPerSentence: big.sentences.map((s) => s.photos.length) });
+  check("v62.36: never cuts below the 5-scene floor",
+    !bigPlan || 14 - bigPlan.drop.length >= 5, `${bigPlan ? 14 - bigPlan.drop.length : "n/a"} left`);
+
+  /* ── v62.36a: a cut must EARN its place ──
+     The first cut of this greedy took any drop that cleared the floor, so a
+     33.0s video 0.6s over the ceiling could lose its only droppable sentence
+     and land at 22.8s — a third of the script deleted to end up FARTHER from
+     the 30s the customer bought than doing nothing. Found by adversarial
+     sweep, 3.7% of near-ceiling shapes. The fixture is the exact input; the
+     property sweep below is what stops the whole class. */
+  {
+    const gapSynth = (counts, artic, intra, stop, photosPer) => {
+      const words = [], sentences = [];
+      let t = 0.9;
+      counts.forEach((n, si) => {
+        const toks = [];
+        for (let i = 0; i < n; i++) {
+          words.push({ word: `w${si}_${i}`, start: +t.toFixed(4), end: +(t + artic).toFixed(4) });
+          toks.push(`w${si}_${i}`);
+          t += artic + (i === n - 1 ? stop : intra);
+        }
+        sentences.push({ text: toks.join(" "), photos: photosPer[si] });
+      });
+      return { words, sentences };
+    };
+    const s = gapSynth([9, 15, 25, 21, 6], 0.347, 0.048, 0.357, [[0], [1], [], [2, 3], [4]]);
+    const g = vf.buildVoiceGrid({ sentences: s.sentences }, s.words);
+    const p = vf.planDurationTrim(vf.wordsToSentences(s.sentences, s.words), g.videoEndSec, 30,
+      { photosPerSentence: s.sentences.map((x) => x.photos.length) });
+    check("v62.36a: the 33.0s->22.8s over-cut is over the ceiling to begin with",
+      g.videoEndSec > 30 + Math.max(2, 30 * 0.08), `${g.videoEndSec}`);
+    check("v62.36a: it is NOT cut to 22.8s — no cut beats a bad cut",
+      !p || Math.abs(p.projectedSec - 30) < Math.abs(g.videoEndSec - 30),
+      `${g.videoEndSec.toFixed(1)}s -> ${p ? p.projectedSec.toFixed(1) : "null"}s`);
+  }
+  // The property, swept: a returned trim ALWAYS lands closer to the order
+  // than leaving it alone. Deterministic shapes, no RNG.
+  {
+    let checked = 0, worse = 0, undershot = 0;
+    for (let nS = 4; nS <= 12; nS++) {
+      for (let base = 5; base <= 17; base += 3) {
+        for (const wps of [2.1, 2.3, 2.5, 2.7]) {
+          for (const tgt of [30, 60]) {
+            const shape = Array.from({ length: nS }, (_, i) => base + ((i * 7) % 11));
+            const s = atPace(wps, shape);
+            const g = gridOf(s);
+            const p = vf.planDurationTrim(vf.wordsToSentences(s.sentences, s.words), g.videoEndSec, tgt,
+              { photosPerSentence: s.sentences.map((x) => x.photos.length) });
+            if (!p) continue;
+            checked++;
+            if (Math.abs(p.projectedSec - tgt) > Math.abs(g.videoEndSec - tgt) + 1e-9) worse++;
+            if (p.projectedSec < tgt * 0.75) undershot++;
+          }
+        }
+      }
+    }
+    check(`v62.36a: no trim lands farther from the order (${checked} trims swept)`, worse === 0, `${worse} worse`);
+    check("v62.36a: no trim falls through the 75% floor", undershot === 0, `${undershot} under`);
+    check("v62.36a: the sweep actually exercised the trim", checked > 100, `${checked}`);
+  }
+
+  /* the worker must actually consult the order it was given */
+  const wjSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/runway-job.mjs"), "utf8");
+  const vfSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/voice-first.mjs"), "utf8");
+  check("v62.36: the worker reads manifest.targetDurationSec", /manifest\?\.targetDurationSec/.test(vfSrc));
+  check("v62.36: the trim runs before clip submission",
+    vfSrc.indexOf("DURATION CONTRACT") < vfSrc.indexOf("return { grid, audioPath"));
+  check("v62.36: the caller reduces photoScenes on a trim", /voiceFirst\?\.keepOrdinals/.test(wjSrc));
+  check("v62.36: the trim fails open", /duration trim failed[\s\S]{0,120}shipping the full-length voice/.test(vfSrc));
+  check("v62.36: calibration is logged for the plan-side divisor", /CALIBRATION/.test(vfSrc));
+  // v62.36a, all three found by adversarial review — each is a silent
+  // failure mode, so each gets a lint that will fail loudly if removed.
+  check("v62.36a: the cut audio is measured, not assumed",
+    /refusing to desync the stem/.test(vfSrc) && /probeDurationSec\(outPath\)/.test(vfSrc));
+  check("v62.36a: a rejected trim takes its orphan mp3 with it",
+    /fs\.unlink\(newAudio\)/.test(vfSrc));
+  check("v62.36a: 'change nothing' is a scored candidate",
+    /let best = \{ k: null/.test(vfSrc) && /if \(best\.k === null\) break/.test(vfSrc));
+  check("v62.36a: the UNDER warning is emitted after any trim",
+    vfSrc.indexOf("DURATION UNDER") > vfSrc.indexOf("DURATION TRIM:"));
+  check("v62.36a: the caller validates before deleting scenes",
+    /does not reconcile[\s\S]{0,200}reverting to legacy/.test(wjSrc) &&
+    wjSrc.indexOf("does not reconcile") < wjSrc.indexOf("photoScenes.length = 0"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

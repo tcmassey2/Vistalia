@@ -29,6 +29,8 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { runFFmpeg } from "./ffmpeg-runner.mjs";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 const V3_MODEL = process.env.ELEVENLABS_V3_MODEL_ID || "eleven_v3";
@@ -99,6 +101,130 @@ function chooseCutTimes(wordRun, t0, t1, n, minScene) {
     if (okAll) picked.push(g.t);
   }
   return picked.length === n - 1 ? picked.sort((a, b) => a - b) : even;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   v62.36 — THE DURATION CONTRACT, IN SECONDS
+
+   The customer orders 30 or 60 seconds. Under voice-first the video's
+   length IS the narration's length, so that order is a promise about the
+   voice — but every gate on it upstream is denominated in WORDS, and
+   words do not convert to seconds at a fixed rate. Speech time is
+
+       leadIn + Σ(word durations) + Σ(gaps) + tailPad
+
+   and the gaps split into intra-sentence breaths and the much longer
+   pauses a voice takes at a full stop. Those scale with the sentence
+   COUNT, not the word count, which is why measured pace ranges 2.13-2.80
+   w/s across real renders and why an in-band 80-word script shipped a
+   37.6s video on a 30s order.
+
+   No estimator fixes that; it only narrows it. But the worker does not
+   have to estimate. By the time this function has synthesized and
+   aligned, it holds the real word timestamps — the exact final length is
+   known at progress 7, BEFORE a single clip is submitted. manifest
+   .targetDurationSec has been riding along all this time (audit-log reads
+   it; nothing else ever did). So: measure, and if the voice overshot,
+   cut sentences out of the AUDIO at the silences we can see, drop their
+   scenes before we pay to generate them, and rebuild the grid from what
+   is left. No re-synthesis, no atempo — the two things v62 exists to
+   avoid.
+   ════════════════════════════════════════════════════════════════════ */
+
+// How much audio disappears if sentence k is removed: its own speech plus
+// the one pause that preceded it. The pause that followed k survives and
+// becomes the boundary between k-1 and k+1 — so a cut leaves exactly one
+// gap where there were two, which is what every other boundary looks like.
+function spanRemovedBy(perSentence, k) {
+  const prevEnd = perSentence[k - 1][perSentence[k - 1].length - 1].end;
+  const ownEnd = perSentence[k][perSentence[k].length - 1].end;
+  return { start: prevEnd, end: ownEnd, sec: ownEnd - prevEnd };
+}
+
+/**
+ * Choose which sentences to drop so the video lands inside its order.
+ * Never the hook (0) or the CTA (last) — those are the two lines an ad
+ * cannot lose. Greedy: each step takes the drop that lands closest to
+ * target without falling through the floor.
+ *
+ * @returns { drop:number[], projectedSec, spans:[{start,end}] } | null
+ */
+export function planDurationTrim(perSentence, videoEndSec, targetSec, opts = {}) {
+  const {
+    ceilingSec = targetSec + Math.max(2, targetSec * 0.08),
+    floorSec = targetSec * 0.75,
+    minSentences = 3,
+    minPhotos = 5,
+    photosPerSentence = null // ordinal counts, to honour the 5-scene floor
+  } = opts;
+  if (!Number.isFinite(targetSec) || targetSec <= 0) return null;
+  if (!(videoEndSec > ceilingSec)) return null;
+  const n = perSentence.length;
+  if (n < minSentences + 1) return null;
+
+  const alive = new Set(perSentence.map((_, i) => i));
+  const dropped = [];
+  let projected = videoEndSec;
+  const photosLeft = () => (photosPerSentence
+    ? [...alive].reduce((a, i) => a + (photosPerSentence[i] || 0), 0)
+    : Infinity);
+
+  for (let guard = 0; guard < n && projected > ceilingSec; guard++) {
+    // v62.36a: "change nothing" is a scored candidate, not the fallback.
+    // Without it the loop took ANY drop that cleared the floor, so a 33.0s
+    // video 0.6s over the ceiling could lose its only droppable sentence
+    // and land at 22.8s — 7.2s UNDER the order, a third of the script gone,
+    // and further from what the customer bought than doing nothing. A cut
+    // has to earn its place by getting CLOSER to the order, or it is just
+    // deleting the customer's content.
+    let best = { k: null, after: projected, score: Math.abs(projected - targetSec) };
+    for (let k = 1; k < n - 1; k++) {
+      if (!alive.has(k)) continue;
+      if (!perSentence[k].length || !perSentence[k - 1]?.length) continue;
+      if (alive.size - 1 < minSentences) continue;
+      if (photosLeft() - (photosPerSentence?.[k] || 0) < minPhotos) continue;
+      const { sec } = spanRemovedBy(perSentence, k);
+      const after = projected - sec;
+      if (after < floorSec) continue;
+      const score = Math.abs(after - targetSec);
+      if (score < best.score) best = { k, sec, after, score };
+    }
+    if (best.k === null) break;
+    alive.delete(best.k);
+    dropped.push(best.k);
+    projected = best.after;
+  }
+
+  if (!dropped.length) return null;
+  dropped.sort((a, b) => a - b);
+  // Spans are computed against the ORIGINAL timeline, so adjacent drops
+  // chain correctly: [prev.end, k.end] and [k.end, k+1.end] abut.
+  const spans = dropped.map((k) => {
+    const { start, end } = spanRemovedBy(perSentence, k);
+    return { start, end, sentenceIndex: k };
+  });
+  return { drop: dropped, projectedSec: +projected.toFixed(3), spans };
+}
+
+/**
+ * Apply removal spans to a word list: drop the words inside them and pull
+ * everything after each span earlier by its length. Pure — used by the
+ * audio cut so picture and voice come from the same arithmetic.
+ */
+export function shiftWordsAfterCuts(words, spans) {
+  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  const out = [];
+  for (const w of words) {
+    let shift = 0;
+    let inside = false;
+    for (const s of sorted) {
+      if (w.start >= s.end) shift += s.end - s.start;
+      else if (w.end > s.start) { inside = true; break; }
+    }
+    if (inside) continue;
+    out.push({ ...w, start: +(w.start - shift).toFixed(4), end: +(w.end - shift).toFixed(4) });
+  }
+  return out;
 }
 
 // buildVoiceGrid(narration, words) → the grid the pipeline obeys.
@@ -357,6 +483,75 @@ async function forceAlign({ audioPath, cleanText, expectedWords }) {
   return words;
 }
 
+/**
+ * v62.36: excise time ranges from the narration mp3. Every cut starts and
+ * ends on a word BOUNDARY that the aligner reported, so both edges land in
+ * the silence a voice leaves at a full stop — the join is one word ending
+ * followed by the pause that already preceded the next sentence. atrim +
+ * concat rather than seek arithmetic: sample-exact, and one re-encode.
+ */
+async function cutAudioSpans({ audioPath, spans, tempDir, jobId }) {
+  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  const keep = [];
+  let cursor = 0;
+  for (const s of sorted) {
+    if (s.start > cursor + 0.01) keep.push([cursor, s.start]);
+    cursor = Math.max(cursor, s.end);
+  }
+  keep.push([cursor, null]); // to end of file
+  if (keep.length < 2) throw new Error("cutAudioSpans: nothing would be removed");
+
+  const parts = keep.map(([a, b], i) =>
+    `[0:a]atrim=start=${a.toFixed(4)}${b === null ? "" : `:end=${b.toFixed(4)}`},asetpts=N/SR/TB[k${i}]`
+  );
+  const filter = `${parts.join(";")};${keep.map((_, i) => `[k${i}]`).join("")}concat=n=${keep.length}:v=0:a=1[out]`;
+  const outPath = path.join(tempDir, `${jobId}-vf-trimmed.mp3`);
+  await runFFmpeg([
+    "-y", "-v", "error", "-i", audioPath,
+    "-filter_complex", filter, "-map", "[out]",
+    "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", outPath
+  ], { timeoutMs: 60000, label: "voice-first duration trim" });
+
+  // v62.36a: PROVE the cut. atrim past end-of-file yields an empty segment
+  // and concat accepts it without complaint, so a span that overruns the
+  // audio removes less than asked while shiftWordsAfterCuts still moves
+  // every later word by the full amount — a silent multi-second desync,
+  // the exact class this file exists to prevent. Measure the output and
+  // refuse it if it disagrees. mp3 frame granularity is ~26ms; 150ms is
+  // loose enough never to false-alarm and tight enough that no real
+  // mistake fits through.
+  const removed = sorted.reduce((a, s) => a + (s.end - s.start), 0);
+  const srcSec = await probeDurationSec(audioPath);
+  const outSec = await probeDurationSec(outPath);
+  if (Number.isFinite(srcSec) && Number.isFinite(outSec)) {
+    const expected = srcSec - removed;
+    if (Math.abs(outSec - expected) > 0.15) {
+      await fs.unlink(outPath).catch(() => {});
+      throw new Error(
+        `cut audio is ${outSec.toFixed(2)}s, expected ${expected.toFixed(2)}s ` +
+        `(${srcSec.toFixed(2)}s source minus ${removed.toFixed(2)}s) — refusing to desync the stem`
+      );
+    }
+  }
+  return outPath;
+}
+
+// Exported for the duration-contract verification harness only: the silent
+// out-of-range desync this guards is unreachable through prepareVoiceFirst
+// (the CTA is never dropped, so spans stay inside the file), which is
+// exactly why it needs a direct test.
+export const __testCutAudioSpans = cutAudioSpans;
+
+function probeDurationSec(file) {
+  return new Promise((resolve) => {
+    execFile("ffprobe",
+      ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file],
+      { timeout: 15000 },
+      (err, stdout) => resolve(err ? NaN : Number(String(stdout).trim()))
+    );
+  });
+}
+
 // Rung 2 — proven path: with-timestamps on the production model, clean text.
 // Character alignment grouped into whitespace-delimited words.
 async function synthesizeWithTimestampsClean({ cleanText, voiceId, tempDir, jobId }) {
@@ -558,7 +753,124 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
     rung = `${TIMESTAMP_MODEL}+timestamps`;
   }
 
-  const grid = buildVoiceGrid({ sentences }, words, maxSceneVisible ? { maxSceneVisible } : {});
+  let grid = buildVoiceGrid({ sentences }, words, maxSceneVisible ? { maxSceneVisible } : {});
+
+  /* ── v62.36 DURATION CONTRACT ────────────────────────────────────────
+     Everything above is spent; nothing below is. This is the last moment
+     the render is still cheap, and the first moment the final length is
+     a measured fact rather than a word-count guess. */
+  let keepOrdinals = null;
+  let orphanedOrdinals = [];
+  const targetSec = Number(manifest?.targetDurationSec) || 0;
+
+  /* v62.36 CALIBRATION. The plan side still budgets in words because it has
+     to guess before the voice exists, and its divisor (2.5 w/s) is a single
+     constant standing in for two independent terms. Every render now reports
+     the real ones, so that divisor can eventually be replaced with
+     seconds ≈ words·SEC_PER_WORD + (sentences−1)·SEC_PER_STOP + 1.8
+     from measured data rather than from a fitted guess. Costs one log line. */
+  try {
+    const per = wordsToSentences(sentences, words);
+    const artic = words.reduce((a, w) => a + (w.end - w.start), 0) / words.length;
+    const stopEnds = new Set(per.slice(0, -1).map((r) => r[r.length - 1]?.end).filter((x) => x != null));
+    let intraSum = 0, intraN = 0, interSum = 0, interN = 0;
+    for (let i = 0; i < words.length - 1; i++) {
+      const gap = words[i + 1].start - words[i].end;
+      if (stopEnds.has(words[i].end)) { interSum += gap; interN++; } else { intraSum += gap; intraN++; }
+    }
+    console.info(
+      `[voice-first] CALIBRATION: ${words.length}w/${sentences.length}s — ` +
+      `articulation ${artic.toFixed(3)}s/word, intra-gap ${(intraN ? intraSum / intraN : 0).toFixed(3)}s x${intraN}, ` +
+      `full-stop pause ${(interN ? interSum / interN : 0).toFixed(3)}s x${interN} — ` +
+      `implied ${(artic + (intraN ? intraSum / intraN : 0)).toFixed(3)}s/word + ` +
+      `${(interN ? (interSum / interN) : 0).toFixed(3)}s/stop (plan divisor assumes a flat 2.5 w/s = 0.400s/word)`
+    );
+  } catch { /* telemetry only — never let it touch the render */ }
+
+  if (targetSec > 0) {
+    const ceiling = targetSec + Math.max(2, targetSec * 0.08);
+    console.info(
+      `[voice-first] DURATION: ordered ${targetSec}s, voice measures ${grid.videoEndSec.toFixed(1)}s ` +
+      `(${sentences.length} sentences, ceiling ${ceiling.toFixed(1)}s) — ` +
+      (grid.videoEndSec > ceiling ? "OVER, trimming." : "inside the order.")
+    );
+    try {
+      const perSentence = wordsToSentences(sentences, words);
+      const plan = planDurationTrim(perSentence, grid.videoEndSec, targetSec, {
+        photosPerSentence: sentences.map((s) => s.photos.length)
+      });
+      if (plan) {
+        const dropped = new Set(plan.drop);
+        orphanedOrdinals = plan.drop.flatMap((k) => sentences[k].photos);
+        const survivors = sentences.filter((_, i) => !dropped.has(i));
+        // Renumber the surviving ordinals to a dense 0..n-1 over the scenes
+        // that remain, so the grid's positional contract with photoScenes
+        // still holds after runway-job removes the orphans.
+        // A dropped LINGER sentence orphans no photos, so the scene list is
+        // unchanged — say so with null rather than handing the caller a
+        // full-length keep list that makes it log "removed 0 scene(s)".
+        keepOrdinals = orphanedOrdinals.length
+          ? survivors.flatMap((s) => s.photos).sort((a, b) => a - b)
+          : null;
+        const renumberFrom = keepOrdinals || survivors.flatMap((s) => s.photos).sort((a, b) => a - b);
+        const renumber = new Map(renumberFrom.map((ord, i) => [ord, i]));
+        const newSentences = survivors.map((s) => ({
+          text: s.text,
+          photos: s.photos.map((o) => renumber.get(o)).filter((x) => Number.isInteger(x))
+        }));
+        const newAudio = await cutAudioSpans({ audioPath, spans: plan.spans, tempDir, jobId });
+        let newWords, rebuilt;
+        try {
+          newWords = shiftWordsAfterCuts(words, plan.spans);
+          rebuilt = buildVoiceGrid({ sentences: newSentences }, newWords, maxSceneVisible ? { maxSceneVisible } : {});
+          if (rebuilt.stats.droppedPhotos.length) {
+            throw new Error(`rebuilt grid would drop photos [${rebuilt.stats.droppedPhotos.join(",")}]`);
+          }
+        } catch (rebuildErr) {
+          // v62.17's lesson, which this new path had not inherited: the cut
+          // mp3 was already written and billed CPU. If we are not going to
+          // use it, take it with us — otherwise every rejected trim leaves a
+          // full-length orphan behind until the 2h temp sweep.
+          await fs.unlink(newAudio).catch(() => {});
+          throw rebuildErr;
+        }
+        // Only commit once the rebuild is proven good — a half-applied trim
+        // (new audio, old grid) is the desync this whole file exists to
+        // prevent. Until this line nothing observable has changed.
+        await fs.unlink(audioPath).catch(() => {});
+        audioPath = newAudio;
+        words = newWords;
+        sentences.length = 0;
+        sentences.push(...newSentences);
+        grid = rebuilt;
+        console.warn(
+          `[voice-first] DURATION TRIM: dropped ${plan.drop.length} sentence(s) ` +
+          `[${plan.drop.map((k) => `s${k + 1}`).join(",")}] and ${orphanedOrdinals.length} scene(s) — ` +
+          `${(plan.projectedSec + 0).toFixed(1)}s predicted, ${grid.videoEndSec.toFixed(1)}s actual, ` +
+          `against a ${targetSec}s order. Hook and CTA kept.`
+        );
+      }
+    } catch (trimErr) {
+      // Fail-open like everything else here: an untrimmed video that runs
+      // long is worse than the order, but far better than no video.
+      console.warn(`[voice-first] duration trim failed (${trimErr.message}) — shipping the full-length voice.`);
+      keepOrdinals = null;
+      orphanedOrdinals = [];
+    }
+    // v62.36a: report the UNDER case AFTER any trim, not before — the old
+    // placement measured the pre-trim length, so a trim that undershot the
+    // order announced nothing at all. Nothing to do about it here either
+    // way (the script floor lives plan-side: v62.7 THIN-UPGRADE, the
+    // expansion probe), but the log must say which end of the contract
+    // missed and by how much.
+    if (grid.videoEndSec < targetSec * 0.8) {
+      console.warn(
+        `[voice-first] DURATION UNDER: ${grid.videoEndSec.toFixed(1)}s against a ${targetSec}s order` +
+        `${keepOrdinals ? " (after the trim)" : ""} — the script is too thin to fill the order and ` +
+        `nothing here can add to it without re-synthesizing.`
+      );
+    }
+  }
 
   // Caption words in VIDEO time, pre-shaped for buildCaptionsAss. Nothing is
   // ever trimmed on this path, so every spoken word is captioned — the m66
@@ -597,5 +909,9 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
     if (span) console.info(`[voice-first] s${i + 1} ${span.start.toFixed(2)}-${span.end.toFixed(2)}s: "${sentences[i].text}"`);
   });
 
-  return { grid, audioPath, words, captionWords, cleanText, sentences, rung, voiceId };
+  // keepOrdinals is non-null only when the duration trim fired: it lists the
+  // ORIGINAL photo-scene ordinals that survived, in order, and the caller
+  // must reduce photoScenes to exactly those before generating anything —
+  // the grid's positional contract is with the REDUCED list.
+  return { grid, audioPath, words, captionWords, cleanText, sentences, rung, voiceId, keepOrdinals, orphanedOrdinals };
 }

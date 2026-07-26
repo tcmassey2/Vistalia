@@ -546,6 +546,41 @@ export async function renderRunwayJob(body, options = {}) {
         console.warn(`[voice-first] grid dropped ${voiceFirst.grid.stats.droppedPhotos.length} photos (degenerate narration) — reverting to legacy voice path.`);
         voiceFirst = null;
       }
+      // v62.36: the duration trim dropped sentences, and their scenes go
+      // with them (the v62.31 rule — a trimmed sentence takes its scenes
+      // rather than donating them to a neighbour that never described
+      // them). This runs BEFORE clip submission, so the removed scenes
+      // cost nothing: the render gets shorter, cheaper and faster at once.
+      if (voiceFirst?.keepOrdinals) {
+        const keep = voiceFirst.keepOrdinals;
+        const kept = keep.map((ord) => photoScenes[ord]).filter(Boolean);
+        // Validate BEFORE committing. Deleting the customer's scenes and
+        // then discovering the grid disagrees would leave the render short
+        // AND on the legacy path — the removal has to be the last thing
+        // that happens, not the first.
+        if (kept.length !== keep.length || kept.length !== voiceFirst.grid.scenes.length) {
+          console.warn(
+            `[voice-first] duration trim does not reconcile ` +
+            `(${kept.length} scenes kept vs ${voiceFirst.grid.scenes.length} grid scenes) — ` +
+            `reverting to legacy voice path with the tour intact.`
+          );
+          voiceFirst = null;
+        } else {
+          const removed = photoScenes
+            .map((s, i) => (keep.includes(i) ? null : `#${i + 1} ${s.roomType || "?"}`))
+            .filter(Boolean);
+          photoScenes.length = 0;
+          photoScenes.push(...kept);
+          manifest.scenes = (manifest.scenes || []).filter(
+            (s) => String(s.type || "photo").toLowerCase() !== "photo" ||
+              kept.some((k) => String(k.photoId) === String(s.photoId))
+          );
+          console.warn(
+            `[voice-first] duration trim removed ${removed.length} scene(s) before generation — ` +
+            `${removed.join(", ")}. Shipping ${photoScenes.length} scenes.`
+          );
+        }
+      }
       if (voiceFirst) {
         const gridScenes = voiceFirst.grid.scenes;
         if (gridScenes.length !== photoScenes.length) {
