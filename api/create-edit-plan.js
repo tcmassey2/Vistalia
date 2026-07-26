@@ -702,14 +702,29 @@ export default async function handler(request, response) {
       if (overNar && overWords > Math.round(budgetTarget * 1.1)) {
         const trimmed = trimNarrationToBudget(overNar, { targetDurationSec });
         if (trimmed) {
-          const probe = { scenes: normalizedPlan.scenes };
+          /* v62.31: a trimmed sentence takes its scenes with it. Validate
+             against the REDUCED scene list, so what ships is a shorter tour
+             where every scene is narrated by the sentence written for it —
+             not the same tour with narration smeared across rooms. */
+          const orphaned = new Set((trimmed.__trim.orphaned || []).map(String));
+          const survivingScenes = (normalizedPlan.scenes || []).filter(
+            (s) => String(s.type || "photo").toLowerCase() !== "photo" || !orphaned.has(String(s.photoId))
+          );
+          const survivingPhotos = survivingScenes.filter((s) => String(s.type || "photo").toLowerCase() === "photo");
+          const probe = { scenes: survivingScenes };
           attachNarration(probe, trimmed, { targetDurationSec });
           const probeWords = probe.narrationScript
             ? probe.narrationScript.split(/\s+/).filter(Boolean).length : 0;
-          if (probe.narration && probe.narration.source === "director" && probeWords < overWords) {
+          // MIN_PLAN_SCENES-style floor: a tour needs enough rooms to be a tour.
+          if (probe.narration && probe.narration.source === "director" && probeWords < overWords && survivingPhotos.length >= 5) {
             probe.narration.source = `${overNar.source}+trimmed`;
+            normalizedPlan.scenes = survivingScenes.map((s, i) => ({ ...s, order: i + 1 }));
             normalizedPlan.narration = probe.narration;
             normalizedPlan.narrationScript = probe.narrationScript;
+            console.info(
+              `[plan] narration trim dropped ${orphaned.size} scene(s) with their sentences — ` +
+              `${survivingPhotos.length} scenes remain, each narrated by its own line.`
+            );
             console.info(
               `[plan] narration OVER BAND trimmed: ${overWords}w → ${probeWords}w ` +
               `(target ${budgetTarget}, ${trimmed.__trim.cuts} sentence(s) cut, audio tags dropped). ` +
@@ -1669,9 +1684,29 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
 
    Whole sentences are dropped from the MIDDLE, never the hook or the CTA,
    choosing at each step the cut that lands closest to target without falling
-   under the floor. A dropped sentence's photos merge into the sentence before
-   it, so every scene's photoId still appears exactly once and the scene still
-   shows — narrated by its neighbour instead of dropped from the tour.
+   under the floor.
+
+   v62.31 — WHAT THE FIRST VERSION GOT WRONG. It merged a dropped sentence's
+   photos into the sentence BEFORE it, to keep every photoId appearing exactly
+   once. That satisfied the validator and broke the product: the surviving
+   sentence was written about ITS room, and now played over two or three
+   others. On the real 127-word script it produced
+
+     s1 -> [p1,p2]     "Welcome to 4935 E Berneil Dr..."  over exterior AND kitchen
+     s4 -> [p5,p6,p7]  "The outdoor space is a true retreat with a dramatic
+                        rock waterfall pool and spa."     over outdoor, BATHROOM, living
+
+   which is Troy's "the voiceover does not match the scene structure",
+   and the same kitchen-over-the-great-room class the v33 aligned path was
+   built to kill. Multi-photo sentences are legal — the Director writes them
+   deliberately, describing what it grouped — but they cannot be manufactured
+   after the fact.
+
+   So a dropped sentence now takes its photos WITH it: they come back as
+   `__trim.orphaned` and the caller removes those scenes from the tour. Fewer
+   scenes, every one narrated by a sentence written for it. That is the right
+   trade — the customer asked for 30 seconds, and six correctly-narrated
+   scenes beat nine mismatched ones.
    Rebuilding the monologue from the surviving sentences loses the [audio
    tags], which only the eleven_v3 expressive rung consumes; a correct runtime
    is worth more than delivery tags, and the caller logs when it happens. */
@@ -1688,6 +1723,7 @@ function trimNarrationToBudget(narration, { targetDurationSec = 30 } = {}) {
   if (!sents.length || total <= maxWords || sents.length < 3) return null;
   const before = total;
   let cuts = 0;
+  const orphaned = [];
   while (total > maxWords && sents.length > 2) {
     let bestIdx = -1;
     let bestDist = Infinity;
@@ -1698,7 +1734,9 @@ function trimNarrationToBudget(narration, { targetDurationSec = 30 } = {}) {
       if (dist < bestDist) { bestDist = dist; bestIdx = i; }
     }
     if (bestIdx < 0) break;
-    sents[bestIdx - 1].photos.push(...sents[bestIdx].photos);
+    // v62.31: the sentence's photos leave with it. Merging them into a
+    // neighbour is what produced narration over the wrong rooms.
+    orphaned.push(...sents[bestIdx].photos.map((p) => String(p)));
     sents.splice(bestIdx, 1);
     cuts += 1;
     total = sents.reduce((a, s) => a + wc(s.text), 0);
@@ -1708,7 +1746,7 @@ function trimNarrationToBudget(narration, { targetDurationSec = 30 } = {}) {
     ...narration,
     monologue: sents.map((s) => s.text).join(" "),
     sentences: sents,
-    __trim: { before, after: total, cuts }
+    __trim: { before, after: total, cuts, orphaned }
   };
 }
 

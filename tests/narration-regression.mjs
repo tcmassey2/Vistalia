@@ -154,7 +154,19 @@ eval(`globalThis.trimNar = ${grab(planSrc, "trimNarrationToBudget").replace(/^fu
   check("hook preserved", !!out && out.sentences[0].text === real[0]);
   check("CTA preserved", !!out && out.sentences[out.sentences.length - 1].text === real[real.length - 1]);
   const ph = out ? out.sentences.flatMap((s) => s.photos) : [];
-  check("every photoId still appears exactly once", ph.length === 8 && new Set(ph).size === 8);
+  check("no photoId is covered twice", ph.length === new Set(ph).size);
+  /* v62.31: the first version merged a dropped sentence's photos into its
+     neighbour, so a line written about the pool played over the bathroom —
+     Troy: "the voiceover does not match the scene structure". A sentence must
+     keep EXACTLY the photos it was authored for; dropped scenes come back as
+     __trim.orphaned and the caller removes them from the tour. */
+  const authored = new Map(nar.sentences.map((s) => [s.text, s.photos.join(",")]));
+  check("no manufactured multi-photo sentences",
+    !!out && out.sentences.every((s) => authored.get(s.text) === s.photos.join(",")));
+  check("dropped sentences return their photos as orphans",
+    !!out && Array.isArray(out.__trim.orphaned) && out.__trim.orphaned.length === out.__trim.cuts);
+  check("orphans + survivors account for every original photo",
+    !!out && new Set([...ph, ...out.__trim.orphaned]).size === 8);
   check("monologue equals sentences joined", !!out && out.monologue === out.sentences.map((s) => s.text).join(" "));
   check("in-band narration is left alone", globalThis.trimNar(
     { sentences: real.slice(0, 5).map((t, i) => ({ text: t, photos: [`p${i}`] })), monologue: real.slice(0, 5).join(" ") },
