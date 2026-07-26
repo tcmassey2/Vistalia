@@ -98,6 +98,26 @@ const VOICE_TARGET_I = Number(process.env.VOICE_TARGET_LUFS ?? -17); // speech
 const BED_TARGET_I = Number(process.env.BED_TARGET_LUFS ?? -22);     // music between lines
 const MIX_MAKEUP_DB = 3; // static lift after amix → mix lands ≈ -16 LUFS
 
+/* v62.28: the bed this module measures is NOT the library track. By the time
+   we see it, stitchClipsAndOverlays has already mixed the music into the
+   master at `musicBedLevel` (runway-job.mjs, default 0.22 = −13.2 dB). So a
+   perfectly normal track arrives here looking 13 dB quiet, and the old
+   warning told the operator to "renormalize this track in the library" —
+   sending them to fix an asset that was never broken.
+   Measured, all 19 library tracks: −6.9 to −20.9 LUFS, median −10.8. Not one
+   is near the −27.3 the warning kept reporting. leberch-piano is −13.9 raw
+   and −27.1 after volume=0.22, which is the 05:08 render's number to the
+   decimal. The attenuation was the whole signal.
+   Warn on the IMPLIED SOURCE level instead — undo the known attenuation
+   before judging the track. A per-render manifest.musicBedLevel override
+   isn't visible from here; it's an escape hatch nobody sets, and being
+   slightly off on a warning beats being confidently wrong about it. */
+const MUSIC_BED_LEVEL = Number(process.env.MUSIC_BED_LEVEL ?? 0.22);
+const BED_PRE_ATTEN_DB = MUSIC_BED_LEVEL > 0 ? 20 * Math.log10(MUSIC_BED_LEVEL) : 0;
+// A produced library track sits well above this; below it, the SOURCE is
+// genuinely quiet and worth re-mastering.
+const BED_SOURCE_FLOOR_I = Number(process.env.BED_SOURCE_FLOOR_LUFS ?? -20);
+
 const clampDb = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 // Integrated loudness (LUFS) of a file's first audio stream via ffmpeg's
@@ -170,8 +190,21 @@ async function computeStemGains(masterMp4, narrationTrackPath) {
   // tracks take +12-14dB of clean makeup; the WARN flags tracks that need
   // renormalizing in the library.
   const bedGainDb = bedI == null ? 0 : clampDb(BED_TARGET_I - bedI, -18, 14);
-  if (bedI != null && BED_TARGET_I - bedI > 8) {
-    console.warn(`[voice] WARN quiet music track: bed measured ${bedI.toFixed(1)} LUFS (needs +${(BED_TARGET_I - bedI).toFixed(1)}dB) — renormalize this track in the library.`);
+  // v62.28: judge the SOURCE, not the pre-attenuated bed (see BED_PRE_ATTEN_DB).
+  const impliedSourceI = bedI == null ? null : bedI - BED_PRE_ATTEN_DB;
+  if (impliedSourceI != null && impliedSourceI < BED_SOURCE_FLOOR_I) {
+    console.warn(
+      `[voice] WARN quiet music track: source ≈ ${impliedSourceI.toFixed(1)} LUFS ` +
+      `(bed measured ${bedI.toFixed(1)} after the ${BED_PRE_ATTEN_DB.toFixed(1)}dB musicBedLevel cut) — ` +
+      `this one really is under-mastered; renormalize it in the library.`
+    );
+  } else if (bedI != null && BED_TARGET_I - bedI > 12) {
+    // Not the track's fault — we cut it this far ourselves. Surfaced because
+    // a makeup this large can run into the +14 clamp and ship a quiet bed.
+    console.info(
+      `[voice] bed needs +${(BED_TARGET_I - bedI).toFixed(1)}dB makeup (source ≈ ${impliedSourceI.toFixed(1)} LUFS, ` +
+      `musicBedLevel cut ${BED_PRE_ATTEN_DB.toFixed(1)}dB). Raise MUSIC_BED_LEVEL if this clamps.`
+    );
   }
   const voiceGainDb = voiceI == null ? 3 : clampDb(VOICE_TARGET_I - voiceI, -6, 18);
   console.info(
