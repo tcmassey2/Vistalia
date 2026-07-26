@@ -359,6 +359,35 @@ const QUEUE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_KEY);
 const RENDER_CONCURRENCY = Math.max(1, Number(process.env.RENDER_CONCURRENCY || 2));
 const WORKER_ID = `worker-${process.pid}-${Math.random().toString(36).slice(2, 7)}`;
 let activeRenders = 0;
+/* v62.34 — WHY A JOB CAN RENDER TWICE WITHOUT ANYONE ASKING TWICE.
+   Troy: "I never requested 2 renders." Canary is off, auto-render is off, and
+   he clicked once. The remaining mechanism is the reaper: migration 35
+   requeues any row still 'rendering' whose heartbeat_at is older than 4
+   minutes, and heartbeat_at is written ONLY as a side effect of a progress
+   write (persistJobStatus). Nothing guarantees progress lands every 4
+   minutes. A single Kling scene took 302s in the Jul 25 21:58 render, and
+   when two renders share the box every phase stretches — so a LIVE job can
+   go quiet long enough to be re-dealt to another worker and render again,
+   concurrently, spending fal twice.
+   That this happens is not speculation: the claim path already carries a
+   "reaper redelivery caught" branch. But that branch only fires when the job
+   ALREADY DELIVERED (an audit row exists). A redelivery while the first run
+   is still going has nothing to catch it.
+   Two fixes. Liveness stops depending on progress cadence — a ticker writes
+   heartbeat_at for every in-flight job every 60s, well inside the 4-minute
+   window. And a worker refuses to claim a job it is already rendering. */
+const inFlightJobs = new Set();
+setInterval(() => {
+  if (!QUEUE_ENABLED || inFlightJobs.size === 0) return;
+  const beat = new Date().toISOString();
+  for (const id of inFlightJobs) {
+    fetch(`${SUPABASE_URL}/rest/v1/render_jobs?job_id=eq.${encodeURIComponent(id)}&status=eq.rendering`, {
+      method: "PATCH",
+      headers: { ...sbHeaders, Prefer: "return=minimal" },
+      body: JSON.stringify({ heartbeat_at: beat })
+    }).catch(() => {});
+  }
+}, 60_000).unref();
 
 // v50.1 CRASH OBSERVABILITY (Jul 18 incident): the Summit Springs job ran
 // THREE times — every container boot in the log landed in the tone-leveling→
@@ -608,7 +637,13 @@ async function pollAndProcess() {
           continue;
         }
       }
+      if (inFlightJobs.has(claimed.job_id)) {
+        console.error(`[queue] ${claimed.job_id} re-dealt while THIS worker is still rendering it (attempt ${claimed.attempts ?? "?"}) — refusing the duplicate.`);
+        continue;
+      }
+      console.info(`[queue] claimed ${claimed.job_id} (attempt ${claimed.attempts ?? 1})${(claimed.attempts || 1) > 1 ? " — REQUEUED, a previous worker lost or was reaped off this job" : ""}`);
       activeRenders++;
+      inFlightJobs.add(claimed.job_id);
       jobs.set(claimed.job_id, {
         status: "rendering", phase: isRegen ? "Starting scene redo" : "Claimed", progress: 5, jobId: claimed.job_id,
         mp4Url: "", thumbnailUrl: "", error: "",
@@ -619,7 +654,7 @@ async function pollAndProcess() {
         : runRenderJob(claimed.job_id, claimed.manifest);
       run
         .catch((e) => console.error(`[queue] ${isRegen ? "regen" : "render"} ${claimed.job_id} crashed: ${e?.message}`))
-        .finally(() => { activeRenders--; });
+        .finally(() => { activeRenders--; inFlightJobs.delete(claimed.job_id); });
     }
     pollFailures = 0;
   } catch (e) {
