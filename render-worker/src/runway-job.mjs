@@ -24,7 +24,7 @@ import { resolveVoiceId } from "./voices.mjs";
 import { writeRenderAudit } from "./audit-log.mjs";
 import { renderHomographyDrift } from "./homography-drift.mjs";
 import { CAPTIONS_FONTS_DIR } from "./captions.mjs";
-import { runFFmpeg, timed } from "./ffmpeg-runner.mjs";
+import { runFFmpeg, timed , ENCODE_THREADS } from "./ffmpeg-runner.mjs";
 import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
 import { qcVeoClip, qcEnabled, qcMasterSceneCheck } from "./veo-qc.mjs";
 
@@ -1307,7 +1307,7 @@ export async function renderRunwayJob(body, options = {}) {
     try {
       const markedPath = path.join(tempDir, `${jobId}-marked.mp4`);
       await runFFmpeg([
-        "-y", "-threads", "1",
+        "-y", "-threads", ENCODE_THREADS,
         "-i", masterForVariants,
         "-vf", buildFreeRenderWatermark(masterDims),
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
@@ -1411,7 +1411,7 @@ export async function renderRunwayJob(body, options = {}) {
          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19", "-c:a", "copy"]
       : ["-c", "copy"];
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", squareSilent,
       "-i", masterForVariants,
       "-map", "0:v:0", "-map", "1:a:0?",
@@ -1427,7 +1427,7 @@ export async function renderRunwayJob(body, options = {}) {
       try {
         const squareMarked = path.join(squareDir, `${jobId}-square-marked.mp4`);
         await runFFmpeg([
-          "-y", "-threads", "1",
+          "-y", "-threads", ENCODE_THREADS,
           "-i", squareFinal,
           "-vf", buildFreeRenderWatermark({ width: 1080, height: 1080 }),
           "-c:v", "libx264", "-pix_fmt", "yuv420p",
@@ -1925,7 +1925,7 @@ async function prepareDeliveryAspectSource(imageUrl, manifest, tempDir, sceneInd
     // Identical geometry to the normalize pass: cover-scale then centered
     // crop. Composition on screen is unchanged; only the pixel budget moves.
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", srcPath,
       "-vf", `scale=${dims.width}:${dims.height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${dims.width}:${dims.height}`,
       "-q:v", "2",
@@ -2032,7 +2032,7 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
   });
   await runFFmpeg([
     "-y",
-    "-threads", "1",
+    "-threads", ENCODE_THREADS,
     "-loop", "1",
     "-i", localPhoto,
     "-t", String(duration),
@@ -2330,11 +2330,11 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
       const stabPath = path.join(tempDir, `stab-${String(clip.sceneIndex).padStart(3, "0")}.mp4`);
       try {
         await runFFmpeg(
-          ["-y", "-threads", "1", "-i", clip.clipPath, "-vf", `vidstabdetect=shakiness=8:accuracy=15:result=${trfPath}`, "-f", "null", "-"],
+          ["-y", "-threads", ENCODE_THREADS, "-i", clip.clipPath, "-vf", `vidstabdetect=shakiness=8:accuracy=15:result=${trfPath}`, "-f", "null", "-"],
           { timeoutMs: 120000, label: `stab:detect-${clip.sceneIndex}` }
         );
         await runFFmpeg(
-          ["-y", "-threads", "1", "-i", clip.clipPath, "-vf", `vidstabtransform=input=${trfPath}:smoothing=35:optzoom=1:interpol=bicubic`, "-c:v", "libx264", "-preset", "fast", "-crf", "16", "-an", stabPath],
+          ["-y", "-threads", ENCODE_THREADS, "-i", clip.clipPath, "-vf", `vidstabtransform=input=${trfPath}:smoothing=35:optzoom=1:interpol=bicubic`, "-c:v", "libx264", "-preset", "fast", "-crf", "16", "-an", stabPath],
           { timeoutMs: 180000, label: `stab:transform-${clip.sceneIndex}` }
         );
         const st = await fs.stat(stabPath);
@@ -2454,7 +2454,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
         (cornerHeadshotPath ? `;[vout][1:v]overlay=${cornerOverlayX}:${cornerOverlayY}[vfinal]` : "");
       await runFFmpeg([
         "-y",
-        "-threads", "1",
+        "-threads", ENCODE_THREADS,
         "-i", clip.clipPath,
         ...(cornerHeadshotPath ? ["-i", cornerHeadshotPath] : []),
         "-filter_complex", graph,
@@ -2470,7 +2470,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
           `[bg][1:v]overlay=${cornerOverlayX}:${cornerOverlayY}[vout]`;
         await runFFmpeg([
           "-y",
-          "-threads", "1",
+          "-threads", ENCODE_THREADS,
           "-i", clip.clipPath,
           "-i", cornerHeadshotPath,
           "-filter_complex", filterComplex,
@@ -2481,7 +2481,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
         // No headshot — simpler single-input -vf chain.
         await runFFmpeg([
           "-y",
-          "-threads", "1",
+          "-threads", ENCODE_THREADS,
           "-i", clip.clipPath,
           "-vf", baseFilters,
           ...encodeArgs
@@ -2631,7 +2631,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     const fade = stitchedDur > fadeSec ? `,afade=t=out:st=${(stitchedDur - fadeSec).toFixed(2)}:d=${fadeSec.toFixed(2)}` : "";
     await runFFmpeg([
       "-y",
-      "-threads", "1",
+      "-threads", ENCODE_THREADS,
       "-i", stitched,
       // v45.11b (m41): tracks SHORTER than the video ended the bed early —
       // amix duration=first + -shortest then truncated the ENTIRE audio
@@ -2664,7 +2664,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // Step 5: extract a thumbnail from ~10% in.
   await runFFmpeg([
     "-y",
-    "-threads", "1",
+    "-threads", ENCODE_THREADS,
     "-i", outputPath,
     "-ss", "1.5",
     "-vframes", "1",
@@ -2721,7 +2721,7 @@ async function buildHeadshotCircle(headshotUrl, sizePx, tempDir) {
     // circular alpha mask. Combined with format=yuva420p so we have an
     // alpha channel to mask against.
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", sourcePath,
       "-vf",
       `scale=${sizePx}:${sizePx}:force_original_aspect_ratio=increase,crop=${sizePx}:${sizePx},format=yuva420p,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(gt(pow(X-${radius},2)+pow(Y-${radius},2),pow(${radiusInner},2)),0,255)'`,
@@ -2752,7 +2752,7 @@ async function buildLogoAsset(logoUrl, maxHeightPx, tempDir, maxWidthPx = 0) {
       ? `scale=w='min(${maxWidthPx},iw*${maxHeightPx}/ih)':h=-1:flags=lanczos`
       : `scale=-1:${maxHeightPx}:flags=lanczos`;
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", sourcePath,
       // Scale to fit, preserve aspect, keep alpha if present.
       "-vf", `${fit},format=rgba`,
@@ -3132,7 +3132,7 @@ async function buildBrandOutroClip(
 
   await runFFmpeg([
     "-y",
-    "-threads", "1",
+    "-threads", ENCODE_THREADS,
     ...inputs,
     "-filter_complex", filterComplex,
     "-map", "[vout]",

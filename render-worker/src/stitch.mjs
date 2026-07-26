@@ -14,7 +14,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { runFFmpeg } from "./ffmpeg-runner.mjs";
+import { runFFmpeg , ENCODE_THREADS } from "./ffmpeg-runner.mjs";
 
 // Encoding params — kept identical to the v22 runway-job constants so
 // switching engines produces byte-comparable output and no regression on
@@ -46,7 +46,7 @@ export async function stitchWithCrossfades({ clips, outroClip, output, crossfade
   if (allClips.length === 0) throw new Error("stitchWithCrossfades called with no clips.");
   if (allClips.length === 1) {
     await runFFmpeg(
-      ["-y", "-threads", "1", "-i", allClips[0].clipPath, "-c", "copy", output],
+      ["-y", "-threads", ENCODE_THREADS, "-i", allClips[0].clipPath, "-c", "copy", output],
       { timeoutMs: 30000, label: "stitch:single-clip-copy" }
     );
     return;
@@ -73,7 +73,7 @@ export async function stitchWithCrossfades({ clips, outroClip, output, crossfade
     const batchOut = path.join(tempDir, `xfade-batch-${String(bi).padStart(2, "0")}.mp4`);
     if (batch.length === 1) {
       await runFFmpeg(
-        ["-y", "-threads", "1", "-i", batch[0].clipPath, "-c", "copy", batchOut],
+        ["-y", "-threads", ENCODE_THREADS, "-i", batch[0].clipPath, "-c", "copy", batchOut],
         { timeoutMs: 30000, label: `stitch:xfade-batch-${bi}-passthrough` }
       );
     } else {
@@ -104,7 +104,7 @@ export async function stitchWithCrossfades({ clips, outroClip, output, crossfade
 async function xfadeSingleBatch(clipsInBatch, output, crossfadeDurationSec) {
   if (clipsInBatch.length === 1) {
     await runFFmpeg(
-      ["-y", "-threads", "1", "-i", clipsInBatch[0].clipPath, "-c", "copy", output],
+      ["-y", "-threads", ENCODE_THREADS, "-i", clipsInBatch[0].clipPath, "-c", "copy", output],
       { timeoutMs: 30000, label: "stitch:xfade-single" }
     );
     return;
@@ -130,7 +130,7 @@ async function xfadeSingleBatch(clipsInBatch, output, crossfadeDurationSec) {
 
   await runFFmpeg([
     "-y",
-    "-threads", "1",
+    "-threads", ENCODE_THREADS,
     ...inputs,
     "-filter_complex", filterComplex,
     "-map", "[vout]",
@@ -164,7 +164,7 @@ export async function stitchWithSimpleConcat({ clips, outroClip, output, tempDir
   );
   await runFFmpeg([
     "-y",
-    "-threads", "1",
+    "-threads", ENCODE_THREADS,
     "-f", "concat",
     "-safe", "0",
     "-i", concatList,

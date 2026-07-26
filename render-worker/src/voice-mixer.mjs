@@ -22,7 +22,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { runFFmpeg } from "./ffmpeg-runner.mjs";
+import { runFFmpeg , ENCODE_THREADS } from "./ffmpeg-runner.mjs";
 import { resolveVoiceId } from "./voices.mjs";
 import { buildCaptionsAss, subtitlesFilterPath, CAPTIONS_FONTS_DIR } from "./captions.mjs";
 
@@ -579,7 +579,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
   const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
   const narrationArgs = [
     "-y",
-    "-threads", "1",
+    "-threads", ENCODE_THREADS,
     "-f", "lavfi",
     "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${narrTrackPadSec}`,
     ...placedNarrations.flatMap((n) => ["-i", n.mp3Path]),
@@ -611,7 +611,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     const masterDurSec = await probeAudioDuration(masterMp4);
     await runFFmpeg([
       "-y",
-      "-threads", "1",
+      "-threads", ENCODE_THREADS,
       "-i", masterMp4,
       "-i", narrationTrackPath,
       "-filter_complex",
@@ -629,7 +629,7 @@ export async function applyVoiceNarration({ masterMp4, scenes, sceneDurationsByP
     // v45.7: lifted to VOICE_TARGET_I (was mapped raw at native ≈ −26 LUFS).
     await runFFmpeg([
       "-y",
-      "-threads", "1",
+      "-threads", ENCODE_THREADS,
       "-i", masterMp4,
       "-i", narrationTrackPath,
       "-filter_complex", await voiceOnlyAudioFilter(narrationTrackPath),
@@ -934,7 +934,7 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
 
   const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
   await runFFmpeg([
-    "-y", "-threads", "1",
+    "-y", "-threads", ENCODE_THREADS,
     "-f", "lavfi", "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${trackPadSec}`,
     "-i", audioPath,
     "-filter_complex", filterComplex,
@@ -961,7 +961,7 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
     const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
     const masterDurSec = await probeAudioDuration(masterMp4);
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex",
       vf[0] + buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb, masterDurSec),
@@ -978,7 +978,7 @@ async function applyAlignedNarration({ masterMp4, photoScenes, realDur, crossfad
       ? [`[0:v:0]subtitles='${subtitlesFilterPath(captionsAssPath)}':fontsdir='${subtitlesFilterPath(CAPTIONS_FONTS_DIR)}'[vout];`, "[vout]", ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19"]]
       : ["", "0:v:0", ["-c:v", "copy"]];
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex", vf[0] + (await voiceOnlyAudioFilter(narrationTrackPath)),
       "-map", vf[1], "-map", "[aout]",
@@ -1085,7 +1085,7 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
 
   const narrationTrackPath = path.join(tempDir, `${jobId}-narration-track.mp3`);
   await runFFmpeg([
-    "-y", "-threads", "1",
+    "-y", "-threads", ENCODE_THREADS,
     "-f", "lavfi", "-i", `anullsrc=channel_layout=stereo:sample_rate=44100:duration=${trackDurSec}`,
     "-i", mp3Path,
     "-filter_complex", filterComplex,
@@ -1105,7 +1105,7 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
     const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
     const masterDurSec = await probeAudioDuration(masterMp4);
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", masterMp4,
       "-i", narrationTrackPath,
       "-filter_complex",
@@ -1118,7 +1118,7 @@ async function applyContinuousNarration({ masterMp4, photoScenes, realDur, cross
   } else {
     // v45.7: lifted to VOICE_TARGET_I (was mapped raw at native ≈ −26 LUFS).
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex", await voiceOnlyAudioFilter(narrationTrackPath),
       "-map", "0:v:0", "-map", "[aout]",
@@ -1305,7 +1305,7 @@ export async function applyVoiceFirstMix({
   ].filter(Boolean).join(",");
   const narrationTrackPath = path.join(tempDir, `${jobId}-vf-track.mp3`);
   await runFFmpeg([
-    "-y", "-threads", "1",
+    "-y", "-threads", ENCODE_THREADS,
     "-i", audioPath,
     "-af", chain,
     "-c:a", "libmp3lame", "-b:a", "128k",
@@ -1365,7 +1365,7 @@ export async function applyVoiceFirstMix({
     const { bedGainDb, voiceGainDb } = await computeStemGains(masterMp4, narrationTrackPath);
     const masterDurSec = await probeAudioDuration(masterMp4);
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex",
       vf[0] + buildMixAudioFilter(volumeExpr, bedGainDb, voiceGainDb, masterDurSec),
@@ -1384,7 +1384,7 @@ export async function applyVoiceFirstMix({
     // of every music-off render. Without it the output runs to the video
     // stream and the outro plays over silence, which is what it always did.
     await runFFmpeg([
-      "-y", "-threads", "1",
+      "-y", "-threads", ENCODE_THREADS,
       "-i", masterMp4, "-i", narrationTrackPath,
       "-filter_complex", vf[0] + (await voiceOnlyAudioFilter(narrationTrackPath)),
       "-map", vf[1], "-map", "[aout]",

@@ -21,6 +21,26 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 //
 // Resolves on exit code 0. Rejects with a descriptive Error otherwise,
 // including the case where we SIGKILL the process for taking too long.
+/* v62.30: every ffmpeg call in this worker hardcoded `-threads 1`. That dates
+   from the v19/v22 era when the box had 2 GB and a single-pass xfade peaked
+   ~1750 MB — the fix for THAT was batching the filter graph, which is still
+   in place. Thread count was never the memory problem, and the instance is
+   8 GB now (the Jul 25 renders peaked at 234 MB RSS).
+
+   Benchmarked on real 1080x1920 scene clips, codec threads only (filter
+   threads already default to auto, so they were never the bottleneck):
+     normalize pass   6.5s -> 5.6s   (-14%)   peak RSS 276 -> 290 MB
+     xfade batch     16.6s -> 14.9s  (-10%)   peak RSS 432 -> 441 MB
+     subtitle burn   12.7s -> 11.1s  (-12%)   peak RSS 261 -> 282 MB
+   Measured on a 2-CPU box; the worker has 4, so the headroom is larger there.
+   ~14 MB per step of extra memory against 8 GB is not a trade — it is free.
+
+   Default 2, not 4, on purpose: RENDER_CONCURRENCY defaults to 2, so two
+   renders x 2 threads exactly fills the worker's 4 CPUs with no
+   oversubscription. Raise ENCODE_THREADS to 4 if renders rarely overlap —
+   that is the right call when one customer at a time is waiting. */
+export const ENCODE_THREADS = String(Math.max(1, Number(process.env.ENCODE_THREADS) || 2));
+
 export function runFFmpeg(args, { timeoutMs = DEFAULT_TIMEOUT_MS, label = "ffmpeg" } = {}) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
