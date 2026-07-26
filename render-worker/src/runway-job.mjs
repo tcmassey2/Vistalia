@@ -32,7 +32,27 @@ const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
 const POLL_INTERVAL_MS = 5000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per clip
-const DEFAULT_CONCURRENCY = 4;
+/* v62.29: 4 → 6. This number is per-render scene parallelism and it dates
+   from the Runway era, where the comment on submitRunwayTaskWithRetry sized
+   it against Runway's per-minute rate limit. We generate on fal/Kling now,
+   and fal has its OWN global gate — FAL_MAX_CONCURRENCY (veo-job.mjs,
+   default 6), a per-worker semaphore that is the actual protection against
+   429s. So 4 was leaving a third of the sanctioned budget unused.
+
+   Measured on the Jul 25 21:58 render (9 scenes, 15.9 min): generation and
+   per-clip QC is 63% of the entire wall clock — 592s of 934s. The work queue
+   is work-stealing, not waved: 1888s of scene work across 4 workers = 592s
+   observed. At 6 it is bounded by the single longest scene instead, which was
+   302s, so the phase lands near 315s. That is roughly four minutes off a
+   render, for a number that costs nothing extra — same credits, same clips,
+   just fewer of them waiting in line.
+
+   Not raised past 6 on purpose. The longest single scene sets the floor, so
+   7-9 buys almost nothing, and going higher would need FAL_MAX_CONCURRENCY
+   raised too — which depends on the fal PLAN's concurrency limit divided by
+   max worker instances, a number this repo cannot know. RUNWAY_CONCURRENCY
+   still overrides. */
+const DEFAULT_CONCURRENCY = 6;
 const MAX_SCENES = 30;
 const NON_PHOTO_TYPES = new Set(["intro", "outro", "stat", "card", "title", "stats"]);
 
