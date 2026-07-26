@@ -130,7 +130,43 @@ check("floor runs on polish failure path", /catch[\s\S]{0,400}enforceNarrationFl
    The Jul 25 21:58 render: 30s order (9 scenes), Director returned 127 words
    against a 70-85 band, shipped a 47.7s video. There was a floor in code and
    a ceiling only in the prompt. This is the real script from that render. */
+// v62.40: the word budget is a two-term measured model now (words + full-stop
+// pauses) — extract it plus its constants so trimNar and the fixtures below
+// use the CODE's numbers, never a hardcoded band.
+eval(`globalThis.SPEECH_SEC_PER_WORD = ${(planSrc.match(/const SPEECH_SEC_PER_WORD = ([\d.]+)/) || [])[1]}`);
+eval(`globalThis.SPEECH_SEC_PER_STOP = ${(planSrc.match(/const SPEECH_SEC_PER_STOP = ([\d.]+)/) || [])[1]}`);
+eval(`globalThis.SPEECH_PAD_SEC = ${(planSrc.match(/const SPEECH_PAD_SEC = ([\d.]+)/) || [])[1]}`);
+eval(`globalThis.expectedSentenceCount = ${grab(planSrc, "expectedSentenceCount").replace(/^function \w+/, "function")}`);
+eval(`globalThis.narrationWordBudget = ${grab(planSrc, "narrationWordBudget").replace(/^function \w+/, "function")}`);
 eval(`globalThis.trimNar = ${grab(planSrc, "trimNarrationToBudget").replace(/^function \w+/, "function")}`);
+
+/* ── v62.40: the budget model must keep reproducing the calibrated renders.
+   These two rows are REAL production measurements (worker CALIBRATION
+   lines, Jul 27). If someone edits the constants, these fixtures demand
+   the new constants still explain the observed physics. */
+{
+  const CALIBRATED = [
+    { words: 78, sentences: 5, measuredSec: 37.5 },
+    { words: 82, sentences: 5, measuredSec: 37.7 }
+  ];
+  for (const r of CALIBRATED) {
+    const pred = SPEECH_PAD_SEC + r.words * SPEECH_SEC_PER_WORD + (r.sentences - 1) * SPEECH_SEC_PER_STOP;
+    check(`v62.40: model reproduces the ${r.words}w calibrated render within 1.5s`,
+      Math.abs(pred - r.measuredSec) < 1.5, `predicted ${pred.toFixed(1)} vs ${r.measuredSec}`);
+  }
+  const b30 = narrationWordBudget(30), b60 = narrationWordBudget(60);
+  check(`v62.40: 30s budget is honest (~64w, was 78)`, b30 >= 58 && b30 <= 70, String(b30));
+  check(`v62.40: 60s budget is honest (~132w, was 155)`, b60 >= 120 && b60 <= 145, String(b60));
+  // A budget-sized script must land INSIDE the worker's trim ceiling — the
+  // whole point of the retune is that typical renders stop trimming.
+  for (const [t, b] of [[30, b30], [60, b60]]) {
+    const stops = expectedSentenceCount(t) - 1;
+    const lands = SPEECH_PAD_SEC + b * SPEECH_SEC_PER_WORD + stops * SPEECH_SEC_PER_STOP;
+    const ceiling = t + Math.max(2, t * 0.08);
+    check(`v62.40: a ${t}s budget-sized script lands under the worker ceiling (${lands.toFixed(1)}s <= ${ceiling.toFixed(1)}s)`,
+      lands <= ceiling, `${lands.toFixed(1)}`);
+  }
+}
 {
   const real = [
     "Welcome to 4935 E Berneil Dr in Paradise Valley, a stunning 6-bedroom, 8-bath home with over 7,700 square feet of living space.",
@@ -149,8 +185,12 @@ eval(`globalThis.trimNar = ${grab(planSrc, "trimNarrationToBudget").replace(/^fu
   const out = globalThis.trimNar(nar, { targetDurationSec: 30 });
   check("over-band narration is trimmed", !!out);
   const after = out ? wc(out.monologue) : 0;
-  check(`trim lands inside the 30s ceiling (${after}w <= 85)`, after > 0 && after <= 85);
-  check(`trim does not cut through the floor (${after}w >= 70)`, after >= 70);
+  // v62.40: bounds derive from the code's own budget (was hardcoded 70-85
+  // when the budget was flat 77.5). Sentence-granular trimming can stop up
+  // to one sentence (~22w) under the ceiling.
+  const ceil30 = Math.round(narrationWordBudget(30) * 1.1);
+  check(`trim lands inside the 30s ceiling (${after}w <= ${ceil30})`, after > 0 && after <= ceil30);
+  check(`trim does not gut the script (${after}w >= ${ceil30 - 25})`, after >= ceil30 - 25);
   check("hook preserved", !!out && out.sentences[0].text === real[0]);
   check("CTA preserved", !!out && out.sentences[out.sentences.length - 1].text === real[real.length - 1]);
   const ph = out ? out.sentences.flatMap((s) => s.photos) : [];
@@ -168,9 +208,17 @@ eval(`globalThis.trimNar = ${grab(planSrc, "trimNarrationToBudget").replace(/^fu
   check("orphans + survivors account for every original photo",
     !!out && new Set([...ph, ...out.__trim.orphaned]).size === 8);
   check("monologue equals sentences joined", !!out && out.monologue === out.sentences.map((s) => s.text).join(" "));
-  check("in-band narration is left alone", globalThis.trimNar(
-    { sentences: real.slice(0, 5).map((t, i) => ({ text: t, photos: [`p${i}`] })), monologue: real.slice(0, 5).join(" ") },
-    { targetDurationSec: 30 }) === null);
+  // v62.40: "in-band" moved. The old fixture blessed 78 words as in-band —
+  // the exact count both calibrated renders measured at 37.5s on a 30s
+  // order. A genuinely in-band script now is ~4 sentences under the
+  // derived ceiling.
+  const inBand = real.slice(0, 4);
+  const inBandWords = wc(inBand.join(" "));
+  check(`in-band narration is left alone (${inBandWords}w <= ${Math.round(narrationWordBudget(30) * 1.1)})`,
+    inBandWords <= Math.round(narrationWordBudget(30) * 1.1) &&
+    globalThis.trimNar(
+      { sentences: inBand.map((t, i) => ({ text: t, photos: [`p${i}`] })), monologue: inBand.join(" ") },
+      { targetDurationSec: 30 }) === null);
   check("127w against a 60s order is not over band", globalThis.trimNar(nar, { targetDurationSec: 60 }) === null);
 }
 check("ceiling is enforced in code, not only in the prompt", /trimNarrationToBudget\(/.test(planSrc) && /OVER BAND trimmed/.test(planSrc));
@@ -248,11 +296,27 @@ const falsePositives = [
   ["a driveway over an outdoor photo", [{ text: "The driveway sweeps up past mature oaks.", photos: ["o"] }]],
   ["a sitting room off the primary", [{ text: "A sitting room tucks off the primary.", photos: ["b"] }]],
   ["'poolside' still reads as outdoor", [{ text: "Poolside, the whole valley opens up.", photos: ["o"] }]],
-  ["'pool-table' hyphenated is still not a pool", [{ text: "A pool-table anchors the far end.", photos: ["l"] }]]
+  ["'pool-table' hyphenated is still not a pool", [{ text: "A pool-table anchors the far end.", photos: ["l"] }]],
+  // v62.40 — the two phrase families the audit flagged as FPs, both of
+  // which then appeared in production hooks two renders running:
+  ["'6-bedroom, 8-bath' stats hook over an exterior", [{ text: "Welcome home — a stunning 6-bedroom, 8-bath estate with mountain views.", photos: ["e"] }]],
+  ["'3 bedroom' unhyphenated stats", [{ text: "This 3 bedroom charmer sits on a corner lot.", photos: ["e"] }]],
+  ["'overlooking the backyard' is a view, not a room", [{ text: "Expansive windows fill the wall, overlooking the backyard and pool beyond.", photos: ["l"] }]],
+  ["'views of the pool beyond the fireplace'", [{ text: "The fireplace anchors the wall, with views of the pool beyond.", photos: ["l"] }]],
+  ["'outdoor living area' is not a living-room claim", [{ text: "The outdoor living area wraps around the firepit.", photos: ["o"] }]]
 ];
 for (const [name, sents] of falsePositives) {
   const hits = roomMismatches(sents, fpRooms);
   check(`v62.35 no false positive: ${name}`, hits.length === 0, JSON.stringify(hits));
+}
+// v62.40: "living area" is DETECTABLE now — the real mismatch it was
+// missing, and the real match it must not flag.
+{
+  const hit = roomMismatches([{ text: "The spacious living area unfolds with high ceilings.", photos: ["b"] }],
+    { ...fpRooms, b: "bathroom" });
+  check("v62.40: 'living area' over a bathroom is now caught", hit.length === 1, JSON.stringify(hit));
+  const okHit = roomMismatches([{ text: "The spacious living area unfolds with high ceilings.", photos: ["l"] }], fpRooms);
+  check("v62.40: 'living area' over a living room passes", okHit.length === 0, JSON.stringify(okHit));
 }
 
 /* ── prompt lint: the monologue must carry the grounding rule ── */

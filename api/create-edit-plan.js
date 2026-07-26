@@ -668,7 +668,7 @@ export default async function handler(request, response) {
          fully director-grade. A rewrite that breaks the mapping is discarded
          and the original ships untouched. */
       const nar = normalizedPlan.narration;
-      const budgetTarget = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+      const budgetTarget = narrationWordBudget(targetDurationSec);
       const nowWords = normalizedPlan.narrationScript
         ? normalizedPlan.narrationScript.split(/\s+/).filter(Boolean).length : 0;
       if (nar && nowWords > 0 && nowWords < Math.round(budgetTarget * 0.9)) {
@@ -747,7 +747,7 @@ export default async function handler(request, response) {
     {
       const words = normalizedPlan.narrationScript
         ? normalizedPlan.narrationScript.trim().split(/\s+/).filter(Boolean).length : 0;
-      const target = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+      const target = narrationWordBudget(targetDurationSec);
       const src = normalizedPlan.narration?.source || "none";
       console.info(
         words
@@ -843,12 +843,12 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   // sentence-length constraints and window-sizing rules no longer apply to
   // it. Word budget anchors to Troy's spec: 70-85 words at the 30s target,
   // scaled linearly. Per-scene lines are kept for regen + the legacy path.
-  const monologueTarget = Math.round((clampedDuration / 30) * 77.5);
+  const monologueTarget = narrationWordBudget(clampedDuration);
   const monologueMin = Math.round(monologueTarget * 0.9);
   const monologueMax = Math.round(monologueTarget * 1.1);
   const narrationGuidance = includeNarration
     ? [
-        `MOST IMPORTANT — THE SPOKEN TOUR (v62): also return a top-level object "narration". The voiceover is now the SPINE of the video — scene timing is derived FROM the voice, so your sentences are never cut, sped up, or squeezed; write to sound good, not to fit windows. narration.monologue: ONE continuous spoken tour, ${monologueMin}-${monologueMax} words (count them). Voice it like a great human tour guide on a first walkthrough: conversational register, contractions ("it's", "you'll"), varied sentence lengths, zero brochure clichés (never "boasts", "nestled", "oasis", "dream home", "must-see"). ARC, in order: (1) HOOK — open on the property's single most arresting fact or feeling; (2) WALK-THROUGH — move through the photos in their exact scene order, giving each major space one natural moment with real connective transitions; (3) LIFESTYLE CLOSE — one sentence on what living here feels like; (4) CTA — final sentence under 8 words. GROUND EVERY SENTENCE IN ITS OWN PHOTOS — this outranks the arc: before you write a sentence, look at the images for the photoIds you are about to assign it, and describe what is actually there. If a room label and the image disagree, TRUST THE IMAGE. Never name a room — kitchen, bathroom, bedroom, living room, patio, pool — unless it is visible in that sentence's photos; when you are unsure what a space is, describe what you can see ("Light pours across the tile floors") instead of naming it. Do NOT write a generic walkthrough from memory and pin it to photos afterward: a tour that says "the bathroom's marble finishes" over a bedroom is worse than a plainer tour that is right. The opening sentence plays over scene 1 — write it for THAT photo, not for an exterior you wish were first. EXPRESSIVE DELIVERY: place 2-5 bracketed audio tags — e.g. [warm], [pause], [excited], [softly] — immediately before the phrases they color. Tags are delivery directions, never spoken words; never place one mid-word. narration.direction: a short performance note for the voice (e.g. "warm, unhurried tour guide — proud of the home, never salesy"). narration.sentences: the SAME monologue split into its sentences IN ORDER — each item's "text" is the exact sentence WITHOUT any tags, and "photos" lists the photoIds that sentence covers, in scene order. RULES: every scene's photoId appears exactly once across all sentences, in the same order as the scenes array; a sentence may cover 1-3 photos; use photos: [] for a sentence that keeps lingering on the previous photo (hero shots, the close). The sentence texts joined with single spaces must EXACTLY equal the monologue with all [tags] removed. Never mention a space before its photo arrives. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
+        `MOST IMPORTANT — THE SPOKEN TOUR (v62): also return a top-level object "narration". The voiceover is now the SPINE of the video — scene timing is derived FROM the voice, so your sentences are never cut, sped up, or squeezed; write to sound good, not to fit windows. narration.monologue: ONE continuous spoken tour, ${monologueMin}-${monologueMax} words (count them) in about ${expectedSentenceCount(clampedDuration) >= 7 ? "6-8" : expectedSentenceCount(clampedDuration) >= 4 ? "4-5" : "3"} sentences INCLUDING the short CTA — the voice pauses over a second at every full stop, so extra sentences cost real seconds against the ${clampedDuration}-second order. Voice it like a great human tour guide on a first walkthrough: conversational register, contractions ("it's", "you'll"), varied sentence lengths, zero brochure clichés (never "boasts", "nestled", "oasis", "dream home", "must-see"). ARC, in order: (1) HOOK — open on the property's single most arresting fact or feeling; (2) WALK-THROUGH — move through the photos in their exact scene order, giving each major space one natural moment with real connective transitions; (3) LIFESTYLE CLOSE — one sentence on what living here feels like; (4) CTA — final sentence under 8 words. GROUND EVERY SENTENCE IN ITS OWN PHOTOS — this outranks the arc: before you write a sentence, look at the images for the photoIds you are about to assign it, and describe what is actually there. If a room label and the image disagree, TRUST THE IMAGE. Never name a room — kitchen, bathroom, bedroom, living room, patio, pool — unless it is visible in that sentence's photos; when you are unsure what a space is, describe what you can see ("Light pours across the tile floors") instead of naming it. Do NOT write a generic walkthrough from memory and pin it to photos afterward: a tour that says "the bathroom's marble finishes" over a bedroom is worse than a plainer tour that is right. The opening sentence plays over scene 1 — write it for THAT photo, not for an exterior you wish were first. EXPRESSIVE DELIVERY: place 2-5 bracketed audio tags — e.g. [warm], [pause], [excited], [softly] — immediately before the phrases they color. Tags are delivery directions, never spoken words; never place one mid-word. narration.direction: a short performance note for the voice (e.g. "warm, unhurried tour guide — proud of the home, never salesy"). narration.sentences: the SAME monologue split into its sentences IN ORDER — each item's "text" is the exact sentence WITHOUT any tags, and "photos" lists the photoIds that sentence covers, in scene order. RULES: every scene's photoId appears exactly once across all sentences, in the same order as the scenes array; a sentence may cover 1-3 photos; use photos: [] for a sentence that keeps lingering on the previous photo (hero shots, the close). The sentence texts joined with single spaces must EXACTLY equal the monologue with all [tags] removed. Never mention a space before its photo arrives. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. SELL THE SPACE, NOT THE STAGING (v34.4): never describe movable furniture or decor — sofas, tables, chairs, beds, rugs, lamps, art, plants. The furniture leaves with the seller; buyers are buying light, space, views, ceilings, windows, flooring, and finishes (cabinetry, counters, fireplaces, and built-ins are part of the home — those are fine). "A glass table sits beside the window" → "Expansive windows frame the red-rock views". CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
         // v40.1: style-aware narration tone (master-21: MLS Clean shipped
@@ -1584,7 +1584,7 @@ function stripNarrationAudioTags(text) {
    them is how you get a script that no longer matches its scenes. */
 async function expandNarrationToBudget(narration, { targetDurationSec, listingDetails, selectedStyle }) {
   if (!process.env.OPENAI_API_KEY) return null;
-  const target = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+  const target = narrationWordBudget(targetDurationSec);
   const min = Math.round(target * 0.9);
   const max = Math.round(target * 1.1);
   const current = stripNarrationAudioTags(narration.monologue).split(/\s+/).filter(Boolean).length;
@@ -1711,7 +1711,7 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
    tags], which only the eleven_v3 expressive rung consumes; a correct runtime
    is worth more than delivery tags, and the caller logs when it happens. */
 function trimNarrationToBudget(narration, { targetDurationSec = 30 } = {}) {
-  const target = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+  const target = narrationWordBudget(targetDurationSec);
   const maxWords = Math.round(target * 1.1);
   const minWords = Math.round(target * 0.9);
   const wc = (t) => String(t || "").split(/\s+/).filter(Boolean).length;
@@ -1764,7 +1764,12 @@ const ROOM_WORDS = [
   // No bare "bed", same reason.
   ["bedroom", /\b(bedrooms?|primary suite|master suite|guest room)\b/i],
   // No bare "den"/"lounge" — both read as verbs or adjectives often enough.
-  ["living", /\b(living room|great room|family room|sitting room)\b/i],
+  // v62.40: "living area"/"living space" added — listing copy names the
+  // living room that way at least as often as "living room" (audit P2:
+  // the miss let "the living area unfolds" go unjudged over any room).
+  // "outdoor living area" is claimed by the OUTDOOR pattern too → names
+  // two types → skipped, so no cross-FP.
+  ["living", /\b(living (?:room|area|space)|great room|family room|sitting room)\b/i],
   ["exterior", /\b(exteriors?|facade|façade|curb appeal|driveway|front elevation)\b/i],
   // "pool table" (and "pool-table") is a game room, not a pool.
   ["outdoor", /\b(patio|pool(?:s|side)?\b(?![\s-]*table)|backyard|back yard|courtyard|terrace|deck|firepit|fire pit|outdoor (?:living|seating|kitchen|space|area))\b/i]
@@ -1783,9 +1788,59 @@ function sameRoomClass(a, b) {
   return ROOM_EQUIV.some((pair) => pair.includes(a) && pair.includes(b));
 }
 
+/* ── v62.40: THE WORD BUDGET, FROM MEASUREMENT ──────────────────────────
+   Under voice-first the video's length IS the narration's length, and the
+   old budget (a flat 77.5 words per 30s ≈ 2.5 w/s) modeled speech as words
+   alone. It isn't: a voice pauses over a second at every full stop, and
+   that term scales with SENTENCE COUNT. The first two calibrated
+   production renders (worker CALIBRATION line, v62.36) agreed tightly:
+
+       Jul 27 #1: 78w/5s → 37.5s   (0.406 s/word inc. breaths, 1.145 s/stop)
+       Jul 27 #2: 82w/5s → 37.7s   (0.383 s/word inc. breaths, 1.225 s/stop)
+
+   Averaged: 0.395 s/word + 1.185 s/stop (+ 1.8s fixed lead-in/tail). That
+   model reproduces both measured lengths within ~1s; the flat model missed
+   by 4.5s — the whole gap being the full-stop pauses — so EVERY render
+   overshot its order and the worker trimmed a sentence and its scenes.
+
+       seconds ≈ 1.8 + words·0.395 + (sentences−1)·1.185
+
+   The budget aims speech at target+1s (into the ceiling's headroom): a
+   typical voice lands ~31s on a 30s order untrimmed; a slow tail still
+   trims ONE sentence, exactly the backstop v62.36 built. Update these
+   constants only from new CALIBRATION lines, never by feel. */
+const SPEECH_SEC_PER_WORD = 0.395;   // articulation + intra-sentence breaths
+const SPEECH_SEC_PER_STOP = 1.185;   // the pause a voice takes at a full stop
+const SPEECH_PAD_SEC = 1.8;          // worker's LEAD_IN (0.6) + TAIL_PAD (1.2)
+
+function expectedSentenceCount(targetDurationSec) {
+  const t = Number(targetDurationSec) || 30;
+  if (t >= 45) return 7;   // 60s: six spoken beats + CTA
+  if (t >= 25) return 4.5; // 30s: what both calibrated renders actually produced
+  return 3;                // 15s: hook, one beat, CTA
+}
+
+function narrationWordBudget(targetDurationSec) {
+  const t = Math.max(15, Math.min(90, Number(targetDurationSec) || 30));
+  const stops = expectedSentenceCount(t) - 1;
+  return Math.max(30, Math.round((t + 1 - SPEECH_PAD_SEC - stops * SPEECH_SEC_PER_STOP) / SPEECH_SEC_PER_WORD));
+}
+
 function roomTypesNamedIn(text) {
+  // v62.40 (audit P2, now seen in production twice): two phrase families
+  // read as room claims when they claim nothing about THIS photo —
+  //  1. listing STATS: "a stunning 6-bedroom, 8-bath home" in the hook is
+  //     about the property, not the exterior shot it plays over;
+  //  2. VIEW clauses: "overlooking the backyard", "views of the pool
+  //     beyond the fireplace" describe what's THROUGH the window of the
+  //     room being shown, not the room itself.
+  // Strip both before matching. Bounded at clause punctuation so the rest
+  // of the sentence still counts.
+  const cleaned = String(text || "")
+    .replace(/\b\d+[\s-]?(?:bed(?:room)?s?|bath(?:room)?s?)\b/gi, " ")
+    .replace(/\b(?:overlook(?:s|ing)?|views? (?:of|to|over)|looking (?:out )?(?:onto|over|to|at))\b[^.,;!?]*/gi, " ");
   const named = new Set();
-  for (const [type, re] of ROOM_WORDS) if (re.test(text)) named.add(type);
+  for (const [type, re] of ROOM_WORDS) if (re.test(cleaned)) named.add(type);
   return named;
 }
 
@@ -1824,7 +1879,7 @@ function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
 function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
   const scenes = (plan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
   const sceneOrderById = new Map(scenes.map((s, i) => [String(s.photoId), i]));
-  const monologueTarget = Math.round(((Number(targetDurationSec) || 30) / 30) * 77.5);
+  const monologueTarget = narrationWordBudget(targetDurationSec);
 
   const deriveFromLines = (reason) => {
     const sentences = [];
