@@ -628,6 +628,23 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   const vfSrc2 = fs.readFileSync(path.join(ROOT, "render-worker/src/voice-first.mjs"), "utf8");
   check("v62.39: worker NOTE line prints the plan-side reason",
     /Plan-side reason: \$\{narration\.sourceReason\}/.test(vfSrc2));
+
+  /* ── v62.41: the QC ladder is three DIFFERENT hypotheses, not a reseed.
+     Troy: "tone back the 3rd Kling prompt attempt — the goal is to avoid
+     the KB fallback all together." Near-static asks are Kling's own boil
+     trigger, so the old strict-static reseed mostly re-rolled attempt 2's
+     defect into the floor. */
+  check("v62.41: third attempt is the gentle re-roll, not a strict reseed",
+    /gentleReroll: true/.test(rjSrc) &&
+    !/third = await generateVeoSceneClip\(scene, manifest, tempDir, index, \{ constrained: true, strictConstrained: true \}\)/.test(rjSrc));
+  check("v62.41: exteriors get a third attempt again (no straight-to-floor skip)",
+    !/exterior: no reveal roll, PREMIUM PHOTO MOTION floor/.test(rjSrc));
+  check("v62.41: gentle prose exists for generic, pool, and exterior",
+    /gentleGeneric:/.test(rjSrc) && /gentlePool:/.test(rjSrc) && /gentleExterior:/.test(rjSrc));
+  check("v62.41: gentle prose is strictly forward — the v46 invariant survives",
+    /never backward/.test(rjSrc) && /no reveal of new area at the frame edges/.test(rjSrc));
+  check("v62.41: gentle maps to the steady Kling suffix (constrained without strict)",
+    /strictConstrained \? "strict" : constrained \? "steady" : "bold"/.test(rjSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -868,27 +868,27 @@ export async function renderRunwayJob(body, options = {}) {
                 `shipping it (likely VLM false positive; Edit Studio regen is the remedy if real).`
               );
             } else {
-              // v46 (m50, LAUNCH DAY): the pull_out third attempt is RETIRED.
-              // Troy: "the camera should not be panning out." m50 scene 1
-              // (exterior) shipped a third-attempt pull-out that INVENTED a
-              // sidewalk and a brick street at the reveal edge — and QC
-              // passed it, because reveals manufacture plausible content the
-              // photo has no data to falsify (the exact v41.2 residual). The
-              // ladder was the one path that still violated the exteriors-
-              // push-in-only invariant.
-              //   Exteriors: no third roll at all — reveals are structurally
-              //   unverifiable there. Straight to the deterministic floor.
-              //   Interiors: third attempt = STRICT STATIC RE-ROLL. Veo is
-              //   stochastic, so a fresh seed on the most conservative
-              //   prompt still rescues scenes — it just can't pan out.
-              const room3 = String(scene.roomType || "").toLowerCase();
-              const isExterior3 = /exterior|backyard|outdoor|front|yard|patio|pool|garden|landscap|deck|amenity/.test(room3);
+              // v62.41 (Troy: "tone back the 3rd Kling prompt attempt — the
+              // goal is to avoid the KB fallback all together"): the third
+              // rung was a fresh seed on the SAME museum-static prompt as
+              // the second — but near-static asks are Kling's own signature
+              // failure (nothing to move → textures boil), so the reseed
+              // mostly re-rolled the second attempt's defect straight into
+              // the floor. The ladder now tests three DIFFERENT hypotheses:
+              //   1. bold      — full cinematic energy
+              //   2. strict    — maximum stillness (rescues motion artifacts)
+              //   3. gentle    — controlled real motion, full fidelity locks
+              //                  (rescues the boil that stillness causes)
+              // v46's exteriors rule survives intact: it banned REVEALS
+              // (pull-outs manufacture content at the frame edge that the
+              // photo cannot falsify — m50 invented a sidewalk). The gentle
+              // prose is strictly forward, never backward, no edge reveal —
+              // so exteriors rejoin the third rung instead of skipping
+              // straight to the floor.
               let third = null;
               let verdict3 = { checked: true, pass: false, reasons: hardReasons };
-              if (isExterior3) {
-                console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — exterior: no reveal roll, PREMIUM PHOTO MOTION floor.`);
-              } else {
-                console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — third attempt: strict static re-roll.`);
+              {
+                console.warn(`[qc] scene ${index + 1} still failing (${hardReasons.join(", ")}) — third attempt: gentle re-roll (controlled real motion; static asks are what Kling boils on).`);
                 qcThirdTryCount++;
                 // v49: WRAPPED. This was the one unguarded generation call in
                 // the ladder — fal threw content_policy_violation here
@@ -898,7 +898,7 @@ export async function renderRunwayJob(body, options = {}) {
                 // floor block below (third stays null).
                 try {
                   attemptsUsed++;
-                  third = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, strictConstrained: true });
+                  third = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, gentleReroll: true });
                   verdict3 = await qcVeoClip({
                     clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
                     sceneIndex: index, roomType: scene.roomType, tempDir
@@ -1039,7 +1039,7 @@ export async function renderRunwayJob(body, options = {}) {
   if (isVeo && qcEnabled()) {
     console.info(
       `[qc] Verify-then-deliver summary — ${qcRetryCount} scene${qcRetryCount === 1 ? "" : "s"} regenerated constrained after QC fail, ` +
-      `${qcThirdTryCount} needed the third (static re-roll) attempt, ${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
+      `${qcThirdTryCount} needed the third (gentle re-roll) attempt, ${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
       `${droppedCount} dropped (floor-of-the-floor). Detected artifacts shipped: 0 by construction.`
     );
     // v45.1 blackout telemetry (m32b: EVERY inspection 429'd and the render
@@ -1726,11 +1726,48 @@ const CONSTRAINED_PROMPTS = {
     "with no other movement and no drift. " +
     "Trees, foliage, leaves, and branches stay completely still and hold their exact shape — " +
     "no swaying, morphing, rippling, or regenerating. The structure, roofline, windows, and " +
-    "all hardscape stay exactly as photographed."
+    "all hardscape stay exactly as photographed.",
+  // ── v62.41 GENTLE RE-ROLL (Troy: "tone back the 3rd Kling prompt
+  // attempt — the goal is to avoid the KB fallback all together") ────────
+  // The old third attempt re-rolled the SAME museum-static prompt as the
+  // second on a fresh seed. But near-static asks are Kling's own worst
+  // failure mode: with nothing to move, the model shimmers textures
+  // instead (the boil the sweep keeps flagging) — so the reseed mostly
+  // re-rolled the same defect straight into the floor. The third rung now
+  // tests the OTHER hypothesis: controlled real motion, full fidelity
+  // locks, camera strictly forward — never a reveal, so the v46
+  // exteriors-push-in-only invariant holds and exteriors get a third
+  // attempt again instead of skipping straight to the floor.
+  gentleGeneric:
+    "The camera glides slowly and smoothly straight forward, ending about 8% closer, " +
+    "with gentle easing and natural perspective parallax — no panning, no tilting, no drift, " +
+    "no shake, never backward. " +
+    "Preserve every surface, fixture, appliance, label, and object exactly as photographed. " +
+    "Nothing in the scene moves — only the camera.",
+  gentlePool:
+    "The camera glides slowly and smoothly straight forward, ending about 8% closer, " +
+    "with gentle easing and natural perspective parallax — no panning, no tilting, no drift, " +
+    "no shake, never backward. " +
+    "Water surface may shimmer gently, but pool shape, tile, coping, deck, and all " +
+    "surroundings stay exactly as photographed. Nothing else moves.",
+  gentleExterior:
+    "The camera glides slowly and smoothly straight forward, ending about 8% closer, " +
+    "with gentle easing and natural perspective parallax — no panning, no tilting, no drift, " +
+    "no shake, never backward, and no reveal of new area at the frame edges. " +
+    "Trees, foliage, leaves, and branches hold their exact shape — no swaying, morphing, " +
+    "rippling, or regenerating. The structure, roofline, windows, and all hardscape stay " +
+    "exactly as photographed."
 };
 
-function buildConstrainedVeoPrompt(scene, { strict = false } = {}) {
+function buildConstrainedVeoPrompt(scene, { strict = false, gentle = false } = {}) {
   const room = String(scene.roomType || "").toLowerCase();
+  if (gentle) {
+    // Third-rung prose: fidelity locks intact, camera actually moves.
+    if (/pool|spa/.test(room)) return CONSTRAINED_PROMPTS.gentlePool;
+    if (/exterior|backyard|outdoor|front|yard|patio/.test(room)) return CONSTRAINED_PROMPTS.gentleExterior;
+    if (/kitchen/.test(room)) return CONSTRAINED_PROMPTS.kitchen; // already gentle-cameraed
+    return CONSTRAINED_PROMPTS.gentleGeneric;
+  }
   if (/pool|spa/.test(room)) return CONSTRAINED_PROMPTS.pool;
   if (/exterior|backyard|outdoor|front|yard|patio/.test(room)) return CONSTRAINED_PROMPTS.exterior;
   // Kitchens: gentle real motion on the first (guard-routed) attempt;
@@ -1758,7 +1795,7 @@ const VEO_FIDELITY_SUFFIX =
 // Per-scene Veo generation, mapped to the same clipResults shape that
 // generateClip / generateKenBurnsFallback return so the stitch pipeline
 // downstream is untouched.
-export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false } = {}) {
+export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false, gentleReroll = false } = {}) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   let imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Scene ${sceneIndex + 1} (${scene.photoId}) missing durable image URL.`);
@@ -1819,7 +1856,7 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   const klingLadder = String(process.env.FAL_VIDEO_MODEL || "").toLowerCase().includes("kling");
   const plannedPrompt = scene.veoPrompt || scene.veo_prompt || scene.runwayPrompt || scene.runway_prompt || buildConstrainedVeoPrompt(scene);
   const basePrompt = constrained && !klingLadder
-    ? buildConstrainedVeoPrompt(scene, { strict: strictConstrained })
+    ? buildConstrainedVeoPrompt(scene, { strict: strictConstrained, gentle: gentleReroll })
     : plannedPrompt;
   // v28: exteriors are where Veo morphs worst — it "animates" foliage under any
   // camera move (leaves rippling, branches growing/regenerating). For outdoor
