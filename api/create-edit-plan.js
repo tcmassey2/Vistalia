@@ -1877,7 +1877,12 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
     }
     const monologue = usable.map((s) => s.text).join(" ");
     console.warn(`[plan] narration derived from per-scene lines (${reason}) — ${monologue.split(/\s+/).length} words / ${usable.length} sentences.`);
-    return { monologue, direction: "warm, unhurried tour guide — proud of the home, never salesy", sentences: usable, source: "derived-from-lines" };
+    // v62.39: carry WHY the Director's monologue was rejected all the way to
+    // the render log. The Jul 27 smoke test shipped source=derived-from-lines
+    // and the worker's NOTE line could only say "check the [plan] narration
+    // logs" — a different service's logs, gone by the time anyone asks. The
+    // reason is one string; let it ride the manifest.
+    return { monologue, direction: "warm, unhurried tour guide — proud of the home, never salesy", sentences: usable, source: "derived-from-lines", sourceReason: String(reason || "").slice(0, 300) };
   };
 
   let narration = null;

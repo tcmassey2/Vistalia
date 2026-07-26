@@ -3371,14 +3371,30 @@ export async function uploadPerSceneClips({ manifest, jobId, normalizedClips, cl
     let clipUrl = "";
     try {
       const buffer = await fs.readFile(clip.clipPath);
-      const result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
+      // v62.39: one retry, and a diagnosable failure line. The Jul 27 smoke
+      // test lost scene 1's clip to a bare "Bad Request" — no status, no
+      // size, no retry — and a missing clipUrl now costs the customer scene
+      // replacement for that scene. One transient 4xx/5xx should not.
+      let result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
         contentType: "video/mp4",
         upsert: true
       });
+      if (result.error) {
+        await new Promise((r) => setTimeout(r, 1500));
+        result = await supabase.storage.from(bucket).upload(storagePath, buffer, {
+          contentType: "video/mp4",
+          upsert: true
+        });
+      }
       if (!result.error) {
         clipUrl = supabase.storage.from(bucket).getPublicUrl(storagePath).data.publicUrl;
       } else {
-        console.warn(`[upload] scene ${sceneIndex} clip upload failed: ${result.error.message}`);
+        const e = result.error;
+        console.warn(
+          `[upload] scene ${sceneIndex} clip upload failed twice: ${e.message}` +
+          ` (status=${e.statusCode ?? e.status ?? "?"}, ${(buffer.length / 1048576).toFixed(1)}MB, path=${storagePath})` +
+          ` — scene replacement will be unavailable for this scene.`
+        );
       }
     } catch (err) {
       console.warn(`[upload] scene ${sceneIndex} clip read/upload failed: ${err.message || err}`);

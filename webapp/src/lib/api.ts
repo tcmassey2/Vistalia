@@ -142,6 +142,10 @@ export interface RenderManifest {
     direction?: string;
     sentences: Array<{ text: string; photos: string[] }>;
     source?: string;
+    // v62.39: when source is derived-from-lines, WHY the Director's
+    // monologue was rejected — rides the manifest so the worker log can
+    // print it instead of pointing at another service's logs.
+    sourceReason?: string;
   } | null;
   // The Remotion composition reads listing facts from manifest.project to
   // populate address overlays, lower-third price card, and the EndCard.

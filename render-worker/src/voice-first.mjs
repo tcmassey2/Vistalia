@@ -901,7 +901,12 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
   // certainly a derived-from-lines monologue — make that unmissable in the
   // render log, not just the plan log (which nobody reads after the fact).
   if (narration.source && narration.source !== "director") {
-    console.warn(`[voice-first] NOTE: narration source is "${narration.source}" — the Director's monologue failed plan-side validation and the per-scene lines were joined instead. Expect a stiffer read; check the [plan] narration logs for the reason.`);
+    console.warn(
+      `[voice-first] NOTE: narration source is "${narration.source}" — the Director's monologue failed plan-side validation and the per-scene lines were joined instead. Expect a stiffer read.` +
+      (narration.sourceReason
+        ? ` Plan-side reason: ${narration.sourceReason}`
+        : ` (Reason not carried on this manifest — pre-v62.39 plan; check the [plan] narration logs.)`)
+    );
   }
   for (const w of st.warnings) console.warn(`[voice-first] ${w}`);
   // Canary-gate transcript: every sentence with its video-time span.

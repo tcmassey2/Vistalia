@@ -85,9 +85,16 @@ export async function regenerateScene(body, options = {}) {
   const targetScene = originalScenes.find((s) => Number(s.sceneIndex) === Number(sceneIndex));
   if (!targetScene) throw new Error(`Scene ${sceneIndex} is not in the audit row for ${jobId}.`);
 
-  // EVERY clip must be pullable — the N−1 for the rebuild, the target for
-  // its measured duration.
-  const missing = originalScenes.filter((s) => !s.clipUrl);
+  // v62.39: only the OTHER N−1 clips are load-bearing — they get stitched.
+  // The TARGET's stored clip is a cross-check measurement at most (the
+  // replacement renders at the AUDIT duration, the timeline's author), and
+  // the scene most likely to NEED replacing is precisely the one whose
+  // upload was flaky: the Jul 27 smoke test's scene 1 stalled at fal,
+  // retried constrained, AND lost its clip upload — the old all-clips rule
+  // would have locked replacement for the whole video over it.
+  const missing = originalScenes.filter(
+    (s) => Number(s.sceneIndex) !== Number(sceneIndex) && !s.clipUrl
+  );
   if (missing.length) {
     const indexes = missing.map((s) => s.sceneIndex).join(", ");
     throw new Error(
@@ -146,8 +153,11 @@ async function rebuildWithSteadyScene({ jobId, sceneIndex, manifest, auditRow, o
     throw new Error("Could not measure the original master — refusing to rebuild against an unknown length.");
   }
 
-  const downloadConcurrency = Math.min(6, originalScenes.length);
-  const downloaded = await pMap(originalScenes, async (s) => {
+  // The N−1 others are REQUIRED (pMap throws on any failure); the target is
+  // best-effort — it only feeds the cross-check measurement below.
+  const otherScenes = originalScenes.filter((s) => Number(s.sceneIndex) !== Number(sceneIndex));
+  const downloadConcurrency = Math.min(6, otherScenes.length || 1);
+  const downloaded = await pMap(otherScenes, async (s) => {
     const localPath = path.join(tempDir, `clip-${String(s.sceneIndex).padStart(3, "0")}.mp4`);
     await downloadFile(s.clipUrl, localPath);
     return { scene: s, localPath };
@@ -163,8 +173,14 @@ async function rebuildWithSteadyScene({ jobId, sceneIndex, manifest, auditRow, o
   // tolerance, and cost real voiceover bytes. Measurement demotes to a
   // cross-check log.
   const auditDuration = Number(targetScene.durationSec || targetScene.duration || 5);
-  const targetLocal = downloaded.find((d) => Number(d.scene.sceneIndex) === Number(sceneIndex));
-  const measured = await probeDurationSec(targetLocal.localPath);
+  let measured = NaN;
+  if (targetScene.clipUrl) {
+    const targetPath = path.join(tempDir, `clip-target-${String(sceneIndex).padStart(3, "0")}.mp4`);
+    const got = await downloadFile(targetScene.clipUrl, targetPath).then(() => true).catch(() => false);
+    if (got) measured = await probeDurationSec(targetPath);
+  } else {
+    console.info(`[regen] scene ${sceneIndex + 1} has no stored clip (its original upload failed) — skipping the duration cross-check; the audit value governs regardless.`);
+  }
   if (Number.isFinite(measured) && Math.abs(measured - auditDuration) > 0.1) {
     console.warn(
       `[regen] scene ${sceneIndex + 1}: stored clip measures ${measured.toFixed(3)}s but the audit row says ` +
@@ -186,8 +202,7 @@ async function rebuildWithSteadyScene({ jobId, sceneIndex, manifest, auditRow, o
   replacementClip.preNormalized = false; // fresh clip: gets grade/card/watermark in normalize
 
   const clipResults = [
-    ...downloaded
-      .filter((d) => Number(d.scene.sceneIndex) !== Number(sceneIndex))
+    ...downloaded // already the N−1 others (v62.39)
       .map((d) => ({
         sceneIndex: Number(d.scene.sceneIndex),
         photoId: d.scene.photoId || "",

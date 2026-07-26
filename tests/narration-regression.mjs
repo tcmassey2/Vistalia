@@ -547,6 +547,23 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.38: regen carries sweepReplaced/floorReason/attempts through",
     /usedPhotoMotionFloor: d\.scene\.engineUsed === "photo_motion"/.test(rgSrc) &&
     /sweepReplaced: Boolean\(d\.scene\.sweepReplaced\)/.test(rgSrc));
+
+  /* ── v62.39 — what the Jul 27 smoke test surfaced ── */
+  // The target's own clip is a cross-check, not a dependency: the scene
+  // whose upload failed is the scene most likely to need replacing.
+  check("v62.39: regen requires only the N−1 OTHER clips",
+    /Number\(s\.sceneIndex\) !== Number\(sceneIndex\) && !s\.clipUrl/.test(rgSrc));
+  check("v62.39: missing target clip skips the cross-check, not the rebuild",
+    /skipping the duration cross-check/.test(rgSrc));
+  // Per-scene clip uploads retry once and log a diagnosable failure.
+  check("v62.39: scene clip upload retries once",
+    /clip upload failed twice/.test(rjSrc) && /setTimeout\(r, 1500\)/.test(rjSrc));
+  // The plan's rejection reason rides the manifest to the worker log.
+  check("v62.39: derived narration carries sourceReason",
+    /sourceReason: String\(reason \|\| ""\)\.slice\(0, 300\)/.test(planSrc));
+  const vfSrc2 = fs.readFileSync(path.join(ROOT, "render-worker/src/voice-first.mjs"), "utf8");
+  check("v62.39: worker NOTE line prints the plan-side reason",
+    /Plan-side reason: \$\{narration\.sourceReason\}/.test(vfSrc2));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

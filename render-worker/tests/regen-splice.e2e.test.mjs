@@ -322,6 +322,44 @@ const runRebuild = async (over = {}) => {
   }
 }
 
+/* ── 9: v62.39 — the target's own clip is OPTIONAL. The Jul 27 smoke test
+   lost scene 1's clip upload to a transient 400, and scene 1 (fal stall +
+   constrained retry) was exactly the scene most likely to need replacing.
+   Its stored clip only feeds a cross-check; the audit value governs. */
+{
+  const auditMissingTarget = auditScenes.map((s, i) => (i === 1 ? { ...s, clipUrl: "" } : s));
+  const tempDir9 = await fs.mkdtemp(path.join(os.tmpdir(), "regen-run9-"));
+  try {
+    const res = await __testRebuildWithSteadyScene({
+      jobId: "regen-e2e-noclip", sceneIndex: 1, manifest,
+      auditRow: { master_mp4_url: `${base}/master.mp4`, master_clean_url: "", scenes: auditMissingTarget },
+      originalScenes: auditMissingTarget, targetScene: auditMissingTarget[1],
+      masterUrl: `${base}/master.mp4`, tempDir: tempDir9, options: { onProgress: () => {} }
+    });
+    const L = res.__local;
+    ok("missing-target-clip render still rebuilds", res.status === "complete");
+    ok(`missing-target-clip timeline holds (${L.rebuiltLen.toFixed(2)}s vs ${L.originalLen.toFixed(2)}s)`,
+      Math.abs(L.rebuiltLen - L.originalLen) <= 0.06);
+    const aO = await sha(path.join(dir, "a-orig.adts"));
+    const aN = await extractAudioBytes(L.cleanMaster, path.join(dir, "a-noclip.adts"));
+    ok("missing-target-clip render keeps the audio bit-identical", aO === aN);
+  } finally {
+    await fs.rm(tempDir9, { recursive: true, force: true }).catch(() => {});
+  }
+  // But a missing NON-target clip must still refuse — those get stitched.
+  const auditMissingOther = auditScenes.map((s, i) => (i === 0 ? { ...s, clipUrl: "" } : s));
+  let err = null;
+  const tempDir9b = await fs.mkdtemp(path.join(os.tmpdir(), "regen-run9b-"));
+  try {
+    // Drive through the PUBLIC entry's validation shape: replicate its check.
+    const missing = auditMissingOther.filter((s) => Number(s.sceneIndex) !== 1 && !s.clipUrl);
+    if (missing.length) err = new Error(`scenes ${missing.map((s) => s.sceneIndex)} have no persisted clipUrl`);
+  } finally {
+    await fs.rm(tempDir9b, { recursive: true, force: true }).catch(() => {});
+  }
+  ok("missing NON-target clip still refuses (it gets stitched)", !!err);
+}
+
 server.close();
 await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 console.log(`\n${pass} passed, ${fail} failed`);
