@@ -56,6 +56,9 @@ function buildManifest({ userId, projectId, address, facts, photos, editPlan }) 
     app: "Vistalia",
     engine: "veo",
     exportFormat: "vertical",
+    // v62.37 (audit): lead renders are 30s by design; without the field the
+    // worker's duration contract can't hold them to it.
+    targetDurationSec: 30,
     autoRendered: true,
     project: {
       id: projectId,

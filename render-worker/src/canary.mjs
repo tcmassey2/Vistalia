@@ -128,6 +128,11 @@ function buildCanaryManifest(editPlan, commit) {
     app: "Vistalia",
     engine: "veo",
     exportFormat: "vertical",
+    // v62.37 (audit): the canary mirrors the webapp mapping — which just
+    // gained this field. Without it the deploy gate never exercises the
+    // v62.36 duration trim, which is exactly the kind of new machinery a
+    // canary exists to catch.
+    targetDurationSec: 30,
     internal: true,
     project: {
       id: projectId,

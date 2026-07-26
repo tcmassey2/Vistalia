@@ -126,6 +126,11 @@ export interface RenderManifest {
   app: "Vistalia";
   engine: RenderEngine;
   exportFormat: ExportFormat;
+  // v62.37: the ordered video length in seconds (30 | 60). The worker's
+  // duration contract measures the synthesized voice against THIS and trims
+  // overshoot before any clip is generated; render.js enforces the free-trial
+  // 30s cap on it. Absent = worker skips the trim (legacy manifests).
+  targetDurationSec?: number;
   // v32: one continuous voiceover script for the whole tour — synthesized in
   // a single TTS pass by the worker (replaces per-scene line scheduling).
   narrationScript?: string;

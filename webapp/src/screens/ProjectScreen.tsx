@@ -2317,6 +2317,18 @@ function RenderControls() {
           new Promise((resolve) => setTimeout(resolve, 45000))
         ]);
       }
+      /* v62.37 (audit): v62.32 waited for curation and then built the plan
+         from the `photos` CLOSURE captured at click time — the curated order
+         landed in the store and was never re-read, so the wait bought
+         latency and nothing else (the four-kitchen tour, delayed 45s
+         instead of fixed). Re-read the store AFTER the gate. Also consume
+         the pending promise: a curation resolving after the 45s ceiling
+         must not reshuffle the grid under an active render — Dashboard's
+         apply callback checks this same field and skips when it's gone. */
+      if (pendingCuration && useStore.getState().pendingCuration === pendingCuration) {
+        useStore.getState().setPendingCuration(null);
+      }
+      const curatedPhotos = useStore.getState().photos;
       // 1. Get edit plan
       // v38.3: no silent style defaults (master-19 shipped the wrong style
       // invisibly). Log what actually goes to the plan + worker.
@@ -2325,7 +2337,7 @@ function RenderControls() {
       const styleLabel = matchedStyle?.engineLabel || "Cinematic Luxury";
       console.info(`[render] style: ${styleLabel} (${selectedStyleId})`);
       const planResult = await createEditPlan({
-        photos,
+        photos: curatedPhotos,
         listing,
         selectedStyle: styleLabel,
         // v62.18: was hardcoded "vertical". The plan is where the aspect is
@@ -2374,6 +2386,12 @@ function RenderControls() {
         // worker prefers runwayConfig.ratio (carried up from the plan) and
         // falls back to this — they must agree or the fallback lies.
         exportFormat: outputFormat,
+        // v62.37 (audit): this field was passed to the PLAN request but never
+        // put on the manifest — so the worker's v62.36 duration contract, the
+        // v49 free-trial 30s cap, and the audit-log length column were all
+        // running on `null`. The order the customer picked now actually
+        // reaches the machine that enforces it.
+        targetDurationSec,
         project: {
           id: projectId,
           userId: session.user.id,
@@ -2387,7 +2405,7 @@ function RenderControls() {
           hook: listing.hook
         },
         scenes: planResult.editPlan.scenes.map((scene) => {
-          const photo = photos.find((p) => p.id === scene.photoId);
+          const photo = curatedPhotos.find((p) => p.id === scene.photoId);
           return {
             photoId: scene.photoId,
             type: "photo" as const,
@@ -2408,7 +2426,7 @@ function RenderControls() {
             narrationLine: scene.narrationLine || ""
           };
         }),
-        orderedPhotos: photos,
+        orderedPhotos: curatedPhotos,
         // v23: prompt version stamp — flows from /api/create-edit-plan
         // (PROMPT_VERSION constant) → editPlan → manifest → audit_log so
         // we can correlate quality complaints with specific prompt revisions.

@@ -162,6 +162,32 @@ export default async function handler(request, response) {
     ) {
       manifest.freeRenderWatermark = true;
     }
+    /* v62.37 (audit) SERVER-SIDE MANIFEST CLAMPS. The manifest is client-
+       constructed, and until now nothing on this side bounded it:
+       - targetDurationSec is the worker's v62.36 trim TARGET. The planner
+         clamps its own copy to [15,60], but the render manifest is a
+         different payload — a hand-built `5` would trim a paid render to a
+         ~7s stub of the customer's tour, scenes deleted before generation.
+         Clamp to the planner's contract; absent stays absent (legacy
+         manifests skip the trim entirely).
+       - scenes had NO count bound here. The worker's belt is 30, so a
+         31-scene manifest silently truncates mid-tour, and anything large
+         is a fal-spend amplifier (~$36 of generation per 1-2 credits).
+         The planner never emits more than 18; reject far over the belt. */
+    if (manifest.targetDurationSec != null) {
+      const t = Number(manifest.targetDurationSec);
+      manifest.targetDurationSec = Number.isFinite(t) ? Math.max(15, Math.min(60, Math.round(t))) : null;
+    }
+    const photoSceneCount = (Array.isArray(manifest.scenes) ? manifest.scenes : []).filter(
+      (s) => !["title", "intro", "outro", "card", "stats"].includes(String(s?.type || "photo").toLowerCase())
+    ).length;
+    if (photoSceneCount > 30) {
+      response.status(400).json({
+        status: "failed",
+        error: `Render manifest carries ${photoSceneCount} scenes — the maximum is 30.`
+      });
+      return;
+    }
     // v49 (first-customer-render finding): the FREE trial video is capped at
     // 30 seconds. The free-allowance path never checked duration, so a trial
     // account could burn a 60s video (2-credit class, ~2× COGS) as its
@@ -339,6 +365,7 @@ function validateManifestForServerRender(manifest, options = {}) {
     if (!imageUrl) problems.push(`${label} is missing imageUrl.`);
     if (options.live && !(scene.durableUrl || scene.durable_url)) problems.push(`${label} is missing durableUrl.`);
     if (options.live && isLocalOnlyUrl(imageUrl)) problems.push(`${label} uses a browser-only image URL.`);
+    if (options.live && isPrivateOrPlainHttpUrl(imageUrl)) problems.push(`${label} uses a non-https or private-network image URL.`);
     if (isUnsupportedImageUrl(imageUrl)) problems.push(`${label} uses an unsupported image format.`);
     if (isLikelyExpiredImageUrl(imageUrl)) problems.push(`${label} appears to use an expired signed URL.`);
   });
@@ -349,6 +376,25 @@ function validateManifestForServerRender(manifest, options = {}) {
 function isLocalOnlyUrl(url) {
   const value = String(url || "");
   return value.startsWith("blob:") || value.startsWith("data:");
+}
+
+// v62.37 (audit): scene image URLs are fetched SERVER-SIDE by the worker and
+// forwarded to fal — an `http://10.0.0.5/...` or `http://localhost:8787/...`
+// entry is an SSRF primitive, not a listing photo. Live renders require
+// https to a real public hostname. (data: URLs are already screened by
+// isLocalOnlyUrl/isUnsupportedImageUrl; relative URLs fail URL() and are
+// caught as missing-durableUrl upstream.)
+function isPrivateOrPlainHttpUrl(url) {
+  const value = String(url || "");
+  if (value.startsWith("data:") || value.startsWith("blob:")) return false; // other guards own these
+  let parsed;
+  try { parsed = new URL(value); } catch { return true; }
+  if (parsed.protocol !== "https:") return true;
+  const host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || host === "[::1]" || host.endsWith(".local") || host.endsWith(".internal")) return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true; // any bare IPv4 — CDNs have names
+  if (host.startsWith("[")) return true; // IPv6 literal
+  return false;
 }
 
 function isUnsupportedImageUrl(url) {

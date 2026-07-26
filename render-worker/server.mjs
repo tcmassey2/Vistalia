@@ -325,7 +325,11 @@ server.listen(port, () => {
 });
 
 function workerSecret() {
-  return process.env.RENDER_WORKER_SECRET || process.env.RENDER_WEBHOOK_SECRET || "";
+  // v62.37 (audit): precedence MUST match api/render.js's workerSecret()
+  // (WEBHOOK first there too). With the old inverted order, setting both
+  // vars to different values 401'd every render — an env state that reads
+  // as perfectly configured on both dashboards.
+  return process.env.RENDER_WEBHOOK_SECRET || process.env.RENDER_WORKER_SECRET || "";
 }
 
 function authorized(request) {

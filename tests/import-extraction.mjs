@@ -151,9 +151,26 @@ const variants = ["p_c", "p_d", "d_d", "o_a", "cc_ft_384", "uncropped_scaled_wit
   .map((v) => maximizePhotoUrl(`https://photos.zillowstatic.com/fp/${hash(5)}-${v}.jpg`).key);
 ok(new Set(variants).size === 1, "all six variant families share one identity key", JSON.stringify(variants.slice(0,2)));
 
-// Fail-open: a reduced page with no gallery tiers must still yield photos.
-const reduced = Array.from({ length: 4 }, (_, i) => `<img src="https://photos.zillowstatic.com/fp/${hash(i)}-p_d.jpg"/>`).join("");
-ok(extractPagePhotos(reduced).length === 4, "no gallery tiers anywhere → fail open, keep what we found");
+/* v62.37 (audit): the fail-open was REVERSED. Keeping every /fp/ URL on a
+   page with no verifiable gallery meant the related-homes carousel — whose
+   photos only ever appear as p_c/p_d fixed thumbs — rode in, and the
+   unconditional cc_ft_1536 rewrite upgraded them past the low-res gate:
+   other people's houses in the customer's tour, at full resolution, the
+   day Zillow renames one markup token. New contract: when gallery
+   membership can't be verified, keep only URLs the page itself embedded
+   at a resizable GALLERY tier. */
+const reducedThumbsOnly = Array.from({ length: 4 }, (_, i) => `<img src="https://photos.zillowstatic.com/fp/${hash(i)}-p_d.jpg"/>`).join("");
+ok(extractPagePhotos(reducedThumbsOnly).length === 0,
+   "no gallery tiers anywhere → fixed thumbs (the carousel signature) do NOT ride the fail-open");
+const reducedMixed = [
+  ...Array.from({ length: 3 }, (_, i) => `<img src="https://photos.zillowstatic.com/fp/${hash(i)}-cc_ft_384.jpg"/>`),
+  ...Array.from({ length: 5 }, (_, i) => `<img src="https://photos.zillowstatic.com/fp/${hash(40 + i)}-p_c.jpg"/>`)
+].join("");
+const reducedOut = extractPagePhotos(reducedMixed);
+ok(reducedOut.length === 3,
+   "fail-open keeps gallery-tier URLs (thin import beats empty), drops thumb-only ones", `got ${reducedOut.length}`);
+ok(reducedOut.every((p) => /-cc_ft_1536\./.test(p.url)),
+   "the survivors are still upgraded to full size");
 
 console.log("\n== v62.21 listing facts come off the page, so RentCast is optional");
 // Verbatim meta description from the live Scottsdale page.

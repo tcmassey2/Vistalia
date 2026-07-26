@@ -405,6 +405,12 @@ const emptyProject = () => ({
   editPlan: null as EditPlan | null,
   renderJob: null as RenderJobStatus | null,
   lastRenderManifest: null as RenderManifest | null,
+  // v62.37 (audit): lived OUTSIDE emptyProject, so it survived newProject/
+  // beginImportedProject/openProject — a pending curation from listing A
+  // could hold listing B's render gate for 45s under a "Finishing photo
+  // selection" label that wasn't true. Project-scoped state resets with
+  // the project.
+  pendingCuration: null as Promise<unknown> | null,
   // v38.3: stored user preferences override the defaults above.
   ...loadStoredPrefs()
 });
@@ -418,7 +424,6 @@ export const useStore = create<AppState>((set, get) => ({
   screen: "auth",
   projectList: [],
   ...emptyProject(),
-  pendingCuration: null as Promise<unknown> | null,
   loading: "",
   error: "",
   toast: "",

@@ -497,6 +497,12 @@ function ImportListingBand() {
         })
           .then((cur) => {
             const s = useStore.getState();
+            // v62.37 (audit): a render that started while we were resolving
+            // CONSUMES the gate (ProjectScreen nulls pendingCuration after
+            // its await) — applying the order now would reshuffle the grid
+            // under an active render whose plan was already built. Gone or
+            // replaced means someone else owns the photos now; drop it.
+            if (s.pendingCuration !== curation) return;
             // Three ways this result is stale, and all of them mean drop it:
             // the user opened a different project, they changed the photo set
             // themselves, or the model gave us too little to be worth acting on.

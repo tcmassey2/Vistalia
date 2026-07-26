@@ -389,7 +389,7 @@ function extractPagePhotos(html) {
   // page carries the gallery only as thumbnails, that counter will be large
   // while `kept` stays tiny, and the fix is to upgrade those rather than
   // drop them. Costs nothing; ends the guessing.
-  const rejected = { thumb: 0, chrome: 0, nonPhoto: 0, offPath: 0, notInGallery: 0 };
+  const rejected = { thumb: 0, chrome: 0, nonPhoto: 0, offPath: 0, notInGallery: 0, notGalleryTier: 0 };
   // v62.23: this listing's own photo hashes (see zillowGalleryHashes).
   const zGallery = zillowGalleryHashes(text);
   // Portal CDNs first — these are the full-size listing photos.
@@ -416,6 +416,19 @@ function extractPagePhotos(html) {
       // Fail-open when the document carries no gallery tiers at all (a
       // reduced or blocked page): better a thin import than an empty one.
       if (zGallery.size > 0 && !zGallery.has(h.toLowerCase())) { rejected.notInGallery++; continue; }
+      // v62.37 (audit): the fail-open must not resurrect the related-homes
+      // carousel. Pre-v62.23, carousel photos arrived as 316x234 fixed
+      // thumbs (p_c/p_d/...) and the low-res gate discarded them; the
+      // unconditional variant rewrite now upgrades EVERYTHING to
+      // cc_ft_1536, so failing open on the whole /fp/ namespace would ship
+      // other people's houses at full resolution the day Zillow renames a
+      // markup token. When we can't verify gallery membership, keep only
+      // URLs the page itself embedded at a resizable GALLERY tier — the
+      // carousel never is.
+      if (zGallery.size === 0 && !/-(?:cc_ft_\d+|uncropped_scaled_within_\d+_\d+)\.(?:jpe?g|webp|png)/i.test(url)) {
+        rejected.notGalleryTier++;
+        continue;
+      }
     }
     if (/cdn-redfin\.com/i.test(url) && !/\/photo\//i.test(url)) { rejected.offPath++; continue; }
     if (/logo|icon|sprite|badge|avatar|headshot|favicon|app-?store|play-?store|banner/i.test(url)) { rejected.chrome++; continue; }
