@@ -2297,6 +2297,26 @@ function RenderControls() {
     const phaseCreep = startPhaseCreep({ ceilingProgress: 9 });
 
     try {
+      /* v62.32: wait for the photo curation the import kicked off.
+         v62.24 moved that Vision pass off the import's critical path — right
+         call, it takes 50-90s — but curation is ALSO what caps same-room runs
+         at 2 and applies room quotas. A render started inside that window is
+         planned from raw portal order, and Zillow groups its gallery by room.
+         The Jul 26 02:16 render shipped kitchen, kitchen, kitchen, kitchen,
+         living, living, bedroom, living, bedroom — four kitchens before the
+         tour moved, which no narration can sound right over.
+         Waiting here keeps the fast import AND the curated tour: by the time
+         someone has reviewed photos and pressed Render this is usually
+         already resolved, and when it isn't they see why. */
+      const pendingCuration = useStore.getState().pendingCuration;
+      if (pendingCuration) {
+        phaseCreep.update({ phase: "Finishing photo selection", progressFloor: 4, ceilingProgress: 8 });
+        await Promise.race([
+          pendingCuration,
+          // Never let a stuck curation hold a render hostage.
+          new Promise((resolve) => setTimeout(resolve, 45000))
+        ]);
+      }
       // 1. Get edit plan
       // v38.3: no silent style defaults (master-19 shipped the wrong style
       // invisibly). Log what actually goes to the plan + worker.

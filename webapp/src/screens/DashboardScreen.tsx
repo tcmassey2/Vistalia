@@ -492,7 +492,7 @@ function ImportListingBand() {
       // looking at their photos.
       if (finalPhotos.length >= 8) {
         const idsAtStart = finalPhotos.map((p) => p.id).join(",");
-        curatePhotos({
+        const curation = curatePhotos({
           photos: finalPhotos.map((p) => ({ id: p.id, durableUrl: p.durableUrl, fileName: p.fileName }))
         })
           .then((cur) => {
@@ -518,7 +518,13 @@ function ImportListingBand() {
               (dropped > 0 ? `, set aside ${dropped} near-duplicate${dropped === 1 ? "" : "s"}.` : ".")
             );
           })
-          .catch(() => { /* curation is a bonus, never a blocker */ });
+          .catch(() => { /* curation is a bonus, never a blocker */ })
+          // v62.32: release the render gate whatever happened.
+          .finally(() => {
+            if (useStore.getState().pendingCuration === curation) useStore.getState().setPendingCuration(null);
+          });
+        // v62.32: renders started in the next ~60s wait on this.
+        useStore.getState().setPendingCuration(curation);
       }
     } catch {
       setError("Import failed — try again or start manually.");

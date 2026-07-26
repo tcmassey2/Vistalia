@@ -165,6 +165,15 @@ interface AppState {
   setCaptionsEnabled: (enabled: boolean) => void;
   setIncludeSquare: (enabled: boolean) => void;
   setOutputFormat: (format: "vertical" | "square") => void;
+  /* v62.32: the import fires curation in the background (v62.24) and it takes
+     50-90s. Curation is ALSO what caps same-room runs at 2 and applies room
+     quotas — so a render started before it lands is planned from raw portal
+     order, which Zillow groups by room. The Jul 26 02:16 render shipped
+     kitchen/kitchen/kitchen/kitchen/living/living/bedroom/living/bedroom.
+     The render path awaits this handle so the speed win survives without
+     costing tour quality. */
+  pendingCuration: Promise<unknown> | null;
+  setPendingCuration: (p: Promise<unknown> | null) => void;
   setBlueHourCorrection: (enabled: boolean) => void;
   setMusicEnabled: (enabled: boolean) => void;
   setMusicVolume: (volume: number) => void;
@@ -409,6 +418,7 @@ export const useStore = create<AppState>((set, get) => ({
   screen: "auth",
   projectList: [],
   ...emptyProject(),
+  pendingCuration: null as Promise<unknown> | null,
   loading: "",
   error: "",
   toast: "",
@@ -585,6 +595,7 @@ export const useStore = create<AppState>((set, get) => ({
   // v62.18: changing the delivery aspect invalidates the plan — scene
   // durations, the title card and the outro are all composed for a
   // specific frame, and the photo crop that feeds generation changes too.
+  setPendingCuration: (p) => set({ pendingCuration: p }),
   setOutputFormat: (format) => (
     set({ outputFormat: format, includeSquare: false, editPlan: null }),
     persistPrefs({ outputFormat: format, includeSquare: false })
