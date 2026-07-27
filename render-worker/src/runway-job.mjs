@@ -2978,23 +2978,65 @@ function runwayDimensions(manifest) {
   return { width: 1080, height: 1920 };
 }
 
-// v46 (Troy, launch day): FREE-render watermark — a small persistent
-// "vistalia.ai" pill, top-left (bottom-left holds the agent identity badge,
-// top-right the corner headshot, captions live at ~70% height). Visible
-// enough to nudge the upgrade and credit the brand if the video gets
-// posted; subtle enough that posting it is still tempting. Static text
+// v46 (Troy, launch day): FREE-render watermark. v46 kept it "subtle enough
+// that posting it is still tempting" — v62.54 reverses that stance on
+// Troy's call: the trial video is the DEMO, not the deliverable, and the
+// watermark is the paywall. Design intent, in tension and in order:
+//   1. UNPUBLISHABLE — no agent posts a listing video with FREE PREVIEW
+//      breathing across the middle of every frame. That is the conversion
+//      forcing function.
+//   2. QUALITY STILL VISIBLE — the preview has to sell the render itself,
+//      so the center mark is low-alpha and pulses (0.10-0.22) rather than
+//      sitting opaque; the property is always readable underneath.
+//   3. UNCROPPABLE — corner echoes + center + bottom banner mean no
+//      reframe/crop rescues a clean region.
+// Geometry dodges every resident overlay: top-left pill row, top-right
+// corner headshot, scene-1 address chip (top-center ~6%), captions
+// (~70% height), agent identity badge (bottom-left, h-130). Static text
 // only — no user input reaches this filter.
 export function buildFreeRenderWatermark(dimensions) {
-  // v46.1 (Troy): ~20% larger than the launch size (/36 → /30). The mark is
-  // the upgrade nudge — Reel-E closed Troy himself on exactly this feeling.
-  const fontSize = Math.max(24, Math.round(dimensions.width / 30));
-  return (
+  const w = dimensions.width;
+  const h = dimensions.height;
+  const pillSize = Math.max(24, Math.round(w / 28));
+  // w/9 is the widest "FREE PREVIEW" fits inside every canvas with margins
+  // (w/7 clipped both ends on 9:16); height cap keeps 16:9 sane.
+  const bigSize = Math.max(72, Math.min(Math.round(w / 9), Math.round(h / 6)));
+  const echoSize = Math.max(48, Math.round(w / 12));
+  const bannerSize = Math.max(22, Math.round(w / 34));
+  const bannerY = h - 210; // clear of the badge (h-130) on every aspect
+  // Slow 4s breath: alive enough to read as "preview", never strobing.
+  const pulse = "0.16+0.06*sin(2*PI*t/4)";
+  return [
+    // The v46 brand pill, kept in its launch position.
     `drawtext=fontfile='${FFMPEG_FONT}'` +
     `:text='vistalia.ai'` +
-    `:fontcolor=white@0.92:fontsize=${fontSize}` +
+    `:fontcolor=white@0.92:fontsize=${pillSize}` +
     `:x=36:y=40` +
-    `:box=1:boxcolor=black@0.40:boxborderw=16`
-  );
+    `:box=1:boxcolor=black@0.40:boxborderw=16`,
+    // Center mark — the headline. Breathes so it cannot be unseen.
+    `drawtext=fontfile='${FFMPEG_FONT}'` +
+    `:text='FREE PREVIEW'` +
+    `:fontcolor=white:fontsize=${bigSize}` +
+    `:x=(w-text_w)/2:y=(h-text_h)/2` +
+    `:alpha='${pulse}'`,
+    // Corner echoes — off-center so no crop yields a clean frame.
+    `drawtext=fontfile='${FFMPEG_FONT}'` +
+    `:text='VISTALIA'` +
+    `:fontcolor=white:fontsize=${echoSize}` +
+    `:x=(w-text_w)*0.10:y=h*0.27` +
+    `:alpha=0.10`,
+    `drawtext=fontfile='${FFMPEG_FONT}'` +
+    `:text='VISTALIA'` +
+    `:fontcolor=white:fontsize=${echoSize}` +
+    `:x=(w-text_w)*0.90:y=h*0.58` +
+    `:alpha=0.10`,
+    // Bottom banner — says exactly what to do about all of the above.
+    `drawtext=fontfile='${FFMPEG_FONT}'` +
+    `:text='Free preview — upgrade at vistalia.ai to remove'` +
+    `:fontcolor=white@0.95:fontsize=${bannerSize}` +
+    `:x=(w-text_w)/2:y=${bannerY}` +
+    `:box=1:boxcolor=black@0.55:boxborderw=14`
+  ].join(",");
 }
 
 // v48: scene-one address chip — a listing video should say WHERE. Reads

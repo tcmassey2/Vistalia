@@ -837,6 +837,24 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.52: mediaBusy clamps at zero so a stray decrement can't wedge the button",
     /adjustMediaBusy: \(delta\) => set\(\(s\) => \(\{ mediaBusy: Math\.max\(0, s\.mediaBusy \+ delta\) \}\)\)/.test(stSrc));
 
+  /* ── v62.54: the free-render watermark flips stance — v46 was "subtle
+     enough that posting it is still tempting"; Troy's conversion call is
+     the opposite: the trial video is the demo, the watermark is the
+     paywall. Five drawtext layers: pill + breathing center FREE PREVIEW +
+     two crop-defeating echoes + upgrade banner. Rendered and verified at
+     9:16, 1:1, 16:9 (w/7 clipped both ends on 9:16 — w/9 fits). */
+  check("v62.54: watermark carries the breathing center mark",
+    /text='FREE PREVIEW'/.test(rjSrc2) && /sin\(2\*PI\*t\/4\)/.test(rjSrc2));
+  check("v62.54: crop-defeating echoes and the upgrade banner exist",
+    (rjSrc2.match(/text='VISTALIA'/g) || []).length === 2 &&
+    /upgrade at vistalia\.ai to remove/.test(rjSrc2));
+  check("v62.54: center mark sized to fit every canvas (w/9, height-capped)",
+    /Math\.min\(Math\.round\(w \/ 9\), Math\.round\(h \/ 6\)\)/.test(rjSrc2));
+  check("v62.54: banner clears the agent badge zone (h-130) on every aspect",
+    /const bannerY = h - 210;/.test(rjSrc2));
+  check("v62.54: the v46 brand pill survives in its launch position",
+    /text='vistalia\.ai'/.test(rjSrc2) && /x=36:y=40/.test(rjSrc2));
+
   /* ── v62.53: the Director's scene selection carries the same risk
      tie-breaker as import curation — it picks WHICH photos become scenes
      and which one opens, where both scene-1 floors began. */
