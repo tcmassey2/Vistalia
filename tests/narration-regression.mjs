@@ -729,6 +729,21 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.48: expansion and trim adoptions carry the earlier pass's reason",
     /nar\.sourceReason && !probe\.narration\.sourceReason/.test(planSrc) &&
     /overNar\.sourceReason && !probe\.narration\.sourceReason/.test(planSrc));
+
+  /* ── v62.49: the motion probe grew a smoothness read. Mean YDIF is a
+     quantity meter (slideshow guard); jitter (stddev/mean of the per-frame
+     series, frame 0 dropped) is the smoothness meter the gimbal verdict
+     needs. Telemetry only — no gate may ever hang off it. */
+  const rjSrc2 = fs.readFileSync(path.join(ROOT, "render-worker/src/runway-job.mjs"), "utf8");
+  check("v62.49: motion probe computes jitter on the series minus frame 0",
+    /const run = xs\.slice\(1\);/.test(rjSrc2) && /jitter = sd \/ m;/.test(rjSrc2));
+  check("v62.49: the v60.5 mean is untouched (all frames, same formula)",
+    /const mean = xs\.reduce\(\(a, b\) => a \+ b, 0\) \/ xs\.length;/.test(rjSrc2));
+  check("v62.49: smoothness is logged per scene and as a median summary",
+    /jitter=\$\{m\.jitter\.toFixed\(2\)\}/.test(rjSrc2) &&
+    /median jitter/.test(rjSrc2));
+  check("v62.49: smoothness is telemetry only — no jitter threshold gates anything",
+    !/jitter [<>]=? ?[\d.]/.test(rjSrc2) && /telemetry only/.test(rjSrc2));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
