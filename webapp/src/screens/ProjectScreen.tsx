@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefObject } from "react";
 import { useStore } from "../lib/store";
+import ListingLinkImport from "../components/ListingLinkImport";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot, uploadBrokerageLogo } from "../lib/supabase";
-import { createEditPlan, submitRender, pollRender, lookupProperty, fetchLibrary, fetchUsage, authHeaders, RenderJobMissingError, type RenderManifest } from "../lib/api";
+import { createEditPlan, submitRender, pollRender, fetchLibrary, fetchUsage, authHeaders, RenderJobMissingError, type RenderManifest } from "../lib/api";
 import VoiceSection from "../components/VoiceSection";
 import { events, track } from "../lib/analytics";
 import type { AgentBranding, Photo, RenderEngine, StyleId } from "../lib/types";
@@ -87,6 +88,11 @@ export default function ProjectScreen() {
           ? "Drop in 8–25 listing photos. JPG, PNG, or WebP."
           : `${photos.length} ${photos.length === 1 ? "photo" : "photos"} ready to direct.`}
       >
+        {/* v62.46: the listing-URL import, in the render setup itself —
+            photos and facts land in THIS project (fills only empty fields). */}
+        <div className="mb-4">
+          <ListingLinkImport intoProject />
+        </div>
         <PhotosArea projectId={projectId} userId={session?.user?.id || ""} />
       </Section>
 
@@ -218,58 +224,11 @@ function ListingDetailsCard() {
   const setError = useStore((s) => s.setError);
   const setToast = useStore((s) => s.setToast);
 
-  const [looking, setLooking] = useState(false);
-  // Verified facts surfaced after a successful lookup. Lets the agent see
-  // bonus details (year built, lot size, last sale) without crowding the
-  // main form, and signals "this came from public records" — the trust
-  // signal that anchors the anti-hallucination claim.
-  const [verifiedFacts, setVerifiedFacts] = useState<{
-    yearBuilt: string;
-    lotSize: string;
-    propertyType: string;
-    lastSalePrice: string;
-  } | null>(null);
-
-  const runLookup = async () => {
-    const address = listing.address.trim();
-    if (!address) {
-      setError("Type the property address first, then look it up.");
-      return;
-    }
-    setLooking(true);
-    try {
-      const result = await lookupProperty(address);
-      if (result.status === "ok" && result.property) {
-        const p = result.property;
-        // Only overwrite fields that are currently empty so we don't clobber
-        // anything the agent already typed. Address/city always update —
-        // RentCast normalizes them better than the agent will.
-        setListing({
-          address: p.address || listing.address,
-          city: p.city || listing.city,
-          beds: listing.beds || p.beds,
-          baths: listing.baths || p.baths,
-          squareFeet: listing.squareFeet || p.squareFeet
-        });
-        setVerifiedFacts({
-          yearBuilt: p.extras.yearBuilt,
-          lotSize: p.extras.lotSize,
-          propertyType: p.extras.propertyType,
-          lastSalePrice: p.extras.lastSalePrice
-        });
-        setToast("Listing facts pulled from public records.");
-      } else if (result.status === "not_found") {
-        setError(result.message || "Address not found in public records. Fill the details manually.");
-      } else {
-        setError(result.message || "Property lookup unavailable. Fill the details manually.");
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Property lookup failed.";
-      setError(msg);
-    } finally {
-      setLooking(false);
-    }
-  };
+  /* v62.46: RentCast lookup retired (Troy: "rentcast wants 75 a month ...
+     maybe we just remove that feature"). The listing-URL import now
+     lives in this screen and fills the same facts from the listing page
+     itself, free; typing four fields covers the no-URL case. The
+     /api/lookup-property endpoint stays dormant server-side. */
 
   return (
     <div className="bg-surface border border-edge rounded-xl p-5 sm:p-6 flex flex-col gap-4">
@@ -283,50 +242,7 @@ function ListingDetailsCard() {
             placeholder="9828 E Pinnacle Peak Rd, Scottsdale AZ"
           />
         </div>
-        <button
-          type="button"
-          onClick={runLookup}
-          disabled={looking || !listing.address.trim()}
-          className="btn-secondary-em h-10 px-4 rounded-lg text-sm whitespace-nowrap disabled:opacity-50 inline-flex items-center gap-2"
-        >
-          {looking ? (
-            <><span className="spinner" /> Looking up…</>
-          ) : (
-            <>
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Verify from public records
-            </>
-          )}
-        </button>
       </div>
-
-      {/* Verified facts callout — the trust signal */}
-      {verifiedFacts && (
-        <div className="px-3.5 py-3 rounded-lg bg-gold/5 border border-gold/30 fade-up-in">
-          <div className="flex items-start gap-2.5">
-            <div className="grid place-items-center w-5 h-5 mt-0.5 rounded-full bg-gold text-paper">
-              <svg viewBox="0 0 12 12" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 6l3 3 5-6" />
-              </svg>
-            </div>
-            <div className="flex-1">
-              <p className="text-xs font-semibold text-gold-light tracking-tightish">
-                Verified from public records
-              </p>
-              <p className="text-[11px] text-ink-muted mt-0.5">
-                {[
-                  verifiedFacts.propertyType,
-                  verifiedFacts.yearBuilt && `built ${verifiedFacts.yearBuilt}`,
-                  verifiedFacts.lotSize && `${verifiedFacts.lotSize} lot`,
-                  verifiedFacts.lastSalePrice && `last sale ${verifiedFacts.lastSalePrice}`
-                ].filter(Boolean).join(" · ") || "County records confirm the listing details below."}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* City + price — secondary pair */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

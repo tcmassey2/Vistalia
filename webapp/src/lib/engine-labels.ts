@@ -12,7 +12,12 @@ import type { RenderEngine } from "./types";
 
 export function engineLabel(engine: RenderEngine | string | null | undefined): string {
   const e = String(engine || "remotion").toLowerCase();
-  if (e === "veo" || e === "runway") return "Cinematic AI";
+  // v62.46: "kling" joined the family in v60.4 (audit rows record the
+  // engine actually used so certificates stay truthful) — but this file
+  // never learned it, so every Kling render was badged "Photo Motion" and
+  // the Library hid the entire scene-replacement section (isAiVideoEngine
+  // below said no). Troy: "the regen feature is now gone from the library."
+  if (e === "veo" || e === "runway" || e === "kling") return "Cinematic AI";
   if (e === "depth") return "Cinematic Depth";
   // v34.4: "Quick Reel" / "Ken Burns" retired from customer-facing copy.
   // The photo-motion path is "Photo Motion" everywhere (Edit Studio,
@@ -22,7 +27,7 @@ export function engineLabel(engine: RenderEngine | string | null | undefined): s
 
 export function engineDescription(engine: RenderEngine | string | null | undefined): string {
   const e = String(engine || "remotion").toLowerCase();
-  if (e === "veo") return "Cinematic image-to-video AI with per-scene quality checks";
+  if (e === "veo" || e === "kling") return "Cinematic image-to-video AI with per-scene quality checks";
   if (e === "runway") return "Cinematic image-to-video AI (legacy)";
   if (e === "depth") return "Depth-based 2.5D parallax with geometric camera moves";
   return "Smooth cinematic pans across your photos";
@@ -33,5 +38,5 @@ export function engineDescription(engine: RenderEngine | string | null | undefin
 // AI-generated clips. v26.9: veo is the production AI engine.
 export function isAiVideoEngine(engine: RenderEngine | string | null | undefined): boolean {
   const e = String(engine || "remotion").toLowerCase();
-  return e === "veo" || e === "runway" || e === "depth";
+  return e === "veo" || e === "runway" || e === "depth" || e === "kling";
 }
