@@ -136,18 +136,46 @@ const KLING_MOTION_STRICT =
 // artifact-y footage. Aggressive prompting is a losing trade whenever the
 // QC ladder converts overreach into floors. Motion belongs to the calm
 // glide; keep it.
-const KLING_MOTION_BOLD =
+// v62.45 (Troy, watching Quartz Mountain: "It just needs to be a bit
+// smoother, veo did a great job with the whole gimble approach"): the
+// Veo look he means was RAILS — constant speed, level, one axis. The
+// v61/v62.11 string asks for "drone-style … gently arcing", and arcs are
+// where Kling's flight path gets rough: banking implies speed and
+// direction changes, which the model renders as visible accelerations.
+// Post-correction is NOT the answer — v62.15 measured the vidstab pass
+// making delivery-aspect clips ~50% JERKIER (jerk 1.25 vs 0.79/0.84),
+// because at full delivery res every synthetic correction shows. So the
+// smoothness has to be flown, not fixed: same travel, same parallax,
+// same energy — on a motorized slider instead of a drone.
+// The v62.11-sacred Spanish string survives BYTE-EXACT below; one env
+// flip (KLING_BOLD_LEGACY=1) restores it with no deploy — the escape
+// hatch IS the lesson of the last prompt regression.
+const KLING_MOTION_BOLD_LEGACY =
   " Cinematic drone-style camera: a smooth confident glide forward through" +
   " the space, gently arcing to reveal depth toward the scene's focal point," +
   " pronounced natural perspective parallax, floating steadicam grace," +
   " perfectly stabilized, no handheld shake, dynamic luxury real-estate" +
   " film energy.";
+const KLING_MOTION_GIMBAL =
+  " Cinematic gimbal camera: one continuous, constant-speed, perfectly level" +
+  " glide forward through the space, as if riding a motorized slider on" +
+  " invisible rails — no arcs, no banking, no speed changes, no direction" +
+  " changes — pronounced natural perspective parallax, floating steadicam" +
+  " grace, perfectly stabilized, no handheld shake, dynamic luxury" +
+  " real-estate film energy.";
+const KLING_MOTION_BOLD = String(process.env.KLING_BOLD_LEGACY || "0") === "1"
+  ? KLING_MOTION_BOLD_LEGACY
+  : KLING_MOTION_GIMBAL;
 // v62.11: the v60.9 shake bans are exactly what the Spanish render shipped
 // with. The v62.7 boil bans stay — a NEGATIVE prompt can only subtract
 // artifacts, never motion, and these name the precise failure the 40th St
 // render hit. Set KLING_BOIL_BANS=0 to get the Spanish string byte-exact.
 const KLING_NEGATIVE_EXTRA =
+  // v62.45: two acceleration bans join the v60.9 shake list — naming the
+  // specific failure the gimbal rewrite targets, same contract as ever
+  // (negatives subtract artifacts, never create motion).
   ", handheld camera shake, camera bounce, bobbing, walking motion, jittery footage" +
+  ", abrupt speed changes, jerky camera acceleration" +
   (String(process.env.KLING_BOIL_BANS || "1") === "0"
     ? ""
     : ", texture boil, shimmering foliage, crawling textures, flickering leaves, warping vegetation, boiling surfaces");

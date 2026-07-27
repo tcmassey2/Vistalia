@@ -692,6 +692,20 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.44: both rewrite calls accept a shrinking timeout",
     /timeoutMs = 30000/.test(planSrc.slice(planSrc.indexOf("async function expandNarrationToBudget"))) &&
     (planSrc.match(/\}, timeoutMs\);/g) || []).length >= 2);
+
+  /* ── v62.45: rails, not drones — with the Spanish string one env flip away. */
+  const vjSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/veo-job.mjs"), "utf8");
+  check("v62.45: gimbal suffix is the default bold rung",
+    /KLING_MOTION_GIMBAL/.test(vjSrc) && /invisible rails/.test(vjSrc) &&
+    /no arcs, no banking, no speed changes/.test(vjSrc));
+  check("v62.45: the v62.11 Spanish string survives byte-exact behind KLING_BOLD_LEGACY",
+    /KLING_BOLD_LEGACY/.test(vjSrc) &&
+    /gently arcing to reveal depth toward the scene's focal point/.test(vjSrc));
+  check("v62.45: acceleration bans joined the negative prompt",
+    /abrupt speed changes, jerky camera acceleration/.test(vjSrc));
+  check("v62.45: steady and strict rungs untouched",
+    /Controlled cinematic camera: one slow, smooth, perfectly stabilized/.test(vjSrc) &&
+    /Minimal cinematic camera: a single very slow, short/.test(vjSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
