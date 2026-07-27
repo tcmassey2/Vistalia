@@ -706,6 +706,29 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.45: steady and strict rungs untouched",
     /Controlled cinematic camera: one slow, smooth, perfectly stabilized/.test(vjSrc) &&
     /Minimal cinematic camera: a single very slow, short/.test(vjSrc));
+
+  /* ── v62.48: the log must not lie about a suffixed director source. The
+     Jul 27 render shipped "director+room-repaired+trimmed" — the Director's
+     own monologue, address hook intact — and the worker WARNED "the per-scene
+     lines were joined instead. Expect a stiffer read. (pre-v62.39 plan)".
+     Wrong on every clause. Suffixed director sources are INFO truth lines;
+     only genuinely non-director sources warn. */
+  check("v62.48: both worker log gates understand director suffixes",
+    (vfSrc3.match(/narration\.source\.startsWith\("director"\)/g) || []).length >= 2);
+  check("v62.48: suffixed director sources log as the Director's monologue, not a demotion",
+    /Director's monologue, shipped after plan-side/.test(vfSrc3) &&
+    /Director's monologue, adjusted plan-side/.test(vfSrc3));
+  check("v62.48: suffix describer translates the pass names",
+    /function describeDirectorPasses\(/.test(vfSrc3) &&
+    /"room-repaired": "room-repair"/.test(vfSrc3) &&
+    /trimmed: "duration-trim"/.test(vfSrc3));
+  check("v62.48: the stiffer-read warning still exists for non-director sources",
+    /the per-scene lines were joined instead\. Expect a stiffer read\./.test(vfSrc3));
+  check("v62.48: room-repair adoption stamps a sourceReason",
+    /rewritten plan-side to their actual rooms/.test(planSrc));
+  check("v62.48: expansion and trim adoptions carry the earlier pass's reason",
+    /nar\.sourceReason && !probe\.narration\.sourceReason/.test(planSrc) &&
+    /overNar\.sourceReason && !probe\.narration\.sourceReason/.test(planSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

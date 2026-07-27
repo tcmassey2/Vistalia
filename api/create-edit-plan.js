@@ -703,6 +703,10 @@ export default async function handler(request, response) {
               attachNarration(probe, repaired, { targetDurationSec });
               if (probe.narration && probe.narration.source === "director") {
                 probe.narration.source = "director+room-repaired";
+                // v62.48: the probe re-validated clean so it carries no reason —
+                // stamp WHY this pass ran, so the worker log tells the story.
+                probe.narration.sourceReason =
+                  `${offenders.length} sentence(s) named a room the photo does not show; rewritten plan-side to their actual rooms`;
                 normalizedPlan.narration = probe.narration;
                 normalizedPlan.narrationScript = probe.narrationScript;
                 adopted = true;
@@ -773,6 +777,9 @@ export default async function handler(request, response) {
             ? probe.narrationScript.split(/\s+/).filter(Boolean).length : 0;
           if (probe.narration && probe.narration.source === "director" && probeWords > nowWords) {
             probe.narration.source = `${nar.source}+expanded`;
+            // v62.48: the probe validated clean and carries no reason — don't
+            // let the adoption drop the one the earlier pass stamped.
+            if (nar.sourceReason && !probe.narration.sourceReason) probe.narration.sourceReason = nar.sourceReason;
             normalizedPlan.narration = probe.narration;
             normalizedPlan.narrationScript = probe.narrationScript;
             console.info(`[plan] narration expansion ACCEPTED (${nar.source}): ${nowWords}w → ${probeWords}w (target ${budgetTarget}).`);
@@ -807,6 +814,8 @@ export default async function handler(request, response) {
           // MIN_PLAN_SCENES-style floor: a tour needs enough rooms to be a tour.
           if (probe.narration && probe.narration.source === "director" && probeWords < overWords && survivingPhotos.length >= 5) {
             probe.narration.source = `${overNar.source}+trimmed`;
+            // v62.48: same reason-carry as the expansion adoption above.
+            if (overNar.sourceReason && !probe.narration.sourceReason) probe.narration.sourceReason = overNar.sourceReason;
             normalizedPlan.scenes = survivingScenes.map((s, i) => ({ ...s, order: i + 1 }));
             normalizedPlan.narration = probe.narration;
             normalizedPlan.narrationScript = probe.narrationScript;

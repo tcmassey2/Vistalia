@@ -606,6 +606,23 @@ async function synthesizeWithTimestampsClean({ cleanText, voiceId, tempDir, jobI
   return { audioPath, words };
 }
 
+// v62.48: turn a suffixed director source into plain English for the log.
+// "director+room-repaired+trimmed" → "room-repair and duration-trim passes".
+// Unknown suffixes pass through verbatim so a future pass never logs blind.
+function describeDirectorPasses(source) {
+  const names = {
+    "room-repaired": "room-repair",
+    trimmed: "duration-trim",
+    expanded: "duration-expand"
+  };
+  const parts = String(source).split("+").slice(1).map((p) => names[p] || p);
+  if (!parts.length) return "passes";
+  const list = parts.length > 1
+    ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`
+    : parts[0];
+  return `${list} pass${parts.length > 1 ? "es" : ""}`;
+}
+
 /* ============================================================
    prepareVoiceFirst — the front-of-job stage.
    ============================================================
@@ -626,11 +643,22 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
   // carried no reason, then the Jul 27 square render bailed at the
   // preflight below — which printed the word count and swallowed the
   // provenance. Every bail from here down now happens under this line.
+  // v62.48: suffixed sources like "director+room-repaired+trimmed" ARE the
+  // Director's monologue — plan-side passes touched it, they didn't replace
+  // it. Those get an INFO truth line; only a genuinely non-director source
+  // (derived-from-lines) still warns.
   if (narration.source && narration.source !== "director") {
-    console.warn(
-      `[voice-first] narration source is "${narration.source}"` +
-      (narration.sourceReason ? ` — plan-side reason: ${narration.sourceReason}` : " (no reason on manifest — pre-v62.39 plan)")
-    );
+    if (narration.source.startsWith("director")) {
+      console.info(
+        `[voice-first] narration source is "${narration.source}" — Director's monologue, shipped after plan-side ${describeDirectorPasses(narration.source)}` +
+        (narration.sourceReason ? ` (reason: ${narration.sourceReason})` : "")
+      );
+    } else {
+      console.warn(
+        `[voice-first] narration source is "${narration.source}"` +
+        (narration.sourceReason ? ` — plan-side reason: ${narration.sourceReason}` : " (no reason on manifest — pre-v62.39 plan)")
+      );
+    }
   }
   if (!process.env.ELEVENLABS_API_KEY) {
     console.warn("[voice-first] ELEVENLABS_API_KEY not set — legacy voice path will run.");
@@ -914,12 +942,20 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
   // certainly a derived-from-lines monologue — make that unmissable in the
   // render log, not just the plan log (which nobody reads after the fact).
   if (narration.source && narration.source !== "director") {
-    console.warn(
-      `[voice-first] NOTE: narration source is "${narration.source}" — the Director's monologue failed plan-side validation and the per-scene lines were joined instead. Expect a stiffer read.` +
-      (narration.sourceReason
-        ? ` Plan-side reason: ${narration.sourceReason}`
-        : ` (Reason not carried on this manifest — pre-v62.39 plan; check the [plan] narration logs.)`)
-    );
+    if (narration.source.startsWith("director")) {
+      // v62.48: this is still the Director's read — say so, don't cry wolf.
+      console.info(
+        `[voice-first] NOTE: narration source is "${narration.source}" — Director's monologue, adjusted plan-side (${describeDirectorPasses(narration.source)}). Read quality unaffected.` +
+        (narration.sourceReason ? ` Reason: ${narration.sourceReason}` : "")
+      );
+    } else {
+      console.warn(
+        `[voice-first] NOTE: narration source is "${narration.source}" — the Director's monologue failed plan-side validation and the per-scene lines were joined instead. Expect a stiffer read.` +
+        (narration.sourceReason
+          ? ` Plan-side reason: ${narration.sourceReason}`
+          : ` (Reason not carried on this manifest — pre-v62.39 plan; check the [plan] narration logs.)`)
+      );
+    }
   }
   for (const w of st.warnings) console.warn(`[voice-first] ${w}`);
   // Canary-gate transcript: every sentence with its video-time span.
