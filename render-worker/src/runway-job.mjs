@@ -197,20 +197,28 @@ function ffFilterSet() {
 // treat this as telemetry, never as a gate that can kill a render.
 //
 // v62.49: the mean answers "how MUCH motion" but not "how SMOOTH". The
-// Jul 27 gimbal render measured median 4.48 against the 2.2 reference and
-// the mean alone cannot say whether that is a wider move at constant rate
-// (exactly what the rails prompt asks for) or speed changes (exactly what
-// it bans). The SHAPE of the per-frame series can: a steady dolly is a
-// flat line, tremor and acceleration are spikes. So the probe now also
-// returns:
-//   jitter = stddev/mean of the per-frame series (frame 0 dropped — its
-//            YDIF is a compare-with-nothing artifact)
-//   spike  = p95/p50 of the same series
-// Both are RELATIVE, so film grain's constant pedestal mostly cancels.
-// No reference bands yet — these lines BUILD the baseline the same way
-// the speech-calibration line did. Telemetry only, never a gate.
-// The mean itself is computed exactly as v60.5 did (all frames), so every
-// historical reference point (0.7 / 1.0 / 1.3 / 2.2) still applies.
+// SHAPE of the per-frame series answers that — but v62.49's single
+// stddev/mean conflated two different diseases, and the Jul 27 9-scene
+// render exposed it: jitter correlated −0.84 with motion level, because
+// on slow clips the number was really (foliage redraw noise) / (small
+// mean) — content shimmer, not camera speed changes. The same render's
+// scene 1 boiled three QC attempts running; the metric was tasting the
+// boil, not the camera.
+//
+// v62.51 decomposes the series into the two signals:
+//   envelope = centered 9-frame moving average — the camera's speed curve
+//   jitter   = stddev(envelope)/mean — SPEED CHANGES on the camera path
+//              (accel/decel, whip). Rails on a fast OR slow move ≈ 0.
+//   shimmer  = stddev(series − envelope)/mean — frame-to-frame redraw
+//              (texture boil, handheld tremor, grain). The thing QC calls
+//              "temporal instability", now as a number on every scene.
+//   spike    = p95/p50 of the raw series (unchanged)
+// Frame 0 is dropped (compare-with-nothing artifact). All three are
+// relative to the mean, so brightness and resolution mostly cancel.
+// Baseline resets with this definition (it was 2 renders old). Telemetry
+// only, never a gate. The v60.5 mean is computed exactly as always (all
+// frames) — every historical reference point (0.7 / 1.0 / 1.3 / 2.2)
+// still applies.
 function measureClipMotion(file, { timeoutMs = 20000 } = {}) {
   return new Promise((resolve) => {
     try {
@@ -226,20 +234,30 @@ function measureClipMotion(file, { timeoutMs = 20000 } = {}) {
         const xs = out.trim().split("\n").map(Number).filter(Number.isFinite);
         if (!xs.length) return resolve(null);
         const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
-        let jitter = null, spike = null;
+        let jitter = null, shimmer = null, spike = null;
         const run = xs.slice(1);
-        if (run.length >= 8) {
+        if (run.length >= 12) {
           const m = run.reduce((a, b) => a + b, 0) / run.length;
           if (m > 0.05) {
-            const sd = Math.sqrt(run.reduce((a, b) => a + (b - m) * (b - m), 0) / run.length);
-            jitter = sd / m;
+            const half = 4; // 9-frame window ≈ 0.3s at 30fps
+            const env = run.map((_, i) => {
+              const a = Math.max(0, i - half);
+              const b = Math.min(run.length, i + half + 1);
+              let s = 0;
+              for (let k = a; k < b; k++) s += run[k];
+              return s / (b - a);
+            });
+            const sdOf = (arr, mu) => Math.sqrt(arr.reduce((a, v) => a + (v - mu) * (v - mu), 0) / arr.length);
+            jitter = sdOf(env, m) / m;
+            const resid = run.map((v, i) => v - env[i]);
+            shimmer = sdOf(resid, 0) / m;
             const s = [...run].sort((a, b) => a - b);
             const p50 = s[Math.floor(s.length * 0.5)];
             const p95 = s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
             if (p50 > 0.05) spike = p95 / p50;
           }
         }
-        resolve({ mean, jitter, spike });
+        resolve({ mean, jitter, shimmer, spike });
       };
       proc.on("close", finish);
       proc.on("error", () => resolve(null));
@@ -2413,7 +2431,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     try {
       const mm = await measureClipMotion(clip.clipPath);
       if (mm && Number.isFinite(mm.mean)) {
-        motionStats.push({ scene: clip.sceneIndex + 1, ydif: mm.mean, jitter: mm.jitter, spike: mm.spike, engine: clip.engineUsed || "" });
+        motionStats.push({ scene: clip.sceneIndex + 1, ydif: mm.mean, jitter: mm.jitter, shimmer: mm.shimmer, spike: mm.spike, engine: clip.engineUsed || "" });
       }
     } catch { /* motion telemetry must never block a render */ }
     // v60.9 KLING GIMBAL PASS (Troy: "the camera bounces as if someone is
@@ -2648,9 +2666,10 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
   // ≈0.7, the "absolutely terrible" Kling canary ran 0.70-1.13.
   if (motionStats.length) {
     for (const m of motionStats) {
-      // v62.49: jitter/spike are the smoothness read — flat series = rails.
+      // v62.51: jitter = camera speed changes; shimmer = frame-to-frame
+      // redraw (boil/tremor); spike = worst-vs-typical raw ratio.
       const smooth = Number.isFinite(m.jitter)
-        ? ` jitter=${m.jitter.toFixed(2)}${Number.isFinite(m.spike) ? ` spike=${m.spike.toFixed(2)}` : ""}`
+        ? ` jitter=${m.jitter.toFixed(2)}${Number.isFinite(m.shimmer) ? ` shimmer=${m.shimmer.toFixed(2)}` : ""}${Number.isFinite(m.spike) ? ` spike=${m.spike.toFixed(2)}` : ""}`
         : "";
       console.log(`[motion] scene ${m.scene} YDIF=${m.ydif.toFixed(2)}${smooth}${m.engine && m.engine !== "veo" ? ` (${m.engine})` : ""}`);
     }
@@ -2666,12 +2685,22 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     const postSweep = clipResults.some((c) => c.sweepReplaced);
     const passLabel = postSweep ? "SHIPPED (post-sweep re-stitch)" : "pre-sweep";
     console.log(`[motion] summary [${passLabel}] — median YDIF ${median.toFixed(2)}, scenes<1.0: ${dead}/${motionStats.length} (≈2.2 healthy, ≈0.7 floor, <1.0 slideshow-suspect)`);
-    // v62.49: median smoothness across scenes — baseline-building telemetry
-    // for the gimbal-rails verdict. No bands printed until a few renders
-    // establish what "smooth" measures on this engine; never a gate.
-    const jits = motionStats.map((m) => m.jitter).filter(Number.isFinite).sort((a, b) => a - b);
-    if (jits.length) {
-      console.log(`[motion] smoothness [${passLabel}] — median jitter ${jits[Math.floor(jits.length / 2)].toFixed(2)} across ${jits.length} scene(s) (stddev/mean of per-frame YDIF; steady rails = flat series = low jitter — baseline building, telemetry only)`);
+    // v62.51: median smoothness across scenes — baseline-building telemetry
+    // for the gimbal-rails verdict, decomposed so foliage can't impersonate
+    // a shaky camera. No bands printed until a few renders establish what
+    // this engine measures; never a gate.
+    const med = (arr) => {
+      const s = arr.filter(Number.isFinite).sort((a, b) => a - b);
+      return s.length ? s[Math.floor(s.length / 2)] : null;
+    };
+    const mj = med(motionStats.map((m) => m.jitter));
+    const ms = med(motionStats.map((m) => m.shimmer));
+    if (mj != null) {
+      console.log(
+        `[motion] smoothness [${passLabel}] — median jitter ${mj.toFixed(2)} (camera speed changes; rails ≈ 0)` +
+        (ms != null ? `, median shimmer ${ms.toFixed(2)} (frame-to-frame redraw: boil/tremor/grain)` : "") +
+        ` across ${motionStats.length} scene(s) — baseline building, telemetry only`
+      );
     }
     if (median < 1.3) {
       console.warn(`[motion] ALERT: median ${median.toFixed(2)} < 1.3 — this ${postSweep ? "SHIPPED master" : "render"} will read as a photo slideshow. Check engine duration/prompt wiring (v60.5) and the sweep floor count before shipping.`);

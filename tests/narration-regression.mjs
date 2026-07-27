@@ -735,8 +735,8 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
      series, frame 0 dropped) is the smoothness meter the gimbal verdict
      needs. Telemetry only — no gate may ever hang off it. */
   const rjSrc2 = fs.readFileSync(path.join(ROOT, "render-worker/src/runway-job.mjs"), "utf8");
-  check("v62.49: motion probe computes jitter on the series minus frame 0",
-    /const run = xs\.slice\(1\);/.test(rjSrc2) && /jitter = sd \/ m;/.test(rjSrc2));
+  check("v62.49/51: motion probe computes smoothness on the series minus frame 0",
+    /const run = xs\.slice\(1\);/.test(rjSrc2) && /jitter = sdOf\(env, m\) \/ m;/.test(rjSrc2));
   check("v62.49: the v60.5 mean is untouched (all frames, same formula)",
     /const mean = xs\.reduce\(\(a, b\) => a \+ b, 0\) \/ xs\.length;/.test(rjSrc2));
   check("v62.49: smoothness is logged per scene and as a median summary",
@@ -744,6 +744,21 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     /median jitter/.test(rjSrc2));
   check("v62.49: smoothness is telemetry only — no jitter threshold gates anything",
     !/jitter [<>]=? ?[\d.]/.test(rjSrc2) && /telemetry only/.test(rjSrc2));
+
+  /* ── v62.51: the 9-scene Jul 27 render showed v62.49's jitter correlating
+     −0.84 with motion level — it was tasting foliage redraw noise on slow
+     clips, not the camera. Decompose: envelope (9-frame moving average) →
+     jitter = camera speed changes; residual → shimmer = frame-to-frame
+     redraw (the same physics QC calls temporal instability). Verified on
+     synthetics: boiling slow pan → jitter 0.04 / shimmer 0.52; speed ramp
+     → jitter 0.45 / shimmer 0.01; rails → 0 / 0 at any speed. */
+  check("v62.51: envelope/residual decomposition present",
+    /9-frame window/.test(rjSrc2) &&
+    /shimmer = sdOf\(resid, 0\) \/ m;/.test(rjSrc2));
+  check("v62.51: shimmer is logged per scene and in the summary",
+    /shimmer=\$\{m\.shimmer\.toFixed\(2\)\}/.test(rjSrc2) && /median shimmer/.test(rjSrc2));
+  check("v62.51: shimmer is telemetry only too — no threshold gates anything",
+    !/shimmer [<>]=? ?[\d.]/.test(rjSrc2));
 
   /* ── v62.50: the Cheney Dr blind spots. "A bathroom showcases tile
      counters and a tub" played over the home gym (amenity photos were
