@@ -836,6 +836,19 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   const stSrc = fs.readFileSync(path.join(ROOT, "webapp/src/lib/store.ts"), "utf8");
   check("v62.52: mediaBusy clamps at zero so a stray decrement can't wedge the button",
     /adjustMediaBusy: \(delta\) => set\(\(s\) => \(\{ mediaBusy: Math\.max\(0, s\.mediaBusy \+ delta\) \}\)\)/.test(stSrc));
+
+  /* ── v62.53: the Director's scene selection carries the same risk
+     tie-breaker as import curation — it picks WHICH photos become scenes
+     and which one opens, where both scene-1 floors began. */
+  check("v62.53: Director prompt carries the AI MOTION RISK tie-breaker",
+    /AI MOTION RISK — every selected photo becomes an AI-animated video scene/.test(planSrc) &&
+    /Risk NEVER outranks marketability — it breaks ties\./.test(planSrc));
+  check("v62.53: Director risk guidance names the scene-1 stakes",
+    /This matters MOST for scene 1/.test(planSrc) &&
+    /boil on the very first thing the viewer sees/.test(planSrc));
+  check("v62.53: curation and Director agree on the first failure class",
+    /twilight\/dusk shots where foliage fills much of the frame/.test(planSrc) &&
+    /twilight\/dusk shots where foliage fills much of the frame/.test(curSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

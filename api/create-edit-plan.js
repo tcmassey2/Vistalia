@@ -980,6 +980,12 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
               // duration can carry. The video's length is the promise we
               // made the customer; the photo list is raw material.
               `The customer chose a ${targetSceneCount}-scene video. Select the ${targetSceneCount} STRONGEST photos for the tour and give each exactly one scene. Leaving weaker or redundant photos out is correct and expected — never pad the tour past ${targetSceneCount} scenes to fit more photos in.`,
+              // v62.53: same risk tie-breaker the import curation learned in
+              // v62.52, applied where it bites hardest — the Director picks
+              // WHICH photos become scenes and which one opens. Both scene-1
+              // floors (Cheney invention, Via Del Arbor dusk-foliage boil)
+              // started with this selection.
+              "AI MOTION RISK — every selected photo becomes an AI-animated video scene, and some photo classes reliably produce visible artifacts: twilight/dusk shots where foliage fills much of the frame (leaves boil and redraw), dense tree canopies or hedges, dark or grainy low-light shots, large mirror walls or big glass reflections, busy repeating textures. Risk NEVER outranks marketability — it breaks ties. Between comparably strong photos of the same space, select the one that animates cleanly (daylight, clean geometry, even lighting). This matters MOST for scene 1: the opening scene is the most visible in the video, so between comparable openers choose the lower-risk one — a crisp daylight exterior beats a twilight exterior that will boil on the very first thing the viewer sees.",
               "Order the scenes as a professional property tour: exterior hero → entry → kitchen → living/great room → dining → primary bedroom → other bedrooms → bathrooms → outdoor/pool → neighborhood/amenities → detail/outro.",
               "Never invent property features, views, amenities, upgrades, materials, or room names.",
               "Only describe details visible in the image or user-provided listing facts.",
