@@ -51,7 +51,7 @@ function check(name, cond, detail = "") {
 const lastWord = (s) => String(s || "").replace(/[.\s]+$/, "").split(/\s+/).pop() || "";
 // The complete set of endings that have SHIPPED in a customer video. A
 // clamp output ending on any of these is a regression, full stop.
-const SHIPPED_BAD_ENDINGS = /^(crowns?|fills?|adds?|blends?|complements?|compliments?|beneath|along|features?|boasts?|provides?|is|outdoor|welcoming|inviting)$/i;
+const SHIPPED_BAD_ENDINGS = /^(crowns?|fills?|adds?|blends?|complements?|compliments?|beneath|along|features?|boasts?|provides?|is|outdoor|welcoming|inviting|envelops?|striking)$/i;
 
 /* ── m27/m66/m70-72: clamp must never emit a shipped-defect ending ── */
 const clampCases = [
@@ -64,6 +64,8 @@ const clampCases = [
   ["A sheltered porch invites quiet outdoor living.", 5],              // m71
   ["The kitchen boasts premium appliances everywhere.", 3],            // m27
   ["The office is bathed in warm natural light.", 6],                  // m38
+  ["Tall wood cabinetry envelops the kitchen walls.", 3],              // Jul 27 (v62.43)
+  ["Unique textures define the fireplace's striking presence.", 5],    // Jul 27 (v62.43)
 ];
 for (const [text, budget] of clampCases) {
   const out = clamp(text, budget);
@@ -657,6 +659,24 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     entryIdx > -1 && preflightIdx > -1 && entryIdx < preflightIdx);
   check("v62.42: the preflight bail names the source itself",
     /source=\$\{narration\.source \|\| "director"\}/.test(vfSrc3));
+
+  /* ── v62.43: room mismatches REPAIR the monologue, never discard it.
+     The Jul 27 render proved the demotion's cost: no address, clamped
+     fragments, a third fewer words, 21.8s on a 30s order. */
+  check("v62.43: repairNarrationRooms exists and is called on room demotions",
+    /async function repairNarrationRooms\(/.test(planSrc) &&
+    /await repairNarrationRooms\(parsed\.narration, offenders/.test(planSrc));
+  check("v62.43: repair failure ships the Director's ORIGINAL (warn policy), not derived",
+    /roomMismatchPolicy: "warn"/.test(planSrc) &&
+    /roomMismatchPolicy !== "warn"/.test(planSrc));
+  check("v62.43: non-offender sentences are equality-enforced in code",
+    /changed without permission/.test(planSrc));
+  check("v62.43: repair source label is director+room-repaired",
+    /"director\+room-repaired"/.test(planSrc));
+  check("v62.43: the derived path speaks the address (Welcome-hook from the intro card)",
+    /Welcome to \$\{addrLine\}/.test(planSrc) && /introCard\?\.headline/.test(planSrc));
+  check("v62.43: the Director's hook must carry the street address",
+    /open by naming the street address naturally/.test(planSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

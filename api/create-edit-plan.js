@@ -645,6 +645,68 @@ export default async function handler(request, response) {
     // untouched when structurally valid.
     if (includeNarration) {
       attachNarration(normalizedPlan, parsed?.narration, { targetDurationSec });
+      /* ── v62.43 ROOM-REPAIR: fix the two sentences, keep the monologue. ──
+         The Jul 27 render finally named what had been demoting the
+         Director's monologue three renders running: "2 sentences name a
+         room the photo does not show" (the v62.35 check doing its job).
+         But the demotion's cost is now measured: the derived lines carry
+         no address (the HOOK is where "Welcome to 4935 E Berneil Dr"
+         lives), no flow, clamped fragments ("Tall wood cabinetry
+         envelops."), and a third fewer words — a 21.8s video on a 30s
+         order. Troy's verdict was direct. So: when the ONLY thing wrong
+         with the monologue is room naming, rewrite JUST those sentences
+         (one bounded model call), re-validate on a throwaway, and ship
+         director-grade. If the repair fails, ship the Director's ORIGINAL
+         with the contradictions downgraded to warnings — a mislabeled
+         room beats fragments with no address. Structural failures
+         (transcript mismatch, broken mapping) still demote exactly as
+         before; this touches only the room-check class. */
+      {
+        const nar0 = normalizedPlan.narration;
+        const roomDemoted = nar0 && nar0.source !== "director" &&
+          /name a room the photo does not show/.test(nar0.sourceReason || "");
+        if (roomDemoted && parsed?.narration?.monologue) {
+          const photoScenes0 = (normalizedPlan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
+          const roomById = new Map(photoScenes0.map((s) => [String(s.photoId), s.roomType]));
+          const origSents = (parsed.narration.sentences || []).map((s) => ({
+            text: String(s?.text || ""),
+            photos: (Array.isArray(s?.photos) ? s.photos : []).map(String)
+          }));
+          const offenders = narrationRoomMismatches(origSents, roomById);
+          let adopted = false;
+          if (offenders.length) {
+            const repaired = await repairNarrationRooms(parsed.narration, offenders, { roomById, listingDetails, selectedStyle });
+            if (repaired) {
+              const probe = { scenes: normalizedPlan.scenes };
+              attachNarration(probe, repaired, { targetDurationSec });
+              if (probe.narration && probe.narration.source === "director") {
+                probe.narration.source = "director+room-repaired";
+                normalizedPlan.narration = probe.narration;
+                normalizedPlan.narrationScript = probe.narrationScript;
+                adopted = true;
+                console.info(`[plan] narration ROOM-REPAIRED: ${offenders.length} sentence(s) rewritten to their actual rooms — the Director's monologue ships.`);
+              } else {
+                console.warn("[plan] narration room-repair rejected by re-validation — trying the ship-original fallback.");
+              }
+            }
+          }
+          if (!adopted) {
+            const probe = { scenes: normalizedPlan.scenes };
+            attachNarration(probe, parsed.narration, { targetDurationSec, roomMismatchPolicy: "warn" });
+            if (probe.narration && probe.narration.source === "director") {
+              normalizedPlan.narration = probe.narration;
+              normalizedPlan.narrationScript = probe.narrationScript;
+              console.warn(
+                `[plan] narration room-repair unavailable — shipping the Director's ORIGINAL monologue with ` +
+                `${offenders.length} room warning(s). The derived fallback measurably reads worse (no address, clamped fragments).`
+              );
+            }
+            // If even the warn-policy probe demoted, the monologue has
+            // STRUCTURAL problems beyond room naming — the derived result
+            // already on normalizedPlan stands, exactly as pre-v62.43.
+          }
+        }
+      }
       /* v62.17: if the narration came in under its stated word band, ask once
          for a longer read. Under voice-first this is the difference between
          the 30s the customer picked and the ~20s they kept getting.
@@ -848,7 +910,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   const monologueMax = Math.round(monologueTarget * 1.1);
   const narrationGuidance = includeNarration
     ? [
-        `MOST IMPORTANT — THE SPOKEN TOUR (v62): also return a top-level object "narration". The voiceover is now the SPINE of the video — scene timing is derived FROM the voice, so your sentences are never cut, sped up, or squeezed; write to sound good, not to fit windows. narration.monologue: ONE continuous spoken tour, ${monologueMin}-${monologueMax} words (count them) in about ${expectedSentenceCount(clampedDuration) >= 7 ? "6-8" : expectedSentenceCount(clampedDuration) >= 4 ? "4-5" : "3"} sentences INCLUDING the short CTA — the voice pauses over a second at every full stop, so extra sentences cost real seconds against the ${clampedDuration}-second order. Voice it like a great human tour guide on a first walkthrough: conversational register, contractions ("it's", "you'll"), varied sentence lengths, zero brochure clichés (never "boasts", "nestled", "oasis", "dream home", "must-see"). ARC, in order: (1) HOOK — open on the property's single most arresting fact or feeling; (2) WALK-THROUGH — move through the photos in their exact scene order, giving each major space one natural moment with real connective transitions; (3) LIFESTYLE CLOSE — one sentence on what living here feels like; (4) CTA — final sentence under 8 words. GROUND EVERY SENTENCE IN ITS OWN PHOTOS — this outranks the arc: before you write a sentence, look at the images for the photoIds you are about to assign it, and describe what is actually there. If a room label and the image disagree, TRUST THE IMAGE. Never name a room — kitchen, bathroom, bedroom, living room, patio, pool — unless it is visible in that sentence's photos; when you are unsure what a space is, describe what you can see ("Light pours across the tile floors") instead of naming it. Do NOT write a generic walkthrough from memory and pin it to photos afterward: a tour that says "the bathroom's marble finishes" over a bedroom is worse than a plainer tour that is right. The opening sentence plays over scene 1 — write it for THAT photo, not for an exterior you wish were first. EXPRESSIVE DELIVERY: place 2-5 bracketed audio tags — e.g. [warm], [pause], [excited], [softly] — immediately before the phrases they color. Tags are delivery directions, never spoken words; never place one mid-word. narration.direction: a short performance note for the voice (e.g. "warm, unhurried tour guide — proud of the home, never salesy"). narration.sentences: the SAME monologue split into its sentences IN ORDER — each item's "text" is the exact sentence WITHOUT any tags, and "photos" lists the photoIds that sentence covers, in scene order. RULES: every scene's photoId appears exactly once across all sentences, in the same order as the scenes array; a sentence may cover 1-3 photos; use photos: [] for a sentence that keeps lingering on the previous photo (hero shots, the close). The sentence texts joined with single spaces must EXACTLY equal the monologue with all [tags] removed. Never mention a space before its photo arrives. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
+        `MOST IMPORTANT — THE SPOKEN TOUR (v62): also return a top-level object "narration". The voiceover is now the SPINE of the video — scene timing is derived FROM the voice, so your sentences are never cut, sped up, or squeezed; write to sound good, not to fit windows. narration.monologue: ONE continuous spoken tour, ${monologueMin}-${monologueMax} words (count them) in about ${expectedSentenceCount(clampedDuration) >= 7 ? "6-8" : expectedSentenceCount(clampedDuration) >= 4 ? "4-5" : "3"} sentences INCLUDING the short CTA — the voice pauses over a second at every full stop, so extra sentences cost real seconds against the ${clampedDuration}-second order. Voice it like a great human tour guide on a first walkthrough: conversational register, contractions ("it's", "you'll"), varied sentence lengths, zero brochure clichés (never "boasts", "nestled", "oasis", "dream home", "must-see"). ARC, in order: (1) HOOK — open by naming the street address naturally ("Welcome to 4935 East Berneil Drive…") woven into the property's single most arresting fact or feeling; the spoken address is the one sentence every listing video must carry; (2) WALK-THROUGH — move through the photos in their exact scene order, giving each major space one natural moment with real connective transitions; (3) LIFESTYLE CLOSE — one sentence on what living here feels like; (4) CTA — final sentence under 8 words. GROUND EVERY SENTENCE IN ITS OWN PHOTOS — this outranks the arc: before you write a sentence, look at the images for the photoIds you are about to assign it, and describe what is actually there. If a room label and the image disagree, TRUST THE IMAGE. Never name a room — kitchen, bathroom, bedroom, living room, patio, pool — unless it is visible in that sentence's photos; when you are unsure what a space is, describe what you can see ("Light pours across the tile floors") instead of naming it. Do NOT write a generic walkthrough from memory and pin it to photos afterward: a tour that says "the bathroom's marble finishes" over a bedroom is worse than a plainer tour that is right. The opening sentence plays over scene 1 — write it for THAT photo, not for an exterior you wish were first. EXPRESSIVE DELIVERY: place 2-5 bracketed audio tags — e.g. [warm], [pause], [excited], [softly] — immediately before the phrases they color. Tags are delivery directions, never spoken words; never place one mid-word. narration.direction: a short performance note for the voice (e.g. "warm, unhurried tour guide — proud of the home, never salesy"). narration.sentences: the SAME monologue split into its sentences IN ORDER — each item's "text" is the exact sentence WITHOUT any tags, and "photos" lists the photoIds that sentence covers, in scene order. RULES: every scene's photoId appears exactly once across all sentences, in the same order as the scenes array; a sentence may cover 1-3 photos; use photos: [] for a sentence that keeps lingering on the previous photo (hero shots, the close). The sentence texts joined with single spaces must EXACTLY equal the monologue with all [tags] removed. Never mention a space before its photo arrives. NEVER READ ON-PHOTO TEXT into the narration: watermarks, MLS stamps, and staging disclosures ("AI staged", "virtually staged") printed on a photo are labels, not features — describe the room, never the label.`,
         `Add narrationLine to EVERY scene — all ${targetSceneCount} of them. Continuous narration sounds more professional than sparse voice with long silent gaps.`,
         `Each narrationLine is ONE complete natural sentence about ITS scene, sized to be spoken in roughly the scene's length at ~1.9 words/sec (3s scene ≈ 5 words, 4s ≈ 7, 6s hero ≈ 10). THE LINE MUST DESCRIBE WHAT IS VISIBLE IN THAT SCENE'S PHOTO — look at the image itself. If the room label and the image disagree, TRUST THE IMAGE. Never say "kitchen" over a photo with no kitchen in it; never mention rooms, fixtures, or features you cannot actually see in that photo. When unsure what a room is, describe what you see ("Light pours across the tile floors") instead of naming a room type. SELL THE SPACE, NOT THE STAGING (v34.4): never describe movable furniture or decor — sofas, tables, chairs, beds, rugs, lamps, art, plants. The furniture leaves with the seller; buyers are buying light, space, views, ceilings, windows, flooring, and finishes (cabinetry, counters, fireplaces, and built-ins are part of the home — those are fine). "A glass table sits beside the window" → "Expansive windows frame the red-rock views". CRITICAL: the lines are synthesized back-to-back as ONE continuous voiceover in scene order — so consecutive lines must READ AS A FLOWING TOUR: vary sentence openings, use occasional connective phrases ("Just beyond…", "Upstairs…"), and keep one consistent warm tone. Never write a fragment.`,
         // v40.1: style-aware narration tone (master-21: MLS Clean shipped
@@ -1668,6 +1730,85 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
   }
 }
 
+/* v62.43 ROOM-REPAIR — rewrite ONLY the sentences that misname their room,
+   keeping every other sentence word-for-word. The one thing the model may
+   not touch is the photo mapping; the one thing it must fix is the room
+   language. Non-offender sentences are equality-checked in code — a model
+   that "improved" a sentence it wasn't asked to touch gets rejected. */
+async function repairNarrationRooms(narration, offenders, { roomById, listingDetails, selectedStyle } = {}) {
+  if (!process.env.OPENAI_API_KEY) return null;
+  const n = narration.sentences.length;
+  const offenderIdx = new Set(offenders.map((o) => o.index));
+  const fixes = offenders.map((o) => {
+    const actualRooms = [...new Set(o.actual)].join(" / ");
+    return `Sentence ${o.index + 1} says "${o.claim}" but its photo shows: ${actualRooms}.`;
+  }).join("\n");
+  const prompt =
+    `You wrote this spoken real-estate tour. ${offenders.length} sentence(s) name a room type their photo does not show — ` +
+    `the classifier's label for each photo is given below and it outranks your guess.\n\n${fixes}\n\n` +
+    `Rewrite ONLY ${offenders.length === 1 ? "that sentence" : "those sentences"} so each describes its ACTUAL room type ` +
+    `— or, if unsure what the space is, describes what is visible (light, materials, scale) WITHOUT naming any room type. ` +
+    `Keep the rewritten sentence about the same length and in the same conversational register.\n` +
+    `Every OTHER sentence must be returned EXACTLY as written, word for word — do not improve, retag, or re-punctuate them.\n` +
+    `Return EXACTLY ${n} sentences in the same order. "monologue" is the full text WITH bracketed audio tags; ` +
+    `"sentences" is the same text split per sentence WITHOUT tags; the sentences joined by single spaces must equal ` +
+    `the monologue with all [tags] removed.\n\n` +
+    (/mls/i.test(selectedStyle || "") ? `TONE: MLS-compliant — strictly factual.\n\n` : "") +
+    `Property: ${JSON.stringify(listingDetails || {}).slice(0, 300)}\n\n` +
+    `Current sentences:\n${narration.sentences.map((s, i) => `${i + 1}. ${s.text}${offenderIdx.has(i) ? "   <-- REWRITE THIS ONE" : ""}`).join("\n")}`;
+  try {
+    const res = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: motionModel(),
+        input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "narration_room_repair",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["monologue", "sentences"],
+              properties: {
+                monologue: { type: "string", maxLength: 2200 },
+                sentences: { type: "array", minItems: n, maxItems: n, items: { type: "string", maxLength: 320 } }
+              }
+            }
+          }
+        },
+        temperature: 0.4,
+        max_output_tokens: 1400
+      })
+    }, 30000);
+    if (!res.ok) return null;
+    const payload = await res.json().catch(() => ({}));
+    const out = parseOpenAIJson(payload);
+    if (!Array.isArray(out?.sentences) || out.sentences.length !== n || typeof out.monologue !== "string") return null;
+    // Non-offenders must be untouched (whitespace-tolerant, else reject).
+    const norm = (t) => String(t || "").replace(/\s+/g, " ").trim();
+    for (let i = 0; i < n; i++) {
+      if (!offenderIdx.has(i) && norm(out.sentences[i]) !== norm(narration.sentences[i].text)) {
+        console.warn(`[plan] room-repair rejected: sentence ${i + 1} was changed without permission.`);
+        return null;
+      }
+    }
+    const rebuilt = {
+      monologue: out.monologue.trim(),
+      direction: narration.direction,
+      sentences: narration.sentences.map((s, i) => ({ text: cleanText(String(out.sentences[i] || ""), 320), photos: s.photos })),
+      source: "director"
+    };
+    if (rebuilt.sentences.some((s) => !s.text)) return null;
+    return rebuilt;
+  } catch (err) {
+    console.warn(`[plan] narration room-repair failed (${err.message}).`);
+    return null;
+  }
+}
+
 /* v62.27 THE OTHER HALF OF THE DURATION CONTRACT.
    The Jul 25 21:58 render: customer picked 30 seconds (9 scenes — the 30s
    budget), the Director returned 127 words against a 70-85 band, and
@@ -1876,7 +2017,7 @@ function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
   return out;
 }
 
-function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
+function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMismatchPolicy = "demote" } = {}) {
   const scenes = (plan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
   const sceneOrderById = new Map(scenes.map((s, i) => [String(s.photoId), i]));
   const monologueTarget = narrationWordBudget(targetDurationSec);
@@ -1895,6 +2036,21 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
         current = { text: "", photos: [String(s.photoId)] }; // leading silent scenes join sentence 1
         sentences.push(current);
       }
+    }
+    // v62.43: the derived path never spoke the ADDRESS — that lives in the
+    // Director's HOOK, and every demotion silently lost it (Troy: "The
+    // voiceover is not mentioning the address at any point like it used
+    // to"). Borrow the intro card's headline (the address on every plan)
+    // as a spoken hook. It takes over the first scene's photos; the
+    // original first line becomes a linger over the same scene — the
+    // voice grid merges linger sentences into the prior run, so scene 1
+    // simply holds a beat longer, which suits a hero shot.
+    const addrLine = cleanText(String(plan?.introCard?.headline || ""), 80);
+    if (sentences.length && addrLine && /\d/.test(addrLine) &&
+        !sentences.some((s) => s.text.includes(addrLine))) {
+      const firstPhotos = sentences[0].photos;
+      sentences[0] = { text: sentences[0].text, photos: [] };
+      sentences.unshift({ text: `Welcome to ${addrLine}.`, photos: firstPhotos });
     }
     // v62.7 (m81-twice incident: derived monologue produced ~8.6s monster
     // scenes — a sentence + its silent followers = one long static-feeling
@@ -2008,8 +2164,17 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30 } = {}) {
     // strictly worse than one that names a room wrong. Demoting into that
     // hole would be trading a flaw for a hollow video.
     const haveLinesToDeriveFrom = scenes.some((s) => String(s.narrationLine || "").trim());
-    if (contradictions.length >= 2 && haveLinesToDeriveFrom) {
+    if (contradictions.length >= 2 && haveLinesToDeriveFrom && roomMismatchPolicy !== "warn") {
       errors.push(`${contradictions.length} sentences name a room the photo does not show`);
+    } else if (contradictions.length >= 2 && roomMismatchPolicy === "warn") {
+      // v62.43: the caller exhausted the room-repair pass — the Director's
+      // read ships anyway. The Jul 27 render measured the alternative:
+      // demoting cost the address, the polish, and a third of the words
+      // (Troy: "missing polished clean responses"). A monologue with a
+      // mislabeled room beats fragments with no address.
+      warnings.push(
+        `${contradictions.length} sentences name a room the photo does not show — shipping the Director's read anyway (room-repair fallback; the derived alternative measurably reads worse)`
+      );
     } else if (contradictions.length >= 2) {
       warnings.push(
         `${contradictions.length} sentences name a room the photo does not show, but no per-scene ` +
@@ -3205,8 +3370,8 @@ function clampNarrationSentenceSafe(text, maxWords) {
   // endings; the model ignores it under budget pressure, so THIS list is the
   // enforcement layer and must carry every verb the planner likes. Preps
   // from CONNECTIVES are mirrored here too (the strip never consulted them).
-  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features?|showcases?|captures?|offers?|includes?|invites?|inviting|provides?|delivers?|highlights?|reveals?|enjoys?|creates?|boasts?|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|defines?|continues?|extends?|crowns?|fills?|adds?|blends?|complements?|compliments?|frames?|anchors?|greets?|welcomes?|enhances?|commands?|graces?|completes?|elevates?|warms?|opens?|beneath|under|above|below|along|across|beyond|behind|toward|towards|throughout|amid|among|beside|upon|onto|into|over)$/i;
-  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium|restful|comfortable|soft|clean|fresh|quiet|peaceful|stylish|graceful|welcoming|outdoor|indoor|sleek|timeless|durable|gleaming|functional|versatile|pristine|immaculate|seamless)$/i;
+  const FUNCTION_WORDS = /^(and|with|plus|featuring|while|as|the|a|an|of|in|on|at|to|for|or|by|from|near|its|is|are|this|that|which|where|framing|overlooking|offering|showcasing|providing|creating|boasting|surrounding|complementing|including|features?|showcases?|captures?|offers?|includes?|invites?|inviting|provides?|delivers?|highlights?|reveals?|enjoys?|creates?|boasts?|has|have|filled|streaming|flowing|lined|topped|wrapped|bathed|drenched|paired|surrounded|defines?|continues?|extends?|crowns?|fills?|adds?|blends?|complements?|compliments?|frames?|anchors?|greets?|welcomes?|enhances?|commands?|graces?|completes?|elevates?|warms?|opens?|envelops?|beneath|under|above|below|along|across|beyond|behind|toward|towards|throughout|amid|among|beside|upon|onto|into|over)$/i;
+  const HANGING_ADJ = /^(elegant|beautiful|stunning|spacious|bright|modern|warm|cozy|generous|gorgeous|luxurious|inviting|expansive|abundant|ample|natural|vaulted|large|open|airy|sunlit|charming|impressive|exceptional|serene|breathtaking|exposed|custom|updated|upgraded|oversized|covered|heated|finished|polished|refined|manicured|landscaped|soaring|dramatic|private|premium|restful|comfortable|soft|clean|fresh|quiet|peaceful|stylish|graceful|welcoming|outdoor|indoor|sleek|timeless|durable|gleaming|functional|versatile|pristine|immaculate|seamless|striking)$/i;
   // v45.6 (m38): a predicate adjective after a copula is a COMPLETE ending —
   // "…is bright." reads fine and must survive the strip; "…and bright." must
   // not. Without this guard the junk strip gutted grammatical sentences like
