@@ -316,25 +316,32 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
 
     setUploading(true);
     setUploadProgress({ done: 0, total: accepted.length });
+    // v62.52: the render button gates on this — a "Generate video" click
+    // mid-batch would silently render only the photos that had finished.
+    useStore.getState().adjustMediaBusy(+1);
     const uploaded: Photo[] = [];
-    let i = 0;
-    for (const file of accepted) {
-      // Type guard — drag-and-drop can deliver folders or non-images.
-      if (!file.type.startsWith("image/")) {
-        setError(`${file.name} isn't an image (JPG, PNG, or WebP).`);
-        continue;
+    try {
+      let i = 0;
+      for (const file of accepted) {
+        // Type guard — drag-and-drop can deliver folders or non-images.
+        if (!file.type.startsWith("image/")) {
+          setError(`${file.name} isn't an image (JPG, PNG, or WebP).`);
+          continue;
+        }
+        try {
+          const meta = await uploadListingPhoto(file, userId, projectId, i);
+          const dims = await readImageDimensions(file);
+          uploaded.push(photoFromUpload(file, meta, dims, photos.length + uploaded.length + 1));
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Upload failed";
+          setError(`Couldn't upload ${file.name}: ${msg}`);
+          break;
+        }
+        i++;
+        setUploadProgress({ done: i, total: accepted.length });
       }
-      try {
-        const meta = await uploadListingPhoto(file, userId, projectId, i);
-        const dims = await readImageDimensions(file);
-        uploaded.push(photoFromUpload(file, meta, dims, photos.length + uploaded.length + 1));
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Upload failed";
-        setError(`Couldn't upload ${file.name}: ${msg}`);
-        break;
-      }
-      i++;
-      setUploadProgress({ done: i, total: accepted.length });
+    } finally {
+      useStore.getState().adjustMediaBusy(-1);
     }
     if (uploaded.length) {
       addPhotos(uploaded);
@@ -2179,7 +2186,12 @@ function RenderControls() {
   // a dead button with no explanation, now for up to the full 45-min window.
   const isRendering = jobIsMine && (renderJob?.status === "queued" || renderJob?.status === "rendering");
   const isComplete = jobIsMine && renderJob?.status === "completed" && renderJob.mp4Url;
-  const canRender = photos.length >= 3 && !isRendering;
+  // v62.52: mediaBusy — uploads/imports still in flight. The tray only ever
+  // holds COMPLETED uploads, so an early click can't send a broken URL to
+  // the plan; what it CAN do is silently render 5 of the 24 photos the
+  // agent is still adding. Hold the button until the batch lands.
+  const mediaBusy = useStore((s) => s.mediaBusy);
+  const canRender = photos.length >= 3 && !isRendering && mediaBusy === 0;
 
   const generate = async () => {
     if (!session?.user) { setError("Your session expired. Sign in again to keep going."); return; }
@@ -2284,9 +2296,23 @@ function RenderControls() {
       // bathroom/living. A customer would have burned their one free
       // render on it. Plans are free to retry; renders are not.
       if (planResult.status === "fallback") {
+        // v62.52: the API has said WHY since v60.1 (errorCategory + reason +
+        // requestId) and this screen threw it all away, blaming "heavy
+        // traffic" for bad photo URLs, timeouts, and schema failures alike.
+        // Two renders debugged blind because of this line. Name the cause —
+        // and always log the full detail for support.
+        const cat = String(planResult.errorCategory || "");
+        console.error(
+          `[render] plan fallback — category=${cat || "unknown"} reason=${planResult.reason || ""}` +
+          (planResult.requestId ? ` requestId=${planResult.requestId}` : "")
+        );
+        const detail = cat === "inaccessible_image_url"
+          ? "Our AI director couldn't reach some of your photos — usually a brief storage hiccup right after an upload or import. "
+          : cat === "timeout"
+            ? "Our AI director took too long studying your photos — this happens under heavy traffic. "
+            : "Our AI director couldn't study your photos just now — this happens briefly under heavy traffic. ";
         throw new Error(
-          "Our AI director couldn't study your photos just now — this happens briefly under heavy traffic. " +
-          "Nothing was rendered and no credits were used. Please try again in a minute or two."
+          detail + "Nothing was rendered and no credits were used. Please try again in a minute or two."
         );
       }
       setEditPlan(planResult.editPlan);
@@ -2794,11 +2820,16 @@ function RenderControls() {
           </>
         )}
       </button>
-      {photos.length < 3 && (
+      {photos.length < 3 ? (
         <span className="text-sm text-ink-muted">
           Add at least 3 photos to render.
         </span>
-      )}
+      ) : mediaBusy > 0 && !isRendering ? (
+        <span className="text-sm text-ink-muted inline-flex items-center gap-2">
+          <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+          Photos still uploading — the button unlocks when they're all in.
+        </span>
+      ) : null}
 
       <PaywallModal
         open={showPaywall}

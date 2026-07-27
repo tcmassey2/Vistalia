@@ -84,6 +84,9 @@ export interface CreateEditPlanResult {
   status: "complete" | "fallback" | "failed";
   reason?: string;
   errorCategory?: string;
+  // v62.52: OpenAI request id when the failure came from the model call —
+  // logged by the fallback banner so support tickets carry it.
+  requestId?: string;
   editPlan: EditPlan | null;
 }
 

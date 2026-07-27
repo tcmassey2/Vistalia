@@ -102,6 +102,10 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
     setBusy(true);
     setError("");
     setPct(3);
+    // v62.52: gate the render button while the import is mid-flight — a
+    // "Generate video" click during the import would render whatever subset
+    // of the tray existed before the imported photos landed.
+    useStore.getState().adjustMediaBusy(+1);
     // v62.24: the ceilings used to be weighted for a flow whose last step
     // was a 50-90s Vision call — reading the page got 3-52 and curation got
     // 66-93, so the bar crawled through the 80s for a minute and read as
@@ -317,6 +321,7 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
     } catch {
       setError("Import failed — try again or start manually.");
     } finally {
+      useStore.getState().adjustMediaBusy(-1);
       stopTicker();
       setBusy(false);
       setPct(0);

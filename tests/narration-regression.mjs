@@ -799,6 +799,43 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.50: worker asserts the grid's positional contract before assigning durations",
     /gs\.photoOrdinal !== i/.test(rjSrc2) &&
     /does not match scene order/.test(rjSrc2));
+
+  /* ── v62.52: two findings from the Via Del Arbor banner + the curation
+     question. (1) The plan API has reported errorCategory since v60.1 and
+     the webapp blamed every fallback on "heavy traffic" — now the banner
+     names inaccessible-photo and timeout causes and logs the requestId.
+     (2) The render button never knew uploads were in flight — an early
+     click silently rendered the subset that had finished. (3) Curation
+     scored pure marketability and its prompt PROMOTED twilight shots into
+     the hero slot — the exact class that boiled and floored scene 1 twice;
+     motionRisk now rides every scored photo as a tie-breaker, never a
+     reject. */
+  const curSrc = fs.readFileSync(path.join(ROOT, "api/curate-photos.js"), "utf8");
+  check("v62.52: curation schema requires motionRisk",
+    /"motionRisk", "tourOrder"/.test(curSrc) && /motionRisk: \{ type: "number", minimum: 0, maximum: 100 \}/.test(curSrc));
+  check("v62.52: risk prompt names the measured failure classes (dusk foliage boil first)",
+    /twilight\/dusk shots where foliage fills much of the frame/.test(curSrc) &&
+    /dense tree canopies, hedges, or ivy/.test(curSrc));
+  check("v62.52: motionRisk is a tie-breaker, never a reject",
+    /motionRisk NEVER rejects a photo/.test(curSrc) &&
+    /lower motionRisk one opens/.test(curSrc));
+  check("v62.52: absent motionRisk defaults neutral (50), not zero",
+    /clampNumber\(row\.motionRisk \?\? 50, 0, 100\)/.test(curSrc));
+  const psSrc = fs.readFileSync(path.join(ROOT, "webapp/src/screens/ProjectScreen.tsx"), "utf8");
+  check("v62.52: render button gates on in-flight uploads",
+    /const canRender = photos\.length >= 3 && !isRendering && mediaBusy === 0;/.test(psSrc));
+  check("v62.52: upload batch holds the gate and releases in finally",
+    /adjustMediaBusy\(\+1\)/.test(psSrc) && /adjustMediaBusy\(-1\)/.test(psSrc));
+  check("v62.52: fallback banner names the cause instead of always blaming traffic",
+    /cat === "inaccessible_image_url"/.test(psSrc) &&
+    /cat === "timeout"/.test(psSrc) &&
+    /requestId=\$\{planResult\.requestId\}/.test(psSrc));
+  const llSrc = fs.readFileSync(path.join(ROOT, "webapp/src/components/ListingLinkImport.tsx"), "utf8");
+  check("v62.52: listing import holds the same gate",
+    /adjustMediaBusy\(\+1\)/.test(llSrc) && /adjustMediaBusy\(-1\)/.test(llSrc));
+  const stSrc = fs.readFileSync(path.join(ROOT, "webapp/src/lib/store.ts"), "utf8");
+  check("v62.52: mediaBusy clamps at zero so a stray decrement can't wedge the button",
+    /adjustMediaBusy: \(delta\) => set\(\(s\) => \(\{ mediaBusy: Math\.max\(0, s\.mediaBusy \+ delta\) \}\)\)/.test(stSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -124,6 +124,12 @@ interface AppState {
   loading: string;
   error: string;
   toast: string;
+  // v62.52: photo uploads / listing imports currently in flight. The render
+  // button gates on this — clicking "Generate video" while 19 of 24 photos
+  // are still uploading would silently render the 5 that finished (the tray
+  // only ever holds COMPLETED uploads, so the plan never sees a broken URL —
+  // it just sees a truncated set). Transient by design: never persisted.
+  mediaBusy: number;
   // Counter the dashboard's PlanStatusBanner watches. Bumping this triggers
   // a re-fetch of /api/usage so the meter reflects the latest tier state
   // (e.g., right after a successful render that consumed a quota slot).
@@ -189,6 +195,7 @@ interface AppState {
   setError: (msg: string) => void;
   setToast: (msg: string) => void;
   bumpUsageRefresh: () => void;
+  adjustMediaBusy: (delta: number) => void;
 }
 
 const newProjectId = () => `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -427,6 +434,7 @@ export const useStore = create<AppState>((set, get) => ({
   loading: "",
   error: "",
   toast: "",
+  mediaBusy: 0,
   usageRefresh: 0,
 
   init: async () => {
@@ -657,5 +665,8 @@ export const useStore = create<AppState>((set, get) => ({
     set({ toast: msg });
     if (msg) setTimeout(() => set((cur) => (cur.toast === msg ? { toast: "" } : {})), 3500);
   },
-  bumpUsageRefresh: () => set((s) => ({ usageRefresh: s.usageRefresh + 1 }))
+  bumpUsageRefresh: () => set((s) => ({ usageRefresh: s.usageRefresh + 1 })),
+  // Clamped at 0 so a stray double-decrement can never wedge the render
+  // button; every increment site pairs its decrement in a finally block.
+  adjustMediaBusy: (delta) => set((s) => ({ mediaBusy: Math.max(0, s.mediaBusy + delta) }))
 }));

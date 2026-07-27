@@ -309,6 +309,12 @@ function buildOpenAIRequest(photos) {
             // True for photos that would make the strongest opening shot
             // (exterior hero / dramatic view / twilight / curb appeal).
             isHero: { type: "boolean" },
+            // v62.52: 0-100 — how likely AI video generation is to produce
+            // visible artifacts from THIS photo (boil, invented objects).
+            // Production-measured risk classes ride the prompt. Never a
+            // reject criterion — a tie-breaker for hero choice and
+            // near-duplicate picks.
+            motionRisk: { type: "number", minimum: 0, maximum: 100 },
             // v23.1: model-produced tour order. The model knows tour flow
             // better than our hardcoded TOUR_ORDER list — particularly for
             // intercutting bedrooms with their bathrooms, alternating
@@ -319,7 +325,7 @@ function buildOpenAIRequest(photos) {
             // One-line reason for keep/reject (shown to the user).
             reason: { type: "string" }
           },
-          required: ["photoId", "contentType", "roomType", "quality", "pickWorthiness", "isHero", "tourOrder", "reason"]
+          required: ["photoId", "contentType", "roomType", "quality", "pickWorthiness", "isHero", "motionRisk", "tourOrder", "reason"]
         }
       }
     },
@@ -349,8 +355,17 @@ function buildOpenAIRequest(photos) {
     "- Hero kitchen, living, primary bedroom shots.",
     "- Pool, view, deck, landscaping.",
     "",
+    "AI MOTION RISK (motionRisk 0-100) — these photos become AI-animated video scenes, and some photo classes reliably produce visible artifacts. Score each photo's risk from these measured failure classes:",
+    "- HIGH (70-95): twilight/dusk shots where foliage fills much of the frame (leaves visibly boil and redraw); dense tree canopies, hedges, or ivy dominating the composition; dark or grainy low-light shots.",
+    "- MEDIUM (40-65): large mirror walls or big glass reflections; water surfaces in low light; busy repeating textures (stacked stone, patterned tile) filling the frame.",
+    "- LOW (5-30): daylight shots with clean geometry, even lighting, and clear structure — interiors and exteriors alike.",
+    "motionRisk NEVER rejects a photo and never outranks marketability on its own. It is the TIE-BREAKER:",
+    "- Between comparable candidates for the OPENING shot, prefer the lower-risk one — a crisp daylight exterior that animates cleanly beats a twilight exterior that boils on the very first scene.",
+    "- Between near-duplicate shots of the same space, keep the lower-risk one.",
+    "- A high-risk photo that is clearly the strongest of its kind still stays, still heroes if it is the obvious hero — the risk just breaks ties.",
+    "",
     "TOUR FLOW (this is the key job — use tourOrder to express it):",
-    "1. OPEN with the single strongest first impression — usually a wide front exterior, twilight, or curb-appeal shot. Set isHero=true on this photo.",
+    "1. OPEN with the single strongest first impression — usually a wide front exterior, twilight, or curb-appeal shot. Set isHero=true on this photo. When two openers are comparably strong, the lower motionRisk one opens (see AI MOTION RISK above).",
     "2. ESTABLISH with a wide entry / foyer / approach shot if available.",
     "3. MAIN LIVING SPACES: living room → kitchen → dining. Show the space agents lead with.",
     "4. PRIMARY SUITE: bedroom → ensuite bathroom (intercut, don't group all bedrooms then all bathrooms).",
@@ -430,6 +445,9 @@ function parseOpenAIScores(payload, originalPhotos) {
         quality: clampNumber(row.quality, 0, 100),
         pickWorthiness: clampNumber(row.pickWorthiness, 0, 100),
         isHero: Boolean(row.isHero),
+        // v62.52: absent on older model output → 50 (neutral — neither
+        // promotes nor demotes in any tie-break a consumer might apply).
+        motionRisk: clampNumber(row.motionRisk ?? 50, 0, 100),
         tourOrder: clampNumber(row.tourOrder, 0, 60),
         reason: String(row.reason || "").slice(0, 240)
       }));
