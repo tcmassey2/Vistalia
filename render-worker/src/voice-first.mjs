@@ -620,6 +620,18 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
   if (!narration?.monologue || !Array.isArray(narration.sentences) || !narration.sentences.length) {
     return null;
   }
+  // v62.42: say WHOSE narration this is FIRST, before any exit can hide it.
+  // Three renders running, the "why isn't this the Director's monologue"
+  // question escaped through three different doors: two pre-v62.39 plans
+  // carried no reason, then the Jul 27 square render bailed at the
+  // preflight below — which printed the word count and swallowed the
+  // provenance. Every bail from here down now happens under this line.
+  if (narration.source && narration.source !== "director") {
+    console.warn(
+      `[voice-first] narration source is "${narration.source}"` +
+      (narration.sourceReason ? ` — plan-side reason: ${narration.sourceReason}` : " (no reason on manifest — pre-v62.39 plan)")
+    );
+  }
   if (!process.env.ELEVENLABS_API_KEY) {
     console.warn("[voice-first] ELEVENLABS_API_KEY not set — legacy voice path will run.");
     return null;
@@ -711,7 +723,8 @@ export async function prepareVoiceFirst({ manifest, photoScenes, tempDir, jobId,
   if (preflightSpeechSec < needSec) {
     console.warn(
       `[voice-first] narration too thin to carry this photoset — ${preflightWords} words ≈ ${preflightSpeechSec.toFixed(1)}s ` +
-      `of speech for ${photoScenes.length} photos needing ${needSec.toFixed(1)}s. Reverting to the legacy voice path BEFORE spending on TTS.`
+      `of speech for ${photoScenes.length} photos needing ${needSec.toFixed(1)}s ` +
+      `(source=${narration.source || "director"}). Reverting to the legacy voice path BEFORE spending on TTS.`
     );
     return null;
   }

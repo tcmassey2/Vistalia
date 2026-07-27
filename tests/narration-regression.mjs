@@ -645,6 +645,18 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     /never backward/.test(rjSrc) && /no reveal of new area at the frame edges/.test(rjSrc));
   check("v62.41: gentle maps to the steady Kling suffix (constrained without strict)",
     /strictConstrained \? "strict" : constrained \? "steady" : "bold"/.test(rjSrc));
+
+  /* ── v62.42: narration provenance is logged at prepareVoiceFirst ENTRY,
+     before any bail can swallow it — the Jul 27 square render's preflight
+     bail was the third consecutive escape of the "why not the Director's
+     monologue" reason. */
+  const vfSrc3 = fs.readFileSync(path.join(ROOT, "render-worker/src/voice-first.mjs"), "utf8");
+  const entryIdx = vfSrc3.indexOf('narration source is "');
+  const preflightIdx = vfSrc3.indexOf("narration too thin to carry");
+  check("v62.42: source+reason logs BEFORE the preflight bail",
+    entryIdx > -1 && preflightIdx > -1 && entryIdx < preflightIdx);
+  check("v62.42: the preflight bail names the source itself",
+    /source=\$\{narration\.source \|\| "director"\}/.test(vfSrc3));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
