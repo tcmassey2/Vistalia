@@ -1776,7 +1776,11 @@ async function repairNarrationRooms(narration, offenders, { roomById, listingDet
   const n = narration.sentences.length;
   const offenderIdx = new Set(offenders.map((o) => o.index));
   const fixes = offenders.map((o) => {
-    const actualRooms = [...new Set(o.actual)].join(" / ");
+    // v62.50: "amenity" is a classifier bucket, not a room a narrator can
+    // say — translate it so the rewrite has something usable to aim at.
+    const actualRooms = [...new Set(o.actual)].map((rt) => rt === "amenity"
+      ? "a flexible amenity space (gym, home office, media room, wine room — the property details below may say which)"
+      : rt).join(" / ");
     return `Sentence ${o.index + 1} says "${o.claim}" but its photo shows: ${actualRooms}.`;
   }).join("\n");
   const prompt =
@@ -1949,7 +1953,14 @@ const ROOM_WORDS = [
   ["living", /\b(living (?:room|area|space)|great room|family room|sitting room)\b/i],
   ["exterior", /\b(exteriors?|facade|façade|curb appeal|driveway|front elevation)\b/i],
   // "pool table" (and "pool-table") is a game room, not a pool.
-  ["outdoor", /\b(patio|pool(?:s|side)?\b(?![\s-]*table)|backyard|back yard|courtyard|terrace|deck|firepit|fire pit|outdoor (?:living|seating|kitchen|space|area))\b/i]
+  ["outdoor", /\b(patio|pool(?:s|side)?\b(?![\s-]*table)|backyard|back yard|courtyard|terrace|deck|firepit|fire pit|outdoor (?:living|seating|kitchen|space|area))\b/i],
+  // v62.50 (Cheney Dr): "The home gym offers natural light and equipment"
+  // played over the breakfast nook and was never judged — "gym" was not a
+  // word this list knew, so the sentence named zero room types and slipped
+  // the check entirely. The amenity bucket's own vocabulary now counts as
+  // a claim. No bare "office"/"study"/"theater" — too verb/adjective-prone;
+  // the compound forms are the ones listing narration actually uses.
+  ["amenity", /\b(home gym|gym|fitness (?:room|area|cent(?:er|re))|home theat(?:er|re)|theat(?:er|re) room|media room|wine (?:cellar|room)|game room|billiards room|laundry room|home office|bonus room)\b/i]
 ];
 
 // v62.35: label pairs the photo classifier itself cannot reliably separate,
@@ -1964,6 +1975,14 @@ function sameRoomClass(a, b) {
   if (a === b) return true;
   return ROOM_EQUIV.some((pair) => pair.includes(a) && pair.includes(b));
 }
+
+// v62.50: claims so visually unmistakable that even an "amenity" label
+// contradicts them — the classifier had "bathroom" and "kitchen" on its
+// menu and chose amenity instead. Everything else (bedroom, living,
+// exterior, outdoor) stays unjudged over amenity: a media room reads as
+// living, a courtyard gym reads as outdoor, and a wrong repair is worse
+// than a soft miss.
+const HARD_ROOM_CLAIMS = new Set(["kitchen", "bathroom"]);
 
 /* ── v62.40: THE WORD BUDGET, FROM MEASUREMENT ──────────────────────────
    Under voice-first the video's length IS the narration's length, and the
@@ -2041,7 +2060,15 @@ function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
     const [claim] = [...named];
     const actual = photos.map(lookup).filter(Boolean);
     if (!actual.length) continue;
-    if (actual.every((rt) => rt === "detail" || rt === "amenity")) continue;
+    // v62.35: amenity/detail photos are usually too vague to contradict.
+    // v62.50 (Cheney Dr): but a HARD claim over an all-amenity photo IS a
+    // contradiction — "A bathroom showcases tile counters and a tub"
+    // played over the home gym because this line skipped it unjudged.
+    // Detail closeups stay exempt: a faucet closeup legitimately pairs
+    // with a kitchen claim.
+    const allAmenity = actual.every((rt) => rt === "amenity");
+    if (actual.every((rt) => rt === "detail" || rt === "amenity") &&
+        !(allAmenity && HARD_ROOM_CLAIMS.has(claim))) continue;
     if (actual.some((rt) => sameRoomClass(rt, claim))) continue;
     out.push({
       index: i,

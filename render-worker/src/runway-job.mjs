@@ -620,6 +620,19 @@ export async function renderRunwayJob(body, options = {}) {
         if (gridScenes.length !== photoScenes.length) {
           console.warn(`[voice-first] grid has ${gridScenes.length} scenes for ${photoScenes.length} photos — reverting to legacy voice path.`);
           voiceFirst = null;
+        } else if (gridScenes.some((gs, i) => Number.isInteger(gs.photoOrdinal) && gs.photoOrdinal !== i)) {
+          // v62.50: the duration assignment below is positional — grid slot i
+          // lands on photoScenes[i] — which is only correct because plan-side
+          // validation guarantees the narration walks the scenes in order
+          // (photoOrdinal === i, always). Assert it instead of assuming it:
+          // if a plan regression ever ships a crossed mapping, index-wise
+          // assignment would narrate the wrong rooms for the whole video.
+          // Legacy voice is the cheaper failure.
+          console.warn(
+            `[voice-first] grid photo order [${gridScenes.map((g) => g.photoOrdinal + 1).join(",")}] does not match scene order — ` +
+            `narration would describe the wrong rooms. Reverting to legacy voice path.`
+          );
+          voiceFirst = null;
         } else {
           for (let i = 0; i < photoScenes.length; i++) {
             const gs = gridScenes[i];

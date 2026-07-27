@@ -744,6 +744,46 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     /median jitter/.test(rjSrc2));
   check("v62.49: smoothness is telemetry only — no jitter threshold gates anything",
     !/jitter [<>]=? ?[\d.]/.test(rjSrc2) && /telemetry only/.test(rjSrc2));
+
+  /* ── v62.50: the Cheney Dr blind spots. "A bathroom showcases tile
+     counters and a tub" played over the home gym (amenity photos were
+     NEVER judged), and "The home gym offers natural light and equipment"
+     played over the breakfast nook ("gym" named zero known room types).
+     These tests run the REAL extracted machinery against the exact
+     production sentences, not regexes about the code. */
+  {
+    const start = planSrc.indexOf("const ROOM_WORDS");
+    const end = planSrc.indexOf("function attachNarration");
+    check("v62.50: room machinery is extractable for functional testing", start > 0 && end > start);
+    const m = new Function(
+      planSrc.slice(start, end) +
+      "; return { narrationRoomMismatches, roomTypesNamedIn, sameRoomClass };"
+    )();
+    const rooms = new Map([["p1", "exterior"], ["p4", "amenity"], ["p5", "living"], ["p6", "bathroom"], ["pd", "detail"]]);
+    const flag = (text, photos) => m.narrationRoomMismatches([{ text, photos }], rooms).length === 1;
+    check("v62.50: bathroom claim over an amenity photo is now flagged (Cheney s4)",
+      flag("A bathroom showcases tile counters and a tub.", ["p4"]));
+    check("v62.50: 'home gym' now counts as an amenity claim and flags over living (Cheney s5)",
+      flag("The home gym offers natural light and equipment.", ["p5"]));
+    check("v62.50: gym over an actual amenity photo stays clean",
+      !flag("The home gym offers natural light and equipment.", ["p4"]));
+    check("v62.50: kitchen claim over a detail closeup stays exempt (faucet-closeup rule)",
+      !flag("The kitchen shines with granite counters.", ["pd"]));
+    check("v62.50: soft claims (bedroom) over amenity stay unjudged",
+      !flag("The bedroom is a quiet retreat.", ["p4"]));
+    check("v62.50: view clauses still don't count as claims",
+      !flag("A bright corner overlooking the home gym below.", ["p5"]));
+    check("v62.50: bathroom over bathroom is still clean (no over-trigger)",
+      !flag("A bathroom showcases tile counters and a tub.", ["p6"]));
+    check("v62.50: repair prompt translates the amenity bucket into usable guidance",
+      /a flexible amenity space \(gym, home office, media room/.test(planSrc));
+  }
+
+  /* v62.50 worker belt: the grid duration assignment is positional — assert
+     photoOrdinal === i instead of assuming it, revert to legacy on breach. */
+  check("v62.50: worker asserts the grid's positional contract before assigning durations",
+    /gs\.photoOrdinal !== i/.test(rjSrc2) &&
+    /does not match scene order/.test(rjSrc2));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
