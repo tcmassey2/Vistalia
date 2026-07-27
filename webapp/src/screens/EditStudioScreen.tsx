@@ -7,10 +7,12 @@ import type { SceneClipMeta } from "../lib/types";
 /**
  * EditStudioScreen — post-render scene editor.
  *
- * Opened from a completed render. Lists every generated scene clip and lets the
- * agent re-render a single one if it came out wrong, without redoing the whole
- * video. Re-renders are FREE. After 2 failed AI attempts on a scene, it auto-
- * falls back to a Ken Burns clip (which can't hallucinate).
+ * Opened from a completed render. Lists every generated scene clip and lets
+ * the agent replace a single one if it came out wrong, without redoing the
+ * whole video. v62.47: AI re-rolls are retired — every replacement is the
+ * deterministic steady shot at the exact scene length (video-only splice;
+ * the voiceover, music, and captions are preserved byte-for-byte). Free,
+ * cannot hallucinate, needs no QC.
  *
  * All backend work already exists (api/regenerate-scene → worker regenerate-job):
  * we submit { jobId, sceneIndex, mode, manifest } and poll the returned
@@ -26,7 +28,6 @@ type SceneStatus = "idle" | "regenerating" | "done" | "failed";
 
 interface SceneUiState {
   status: SceneStatus;
-  aiAttempts: number;     // failed/used AI attempts → 2 triggers auto Ken Burns
   phase: string;
   progress: number;
   clipUrl: string;        // current clip (updates after a successful regen)
@@ -56,7 +57,6 @@ export default function EditStudioScreen() {
   const stateFor = (s: SceneClipMeta): SceneUiState =>
     sceneState[s.sceneIndex] || {
       status: "idle",
-      aiAttempts: 0,
       phase: "",
       progress: 0,
       clipUrl: s.clipUrl || "",
@@ -70,21 +70,26 @@ export default function EditStudioScreen() {
       [sceneIndex]: { ...stateFor({ sceneIndex } as SceneClipMeta), ...prev[sceneIndex], ...patch }
     }));
 
-  // Core: submit a regen for one scene, poll to completion, swap results in.
-  const runRegen = async (sceneIndex: number, mode: "ai" | "kenburns") => {
+  // Core: submit a scene replacement, poll to completion, swap results in.
+  // v62.47: AI regen is retired end-to-end (v62.38 removed it from the
+  // worker; this screen still offered it). Every replacement is the
+  // steady shot — video-only splice at the exact scene length, voiceover
+  // and captions preserved byte-for-byte. "kenburns" stays as the wire
+  // value both worker generations accept.
+  const runRegen = async (sceneIndex: number) => {
     if (!manifest || !jobId) {
       patchScene(sceneIndex, { status: "failed", error: "Missing render context — open Edit Studio right after a render." });
       return;
     }
     patchScene(sceneIndex, {
       status: "regenerating",
-      phase: mode === "kenburns" ? "Switching to Photo Motion…" : "Re-rendering scene…",
+      phase: "Replacing with a steady shot…",
       progress: 5,
       error: ""
     });
 
     try {
-      const submitted = await submitRegenerateScene({ jobId, sceneIndex, mode, manifest });
+      const submitted = await submitRegenerateScene({ jobId, sceneIndex, mode: "kenburns", manifest });
       if (submitted.status === "failed" || !submitted.jobId) {
         throw new Error(submitted.error || "Couldn't start the re-render.");
       }
@@ -123,9 +128,9 @@ export default function EditStudioScreen() {
             phase: "Updated",
             progress: 100,
             clipUrl: bust(newClip),
-            isKenBurns: mode === "kenburns"
+            isKenBurns: true
           });
-          setToast(mode === "kenburns" ? "Scene replaced with Photo Motion." : "Scene re-rendered.");
+          setToast("Scene replaced — voiceover and captions untouched.");
           return;
         }
         if (status.status === "failed") {
@@ -133,16 +138,8 @@ export default function EditStudioScreen() {
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Re-render failed.";
-      // Auto Ken Burns: after 2 failed AI attempts, fall back automatically.
-      const prevAttempts = stateFor({ sceneIndex } as SceneClipMeta).aiAttempts;
-      const aiAttempts = mode === "ai" ? prevAttempts + 1 : prevAttempts;
-      if (mode === "ai" && aiAttempts >= 2) {
-        patchScene(sceneIndex, { aiAttempts, phase: "AI struggled twice — switching to Photo Motion…", error: "" });
-        await runRegen(sceneIndex, "kenburns");
-        return;
-      }
-      patchScene(sceneIndex, { status: "failed", aiAttempts, error: msg, progress: 0 });
+      const msg = err instanceof Error ? err.message : "Scene replacement failed.";
+      patchScene(sceneIndex, { status: "failed", error: msg, progress: 0 });
     }
   };
 
@@ -170,8 +167,9 @@ export default function EditStudioScreen() {
           <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-gold mb-1">Edit Studio</div>
           <h1 className="font-serif text-3xl text-ink tracking-tightish">Fix any scene, keep the rest</h1>
           <p className="text-sm text-ink-muted mt-2 max-w-xl">
-            Re-render a single scene if it came out wrong — the final video updates automatically.
-            Re-renders are free. After two AI attempts, a scene switches to a guaranteed-safe Photo Motion clip.
+            Replace a single scene if it came out wrong — a clean, steady camera move drops in at the
+            exact same length, so your voiceover, music, and captions stay untouched. Free, and the
+            final video updates automatically.
           </p>
         </div>
         <button
@@ -221,8 +219,7 @@ export default function EditStudioScreen() {
               key={scene.sceneIndex}
               scene={scene}
               ui={stateFor(scene)}
-              onRegen={() => runRegen(scene.sceneIndex, "ai")}
-              onKenBurns={() => runRegen(scene.sceneIndex, "kenburns")}
+              onRegen={() => runRegen(scene.sceneIndex)}
             />
           ))}
         </div>
@@ -234,13 +231,11 @@ export default function EditStudioScreen() {
 function SceneCard({
   scene,
   ui,
-  onRegen,
-  onKenBurns
+  onRegen
 }: {
   scene: SceneClipMeta;
   ui: SceneUiState;
   onRegen: () => void;
-  onKenBurns: () => void;
 }) {
   const busy = ui.status === "regenerating";
   const clip = ui.clipUrl || scene.clipUrl || "";
@@ -276,10 +271,10 @@ function SceneCard({
           </span>
         </div>
 
-        {/* Photo Motion badge */}
+        {/* Steady-shot badge — this scene is the deterministic clip */}
         {ui.isKenBurns && (
           <span className="absolute top-2 right-2 font-mono text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/60 text-gold border border-gold/40">
-            Photo Motion
+            Steady shot
           </span>
         )}
 
@@ -310,29 +305,15 @@ function SceneCard({
             <button
               onClick={onRegen}
               disabled={busy}
+              title="Swaps this scene for a clean, steady camera move at the same length — voiceover, music, and captions untouched."
               className={cn(
                 "card-press flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-colors",
                 busy ? "bg-surface-input text-ink-dim cursor-not-allowed"
                      : "bg-gold/10 text-gold border border-gold/30 hover:bg-gold/20"
               )}
             >
-              {ui.status === "done" ? "Re-render again" : "Re-render scene"}
+              {ui.status === "done" ? "Replace again" : "Replace with steady shot"}
             </button>
-            {ui.aiAttempts >= 1 && (
-              <button
-                onClick={onKenBurns}
-                disabled={busy}
-                title="Use a safe Photo Motion clip instead"
-                className="card-press px-3 py-2 rounded-lg text-sm border border-edge-strong text-ink-soft hover:text-ink hover:border-gold transition-colors disabled:opacity-50"
-              >
-                Photo Motion
-              </button>
-            )}
-          </div>
-        )}
-        {ui.aiAttempts > 0 && ui.status !== "regenerating" && (
-          <div className="text-[10px] text-ink-dim mt-1.5 font-mono">
-            AI attempts: {ui.aiAttempts}{ui.aiAttempts >= 2 ? " · auto Photo Motion" : ""}
           </div>
         )}
       </div>
