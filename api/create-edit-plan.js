@@ -1,11 +1,19 @@
-// v23: explicit Vercel function timeout. Default for Node serverless is
-// 60s on Pro plans. The Motion Director call (gpt-4.1-mini Vision on
-// 12 photos + scene planning) typically completes in 25-50s but can hit
-// 70s under OpenAI load. Budget 90s to keep functions alive past
-// 'normal slow' without burning serverless minutes on truly hung requests.
+// v23: explicit Vercel function timeout. v62.44: 90 → 120. The 90s budget
+// was fully allocated by v35.2's own math (director 48 + verify 20 +
+// polish 9 ≈ 80) — then v62.17 stacked the expansion rewrite (30s) and
+// v62.43 the room-repair rewrite (30s) on top, serially. The Jul 27
+// Quartz Mountain plan died at the ceiling mid-flight and the webapp
+// showed "couldn't study your photos" for what was really a platform
+// kill. 120s is the belt; the REAL fix is the wall-clock gate below
+// (planOptionalBudgetMs): optional rewrite calls shrink to the remaining
+// budget and skip entirely when it runs out — the plan degrades to
+// fewer polish passes, never to a dead request.
 export const config = {
-  maxDuration: 90
+  maxDuration: 120
 };
+// Keep in sync with config.maxDuration above (export config is read by
+// Vercel's builder; the runtime code reads this constant).
+const PLAN_WALL_SEC = 120;
 
 import { requireUser } from "./_lib/auth.js";
 import { rateLimit } from "./_lib/rate-limit.js";
@@ -315,6 +323,15 @@ export default async function handler(request, response) {
     response.status(405).json({ status: "failed", error: "Use POST /api/create-edit-plan." });
     return;
   }
+
+  // v62.44: the plan's wall clock, consulted before every OPTIONAL model
+  // call (room-repair, expansion). Each gets min(30s, what's left minus a
+  // 15s safety margin for the response itself) and is skipped below 12s —
+  // a slow OpenAI day now costs a polish pass, never the whole plan.
+  const planT0 = Date.now();
+  const planElapsedSec = () => (Date.now() - planT0) / 1000;
+  const planOptionalBudgetMs = () =>
+    Math.max(0, Math.min(30000, Math.round((PLAN_WALL_SEC - 15 - planElapsedSec()) * 1000)));
 
   // v26: auth + rate limit. This is the most expensive OpenAI call in the
   // product (Vision on up to 12 photos) and was previously open to anyone
@@ -674,8 +691,13 @@ export default async function handler(request, response) {
           }));
           const offenders = narrationRoomMismatches(origSents, roomById);
           let adopted = false;
-          if (offenders.length) {
-            const repaired = await repairNarrationRooms(parsed.narration, offenders, { roomById, listingDetails, selectedStyle });
+          const repairBudget = planOptionalBudgetMs();
+          if (offenders.length && repairBudget < 12000) {
+            console.warn(`[plan] t+${planElapsedSec().toFixed(0)}s — room-repair SKIPPED (only ${(repairBudget / 1000).toFixed(0)}s of wall clock left) — shipping the Director's original with warnings.`);
+          }
+          if (offenders.length && repairBudget >= 12000) {
+            console.info(`[plan] t+${planElapsedSec().toFixed(0)}s — room-repair start (${offenders.length} sentence(s), budget ${(repairBudget / 1000).toFixed(0)}s).`);
+            const repaired = await repairNarrationRooms(parsed.narration, offenders, { roomById, listingDetails, selectedStyle, timeoutMs: repairBudget });
             if (repaired) {
               const probe = { scenes: normalizedPlan.scenes };
               attachNarration(probe, repaired, { targetDurationSec });
@@ -733,8 +755,13 @@ export default async function handler(request, response) {
       const budgetTarget = narrationWordBudget(targetDurationSec);
       const nowWords = normalizedPlan.narrationScript
         ? normalizedPlan.narrationScript.split(/\s+/).filter(Boolean).length : 0;
-      if (nar && nowWords > 0 && nowWords < Math.round(budgetTarget * 0.9)) {
-        const expanded = await expandNarrationToBudget(nar, { targetDurationSec, listingDetails, selectedStyle });
+      const expandBudget = planOptionalBudgetMs();
+      if (nar && nowWords > 0 && nowWords < Math.round(budgetTarget * 0.9) && expandBudget < 12000) {
+        console.warn(`[plan] t+${planElapsedSec().toFixed(0)}s — expansion SKIPPED (only ${(expandBudget / 1000).toFixed(0)}s of wall clock left) — the ${nowWords}w script ships as-is.`);
+      }
+      if (nar && nowWords > 0 && nowWords < Math.round(budgetTarget * 0.9) && expandBudget >= 12000) {
+        console.info(`[plan] t+${planElapsedSec().toFixed(0)}s — expansion start (${nowWords}w → target ${budgetTarget}, budget ${(expandBudget / 1000).toFixed(0)}s).`);
+        const expanded = await expandNarrationToBudget(nar, { targetDurationSec, listingDetails, selectedStyle, timeoutMs: expandBudget });
         if (expanded) {
           // Re-run the SAME validation on a throwaway object. If the rewrite
           // broke the monologue/sentences equality or the photo mapping,
@@ -1644,7 +1671,7 @@ function stripNarrationAudioTags(text) {
    Deliberately NOT applied to the derived-from-lines fallback: those
    sentences are per-scene lines clamped to beat windows, and expanding
    them is how you get a script that no longer matches its scenes. */
-async function expandNarrationToBudget(narration, { targetDurationSec, listingDetails, selectedStyle }) {
+async function expandNarrationToBudget(narration, { targetDurationSec, listingDetails, selectedStyle, timeoutMs = 30000 }) {
   if (!process.env.OPENAI_API_KEY) return null;
   const target = narrationWordBudget(targetDurationSec);
   const min = Math.round(target * 0.9);
@@ -1698,7 +1725,7 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
         temperature: 0.5,
         max_output_tokens: 1400
       })
-    }, 30000);
+    }, timeoutMs);
     if (!res.ok) return null;
     const payload = await res.json().catch(() => ({}));
     // parseOpenAIJson is this module's own extractor and returns a PARSED
@@ -1735,7 +1762,7 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
    not touch is the photo mapping; the one thing it must fix is the room
    language. Non-offender sentences are equality-checked in code — a model
    that "improved" a sentence it wasn't asked to touch gets rejected. */
-async function repairNarrationRooms(narration, offenders, { roomById, listingDetails, selectedStyle } = {}) {
+async function repairNarrationRooms(narration, offenders, { roomById, listingDetails, selectedStyle, timeoutMs = 30000 } = {}) {
   if (!process.env.OPENAI_API_KEY) return null;
   const n = narration.sentences.length;
   const offenderIdx = new Set(offenders.map((o) => o.index));
@@ -1782,7 +1809,7 @@ async function repairNarrationRooms(narration, offenders, { roomById, listingDet
         temperature: 0.4,
         max_output_tokens: 1400
       })
-    }, 30000);
+    }, timeoutMs);
     if (!res.ok) return null;
     const payload = await res.json().catch(() => ({}));
     const out = parseOpenAIJson(payload);

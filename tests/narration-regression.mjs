@@ -677,6 +677,21 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     /Welcome to \$\{addrLine\}/.test(planSrc) && /introCard\?\.headline/.test(planSrc));
   check("v62.43: the Director's hook must carry the street address",
     /open by naming the street address naturally/.test(planSrc));
+
+  /* ── v62.44: the plan can never again die of its own polish. The Jul 27
+     Quartz Mountain plan was killed at Vercel's 90s ceiling because
+     v62.17's expansion and v62.43's repair stacked serial 30s calls onto
+     a budget that v35.2's own comment had already declared full. */
+  check("v62.44: maxDuration raised and mirrored in a runtime constant",
+    /maxDuration: 120/.test(planSrc) && /const PLAN_WALL_SEC = 120/.test(planSrc));
+  check("v62.44: optional calls are wall-clock gated",
+    /planOptionalBudgetMs/.test(planSrc) &&
+    /repairBudget >= 12000/.test(planSrc) && /expandBudget >= 12000/.test(planSrc));
+  check("v62.44: skipping a rewrite is loud, with elapsed time",
+    /room-repair SKIPPED \(only/.test(planSrc) && /expansion SKIPPED \(only/.test(planSrc));
+  check("v62.44: both rewrite calls accept a shrinking timeout",
+    /timeoutMs = 30000/.test(planSrc.slice(planSrc.indexOf("async function expandNarrationToBudget"))) &&
+    (planSrc.match(/\}, timeoutMs\);/g) || []).length >= 2);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
