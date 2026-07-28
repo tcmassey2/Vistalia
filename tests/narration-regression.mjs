@@ -877,6 +877,10 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     const llSrc4 = fs.readFileSync(path.join(ROOT, "webapp/src/components/ListingLinkImport.tsx"), "utf8");
     check("v62.60: the account verdict outranks per-tier symptoms in the toast",
       /CREDITS EXHAUSTED\|concurrency saturated/.test(llSrc4));
+    check("v62.62: proxy exceptions name their real class — AbortError is a timeout, the rest are not",
+      /err\?\.name === "AbortError"/.test(imSrc) &&
+      /failed instantly: \$\{err\?\.cause\?\.code \|\| err\?\.name \|\| "network error"\}/.test(imSrc) &&
+      /status\.scraperapi\.com/.test(imSrc));
     check("v62.57: a budget-skipped tier is a response warning, not just a console line",
       /ran out of time before the \$\{tier\.split\("="\)\[0\]\} tier could run/.test(imSrc));
   }

@@ -857,8 +857,19 @@ export default async function handler(request, response) {
           } else {
             warnings.push(`Photo proxy (${tier.split("=")[0]}) returned ${prox.status}.`);
           }
-        } catch {
-          warnings.push(`Photo proxy (${tier.split("=")[0]}) timed out.`);
+        } catch (err) {
+          // v62.62: an evening was lost reading "their API is unreachable"
+          // as "their upstream is slow" because this catch called every
+          // exception a timeout. The Jul 27 ScraperAPI outage produced
+          // instant ECONNREFUSED-class failures that toasted as "timed
+          // out" — ms:479 for two "timeouts" in the black-box log was the
+          // tell. AbortError means OUR timer fired (a real timeout);
+          // anything else is a network-level failure and says so, with
+          // the errno when Node provides one.
+          const label = err?.name === "AbortError"
+            ? "timed out"
+            : `failed instantly: ${err?.cause?.code || err?.name || "network error"} — their API may be down (status.scraperapi.com)`;
+          warnings.push(`Photo proxy (${tier.split("=")[0]}) ${label}.`);
         }
       }
     }
@@ -967,8 +978,8 @@ export default async function handler(request, response) {
           } else {
             console.log(`[import] zillow address rescue: proxy returned ${prox.status}.`);
           }
-        } catch {
-          console.log("[import] zillow address rescue timed out.");
+        } catch (err) {
+          console.log(`[import] zillow address rescue ${err?.name === "AbortError" ? "timed out" : `failed: ${err?.cause?.code || err?.name || "network error"}`}.`);
         }
       }
     }
