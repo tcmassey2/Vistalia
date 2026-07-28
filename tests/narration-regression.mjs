@@ -912,6 +912,31 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       /only exposed\|Zillow listing at this address/.test(llSrc3));
   }
 
+  /* ── v62.63: the lead auto-render lane recovers. The Jul 27 ScraperAPI
+     outage under the old one-shot policy permanently buried every lead
+     that arrived during the incident. Transient failures now retry at
+     +15m/+1h/+4h (3 max, full pipeline re-run); submit 4xx stays
+     terminal; without migration 38 the code degrades to one-shot.
+     State machine functionally tested in render-worker/tests/
+     lead-retry.test.mjs (12 cases). */
+  {
+    const laSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/lead-auto-render.mjs"), "utf8");
+    check("v62.63: backoff ladder sized to a real supplier incident",
+      /const RETRY_BACKOFF_MIN = \[15, 60, 240\];/.test(laSrc));
+    check("v62.63: submit 4xx is semantic and terminal; 5xx/network retries",
+      /retryable: !\(sub\.status >= 400 && sub\.status < 500\)/.test(laSrc));
+    check("v62.63: plan fallback retries the pipeline but never renders the template",
+      /plan-fallback\(\$\{plan\.json\?\.errorCategory \|\| "\?"\}\)/.test(laSrc) &&
+      /never render the template/i.test(laSrc));
+    check("v62.63: due retries are claimed by exact status so workers can't double-run",
+      /auto_render_status=eq\.\$\{encodeURIComponent\(lead\.auto_render_status\)\}/.test(laSrc));
+    check("v62.63: missing migration 38 degrades to one-shot, loudly",
+      /run migration 38/.test(laSrc) && /retryColumnsMissing/.test(laSrc));
+    check("v62.63: migration 38 exists — additive columns + partial index",
+      fs.existsSync(path.join(ROOT, "supabase/migrations/38_lead_auto_render_retries.sql")) &&
+      /auto_render_attempts/.test(fs.readFileSync(path.join(ROOT, "supabase/migrations/38_lead_auto_render_retries.sql"), "utf8")));
+  }
+
   /* ── v62.55: the Meta pixel, finished. pixel.ts existed with PageView/
      Lead/Purchase wired; the funnel Troy's UGC campaign optimizes on
      (ad → signup → free watermarked render → $39 unlock) was missing its
