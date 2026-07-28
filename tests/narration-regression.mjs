@@ -865,8 +865,10 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     const imSrc = fs.readFileSync(path.join(ROOT, "api/import-listing.js"), "utf8");
     check("v62.57: realtor.com goes straight to the tier that works there",
       /\/\(\^\|\\\.\)realtor\\\.com\$\/\.test\(host\)\s*\?\s*\["ultra_premium=true"\]/.test(imSrc));
-    check("v62.57: a tier with successors can't eat the whole page budget",
-      /isLastTier \? remainingMs : 22000/.test(imSrc));
+    check("v62.57/59: a tier with successors can't eat the whole page budget",
+      /isLastTier \? \(rescueEligible \? 38000 : 70000\) : 22000/.test(imSrc));
+    check("v62.59: proxy attempts get ScraperAPI's full recommended window",
+      /const PROXY_PAGE_TIMEOUT_MS = 70000;/.test(imSrc));
     check("v62.57: a budget-skipped tier is a response warning, not just a console line",
       /ran out of time before the \$\{tier\.split\("="\)\[0\]\} tier could run/.test(imSrc));
   }

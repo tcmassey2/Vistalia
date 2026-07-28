@@ -32,7 +32,13 @@ const PAGE_TIMEOUT_MS = 9000;
 // v58: ScraperAPI with render=true routinely takes 15-40s on bot-walled
 // portals — give it room. The Vercel function budget absorbs it; the
 // worker's auto-render pass calls this endpoint with a 60s client timeout.
-const PROXY_PAGE_TIMEOUT_MS = 45000;
+// v62.59 (three "timed out" toasts in one evening, both portals): 45s was
+// US hanging up early. ScraperAPI holds the connection and keeps rotating
+// IPs/retrying upstream for the life of the request — their own docs
+// recommend ~70s client timeouts. A 45s cap abandons requests their side
+// may still be solving; the per-tier caps in the ladder decide how much of
+// this any single attempt may actually spend.
+const PROXY_PAGE_TIMEOUT_MS = 70000;
 const PHOTO_TIMEOUT_MS = 10000;
 const BROWSER_HEADERS = {
   "User-Agent":
@@ -805,11 +811,20 @@ export default async function handler(request, response) {
           break;
         }
         const isLastTier = ti === tiers.length - 1;
+        // v62.59: the last tier's window depends on what comes after it.
+        // A rescue-eligible import (non-Zillow host with a parsed address)
+        // reserves ~30s for the Zillow address rescue; a Zillow import has
+        // no rescue, so its final tier gets ScraperAPI's full recommended
+        // window. A tier with successors stays tightly capped.
+        const rescueEligible = !!address && !/(^|\.)zillow\.com$/.test(host);
+        // 38s keeps rescue room even on a two-tier rescue-eligible ladder
+        // (22 + 38 = 60s spent, ~15s+ of the 75s phase left for the rescue).
+        const tierCapMs = isLastTier ? (rescueEligible ? 38000 : 70000) : 22000;
         try {
           const prox = await fetchWithTimeout(
             `https://api.scraperapi.com/?api_key=${encodeURIComponent(proxyKey)}&url=${encodeURIComponent(url)}&${tier}&country_code=us`,
             { redirect: "follow" },
-            Math.min(PROXY_PAGE_TIMEOUT_MS, remainingMs, isLastTier ? remainingMs : 22000)
+            Math.min(PROXY_PAGE_TIMEOUT_MS, remainingMs, tierCapMs)
           );
           if (prox.ok) {
             const body = await prox.text();
