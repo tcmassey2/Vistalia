@@ -871,6 +871,33 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       /ran out of time before the \$\{tier\.split\("="\)\[0\]\} tier could run/.test(imSrc));
   }
 
+  /* ── v62.58: realtor.com's Kasada wall outlasted even the fixed ladder
+     (second v62.56-era toast: "ultra_premium timed out"). Stop fighting it
+     head-on: 120s ceiling, 75s page phase, direct fetch demoted to the
+     no-key dev path, and a cross-portal rescue — the parsed address is
+     fetched on ZILLOW (where premium demonstrably works), guarded by a
+     street-number + name-token identity check so the wrong house is
+     impossible (functionally tested in import-extraction.mjs). */
+  {
+    const imSrc2 = fs.readFileSync(path.join(ROOT, "api/import-listing.js"), "utf8");
+    check("v62.58: import ceiling raised to 120s with a 75s page phase",
+      /maxDuration: 120/.test(imSrc2) && /t0 \+ 75000/.test(imSrc2));
+    check("v62.58: direct fetch runs only without a proxy key",
+      /pagePhotoUrls\.length === 0 && !proxyKey/.test(imSrc2));
+    check("v62.58: Zillow address rescue exists, identity-guarded, non-zillow hosts only",
+      /zillow_address_rescue/.test(imSrc2) &&
+      /samePropertyAddress\(address, zAddr\)/.test(imSrc2) &&
+      /!\/\(\^\|\\\.\)zillow\\\.com\$\/\.test\(host\)/.test(imSrc2));
+    check("v62.58: rescue success is a response warning the toast can show",
+      /photos pulled from the Zillow listing at this address instead/.test(imSrc2));
+    const apiSrc3 = fs.readFileSync(path.join(ROOT, "webapp/src/lib/api.ts"), "utf8");
+    check("v62.58: client abort outlasts the server's grown budget",
+      /ctrl\.abort\(\), 140_000/.test(apiSrc3));
+    const llSrc3 = fs.readFileSync(path.join(ROOT, "webapp/src/components/ListingLinkImport.tsx"), "utf8");
+    check("v62.58: the rescue note surfaces in the success toast",
+      /only exposed\|Zillow listing at this address/.test(llSrc3));
+  }
+
   /* ── v62.55: the Meta pixel, finished. pixel.ts existed with PageView/
      Lead/Purchase wired; the funnel Troy's UGC campaign optimizes on
      (ad → signup → free watermarked render → $39 unlock) was missing its

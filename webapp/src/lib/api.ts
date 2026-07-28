@@ -342,7 +342,10 @@ export async function importListing(url: string, projectId: string): Promise<Imp
   // request aborts at 90s — past the server's own proxy budget — and the
   // band shows an honest error instead of spinning into eternity.
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 90_000);
+  // v62.58: 90s → 140s — the server's page phase grew to 75s (realtor.com
+  // ultra_premium + the Zillow address rescue) plus transfers; the client
+  // must outlast the server's own budget, never abort under it.
+  const timer = setTimeout(() => ctrl.abort(), 140_000);
   try {
     const res = await fetch("/api/import-listing", {
       method: "POST",

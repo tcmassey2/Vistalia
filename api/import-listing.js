@@ -43,7 +43,12 @@ const BROWSER_HEADERS = {
 
 // Vercel Pro: allow time for photo downloads. Everything is parallel and
 // byte-capped; typical imports finish well under 30s.
-export const config = { maxDuration: 60 };
+// v62.58: 60 → 120 (the plan endpoint already runs at 120 on this account).
+// Realtor.com's Kasada wall outlasted a 40s page phase even on
+// ultra_premium — the first two v62.56-era toasts proved it live. The
+// bigger ceiling buys a real page phase (75s) AND the cross-portal rescue,
+// with ~40s left for photo downloads + storage.
+export const config = { maxDuration: 120 };
 
 function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
@@ -505,6 +510,27 @@ export function factsFromHtml(html) {
 // the URL parser comes up empty the page itself is the address source.
 // Portals ship schema.org JSON-LD (streetAddress/addressLocality/…) and an
 // og:title of the form "61 W Wilshire Dr, Phoenix, AZ 85003 …" — try both.
+/* v62.58: identity check for the cross-portal rescue — street NUMBER must
+   match exactly and at least one substantive street-name token (>=4 chars,
+   not a suffix/directional, not pure digits) must appear in both. "8501 E
+   Malcomb Dr" ~ "8501 E Malcomb Drive" passes; "8501 E Other St" fails on
+   the token; a Zillow SEARCH page fails upstream because
+   extractAddressFromHtml returns null there (no single-property JSON-LD,
+   og:title has no leading street number). Streets whose only name token is
+   short ("1st St") fail CLOSED — importing the wrong house's photos is a
+   customer-facing disaster; skipping a rescue is a warning. */
+export function samePropertyAddress(a, b) {
+  if (!a?.line || !b?.line) return false;
+  const numA = (String(a.line).match(/^\d+/) || [""])[0];
+  const numB = (String(b.line).match(/^\d+/) || [""])[0];
+  if (!numA || numA !== numB) return false;
+  const SUFFIX = new Set(["east", "west", "north", "south", "drive", "street", "road", "court", "lane", "place", "avenue", "circle", "trail", "boulevard", "parkway", "terrace", "highway"]);
+  const toks = (s) => String(s).toLowerCase().replace(/[^a-z0-9 ]/gi, " ").split(/\s+/)
+    .filter((t) => t.length >= 4 && !/^\d+$/.test(t) && !SUFFIX.has(t));
+  const A = new Set(toks(a.line));
+  return toks(b.line).some((t) => A.has(t));
+}
+
 export function extractAddressFromHtml(html) {
   const text = String(html);
   const grab = (key) => {
@@ -763,10 +789,11 @@ export default async function handler(request, response) {
       const tiers = /(^|\.)realtor\.com$/.test(host)
         ? ["ultra_premium=true"]
         : ["premium=true", "ultra_premium=true"];
-      // maxDuration is 60s and photo downloads still have to run, so the
+      // maxDuration is 120s and photo downloads still have to run, so the
       // page phase gets a hard deadline rather than a per-attempt budget
-      // that can overrun it (2 x 35s already exceeded the function ceiling).
-      const pagePhaseDeadline = t0 + 40000;
+      // that can overrun it. 75s covers a full ultra_premium attempt (45s)
+      // AND the Zillow address rescue below, with ~40s left for transfers.
+      const pagePhaseDeadline = t0 + 75000;
       for (let ti = 0; ti < tiers.length; ti++) {
         const tier = tiers[ti];
         const remainingMs = pagePhaseDeadline - Date.now();
@@ -808,9 +835,11 @@ export default async function handler(request, response) {
         }
       }
     }
-    // Direct fetch is the no-key dev path and the last resort — only worth
-    // trying when the proxy ladder produced no gallery at all.
-    if (pagePhotoUrls.length === 0) {
+    // Direct fetch is the no-key dev path ONLY now (v62.58) — v58 measured
+    // direct fetches dead on every major portal, so running one after the
+    // proxy ladder failed just spent 9s of the budget the Zillow rescue
+    // below needs, on a fetch we already knew would bot-wall.
+    if (pagePhotoUrls.length === 0 && !proxyKey) {
       try {
         const page = await fetchWithTimeout(url, { headers: BROWSER_HEADERS, redirect: "follow" }, PAGE_TIMEOUT_MS);
         if (page.ok) {
@@ -831,6 +860,52 @@ export default async function handler(request, response) {
     if (pagePhotoUrls.length > 0) photoSource = proxyKey ? "listing_page_proxy" : "listing_page";
     // v62.21: the page we already paid to fetch carries the listing facts.
     if (html) pageFacts = factsFromHtml(html);
+    /* ── v62.58 CROSS-PORTAL RESCUE ─────────────────────────────────────
+       Realtor.com's Kasada wall outlasted the full ultra_premium window
+       twice in one evening — but the same property is almost always ON
+       Zillow, where the premium tier demonstrably works, and we already
+       hold the parsed address. So: when a non-Zillow page yields nothing
+       and we know the address, fetch the Zillow address page (the _rb slug
+       302s to homedetails) and take the gallery from there. Guarded by
+       samePropertyAddress — street number + name-token identity against
+       the page's OWN parsed address — so a search-results page (parses to
+       null) or a near-miss address can never ship the wrong house. */
+    if (pagePhotoUrls.length === 0 && address && proxyKey && !/(^|\.)zillow\.com$/.test(host)) {
+      const rescueRemaining = t0 + 75000 - Date.now();
+      if (rescueRemaining >= 12000) {
+        const slug = `${address.line} ${address.city} ${address.state}`
+          .replace(/[^A-Za-z0-9 ]/g, " ").trim().replace(/\s+/g, "-");
+        const zUrl = `https://www.zillow.com/homes/${encodeURIComponent(slug)}_rb/`;
+        try {
+          const prox = await fetchWithTimeout(
+            `https://api.scraperapi.com/?api_key=${encodeURIComponent(proxyKey)}&url=${encodeURIComponent(zUrl)}&premium=true&country_code=us`,
+            { redirect: "follow" },
+            Math.min(30000, rescueRemaining)
+          );
+          if (prox.ok) {
+            const body = await prox.text();
+            const zAddr = extractAddressFromHtml(body);
+            if (samePropertyAddress(address, zAddr)) {
+              const found = extractPagePhotos(body);
+              if (found.length > 0) {
+                pagePhotoUrls = found;
+                expectedPhotos = Math.max(expectedPhotos, expectedPhotoCount(body));
+                if (!pageFacts) pageFacts = factsFromHtml(body);
+                photoSource = "zillow_address_rescue";
+                warnings.push(`${host} wouldn't let us read the page — photos pulled from the Zillow listing at this address instead.`);
+                console.log(`[import] zillow address rescue: ${found.length} photo URL(s) for "${slug}" (page advertises ${expectedPhotos || "?"}).`);
+              }
+            } else {
+              console.log(`[import] zillow address rescue: identity check failed ("${zAddr?.line || "no address parsed"}" vs "${address.line}") — skipped rather than risk the wrong house.`);
+            }
+          } else {
+            console.log(`[import] zillow address rescue: proxy returned ${prox.status}.`);
+          }
+        } catch {
+          console.log("[import] zillow address rescue timed out.");
+        }
+      }
+    }
     if (html && !address) {
       // v58.2: ID-only links (realtor.com M-ids) carry no address — pull it
       // from the page markup, then backfill facts from RentCast.

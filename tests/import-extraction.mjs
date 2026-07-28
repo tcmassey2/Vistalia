@@ -31,7 +31,7 @@ const stubbed = raw
 const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vistalia-import-")), "import-listing.mjs");
 fs.writeFileSync(tmp, stubbed);
 const mod = await import(`file://${tmp}`);
-const { extractPagePhotos, expectedPhotoCount, maximizePhotoUrl, factsFromHtml } = mod;
+const { extractPagePhotos, expectedPhotoCount, maximizePhotoUrl, factsFromHtml, samePropertyAddress, extractAddressFromHtml } = mod;
 
 let pass = 0;
 const failures = [];
@@ -193,6 +193,25 @@ ok(alt.beds === 4 && alt.baths === 2.5 && alt.sqft === 1890 && alt.price === 649
 ok(factsFromHtml('<meta name="description" content="99 beds, 200 baths, 12 sqft for $5"/>') === null,
    "absurd values are rejected wholesale rather than shipped");
 ok(factsFromHtml("<p>a page with no facts at all</p>") === null, "returns null when the page says nothing");
+
+console.log("\n== v62.58 cross-portal rescue identity guard — the wrong house must be impossible");
+const addr = (line) => ({ line, city: "Scottsdale", state: "AZ" });
+ok(samePropertyAddress(addr("8501 E Malcomb Dr"), addr("8501 E Malcomb Drive")),
+   "same number + name token across suffix spellings matches");
+ok(samePropertyAddress(addr("8725 E Via Del Arbor --"), addr("8725 E Vía Del Arbor")) === false ||
+   samePropertyAddress(addr("8725 E Via Del Arbor --"), addr("8725 E Via Del Arbor")),
+   "accented variants either match on a shared token or fail closed — never crash");
+ok(!samePropertyAddress(addr("8501 E Malcomb Dr"), addr("8502 E Malcomb Dr")),
+   "street number mismatch fails");
+ok(!samePropertyAddress(addr("8501 E Malcomb Dr"), addr("8501 E Sweetwater Ave")),
+   "same number, different street fails");
+ok(!samePropertyAddress(addr("8501 E Malcomb Dr"), null),
+   "null page address (search-results page) fails closed");
+ok(!samePropertyAddress(addr("101 1st St"), addr("101 1st St")),
+   "short-name streets fail CLOSED — skipping a rescue beats risking the wrong house");
+// The search-page detector: no leading street number in og:title → null.
+ok(extractAddressFromHtml('<meta property="og:title" content="Scottsdale AZ Real Estate - 1224 Homes For Sale | Zillow"/>') === null,
+   "a search-results page parses to null, so the rescue can never harvest it");
 
 fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
 console.log(`\n${failures.length === 0 ? "ALL PASS" : `FAILURES (${failures.length}):\n  - ${failures.join("\n  - ")}`}  [${pass} passed]`);

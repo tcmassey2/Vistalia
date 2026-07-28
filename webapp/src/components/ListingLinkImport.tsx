@@ -250,7 +250,9 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
       // the explanation and dropped it on the floor. The shortfall is the
       // one the customer can act on, so it leads.
       const serverWarnings = (result.warnings || []).filter((w) => typeof w === "string" && w.trim());
-      const shortfallNote = serverWarnings.find((w) => /only exposed/i.test(w)) || "";
+      // v62.58: the Zillow address rescue note rides the same slot — when
+      // photos came from the sister listing, the agent should know.
+      const shortfallNote = serverWarnings.find((w) => /only exposed|Zillow listing at this address/i.test(w)) || "";
       if (serverWarnings.length > 0) {
         console.info(`[import] server warnings: ${serverWarnings.join(" | ")}`);
       }
