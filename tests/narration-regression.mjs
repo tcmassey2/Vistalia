@@ -845,9 +845,9 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
      matches 33/33 photos on the actual Zillow page. */
   {
     const llSrc2 = fs.readFileSync(path.join(ROOT, "webapp/src/components/ListingLinkImport.tsx"), "utf8");
-    check("v62.56: zero-photo toast surfaces the server's own reason",
+    check("v62.56/60: zero-photo toast surfaces the server's own reason, account verdict first",
       /the photos didn't make it: \$\{failNote\}/.test(llSrc2) &&
-      /const failNote = serverWarnings\[0\] \|\| "";/.test(llSrc2));
+      /\|\| serverWarnings\[0\] \|\| "";/.test(llSrc2));
     check("v62.56: photoSource/factsSource logged client-side for one-glance diagnosis",
       /photoSource=\$\{result\.photoSource \|\| "\?"\} factsSource=\$\{result\.factsSource \|\| "\?"\}/.test(llSrc2));
     const apiSrc2 = fs.readFileSync(path.join(ROOT, "webapp/src/lib/api.ts"), "utf8");
@@ -869,6 +869,13 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       /isLastTier \? \(rescueEligible \? 38000 : 70000\) : 22000/.test(imSrc));
     check("v62.59: proxy attempts get ScraperAPI's full recommended window",
       /const PROXY_PAGE_TIMEOUT_MS = 70000;/.test(imSrc));
+    check("v62.60: a fully-failed proxy run asks the account endpoint for the verdict",
+      /api\.scraperapi\.com\/account\?api_key=/.test(imSrc) &&
+      /CREDITS EXHAUSTED, every fetch will fail until the plan renews/.test(imSrc) &&
+      /concurrency saturated; retries are queuing/.test(imSrc));
+    const llSrc4 = fs.readFileSync(path.join(ROOT, "webapp/src/components/ListingLinkImport.tsx"), "utf8");
+    check("v62.60: the account verdict outranks per-tier symptoms in the toast",
+      /CREDITS EXHAUSTED\|concurrency saturated/.test(llSrc4));
     check("v62.57: a budget-skipped tier is a response warning, not just a console line",
       /ran out of time before the \$\{tier\.split\("="\)\[0\]\} tier could run/.test(imSrc));
   }

@@ -872,6 +872,45 @@ export default async function handler(request, response) {
         warnings.push("The listing page couldn't be read — add photos manually.");
       }
     }
+    /* v62.60 (Troy, mid-smoke-test: "I am smoke testing my service I pay
+       $50 a month for"): when every proxy attempt fails, ask ScraperAPI's
+       OWN account endpoint whether the plan is the problem — credits spent,
+       concurrency saturated — and put the answer in the response warnings.
+       An evening of "timed out" toasts is undiagnosable; "42,180/100,000
+       credits, 5/5 concurrent" is a verdict. Fail-silent: this is
+       diagnostics, never a new failure mode. */
+    if (pagePhotoUrls.length === 0 && proxyKey) {
+      try {
+        const acct = await fetchWithTimeout(
+          `https://api.scraperapi.com/account?api_key=${encodeURIComponent(proxyKey)}`,
+          {},
+          4000
+        );
+        if (acct.ok) {
+          const a = await acct.json().catch(() => null);
+          if (a && typeof a === "object") {
+            const used = Number(a.requestCount);
+            const limit = Number(a.requestLimit);
+            const conc = Number(a.concurrentRequests);
+            const concLimit = Number(a.concurrencyLimit);
+            const bits = [];
+            if (Number.isFinite(used) && Number.isFinite(limit)) bits.push(`${used.toLocaleString()}/${limit.toLocaleString()} credits used this period`);
+            if (Number.isFinite(conc) && Number.isFinite(concLimit)) bits.push(`${conc}/${concLimit} concurrent requests right now`);
+            if (Number.isFinite(a.failedRequestCount)) bits.push(`${Number(a.failedRequestCount).toLocaleString()} failed requests this period`);
+            if (bits.length) {
+              const exhausted = Number.isFinite(used) && Number.isFinite(limit) && used >= limit;
+              const saturated = Number.isFinite(conc) && Number.isFinite(concLimit) && conc >= concLimit;
+              warnings.push(
+                `Photo proxy account: ${bits.join(", ")}` +
+                (exhausted ? " — CREDITS EXHAUSTED, every fetch will fail until the plan renews." :
+                  saturated ? " — concurrency saturated; retries are queuing behind each other." : ".")
+              );
+              console.log(`[import] scraperapi account: ${JSON.stringify(a).slice(0, 300)}`);
+            }
+          }
+        }
+      } catch { /* diagnostics only */ }
+    }
     if (pagePhotoUrls.length > 0) photoSource = proxyKey ? "listing_page_proxy" : "listing_page";
     // v62.21: the page we already paid to fetch carries the listing facts.
     if (html) pageFacts = factsFromHtml(html);

@@ -271,7 +271,9 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
       // warnings are written as user-facing sentences; the plan-banner
       // lesson (v62.52) applied here: never blame a generic cause when the
       // response names the real one.
-      const failNote = serverWarnings[0] || "";
+      // v62.60: an account-level verdict (credits gone, concurrency
+      // saturated) outranks the per-tier symptom it caused.
+      const failNote = serverWarnings.find((w) => /CREDITS EXHAUSTED|concurrency saturated/.test(w)) || serverWarnings[0] || "";
       setToast(
         finalPhotos.length > 0
           ? shortfallNote
