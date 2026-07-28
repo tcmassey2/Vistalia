@@ -865,8 +865,9 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     const imSrc = fs.readFileSync(path.join(ROOT, "api/import-listing.js"), "utf8");
     check("v62.57: realtor.com goes straight to the tier that works there",
       /\/\(\^\|\\\.\)realtor\\\.com\$\/\.test\(host\)\s*\?\s*\["ultra_premium=true"\]/.test(imSrc));
-    check("v62.57/59: a tier with successors can't eat the whole page budget",
-      /isLastTier \? \(rescueEligible \? 38000 : 70000\) : 22000/.test(imSrc));
+    check("v62.57/59/61: tier windows are host-aware — Zillow premium keeps its historical 40s",
+      /\? \(rescueEligible \? 38000 : 70000\)/.test(imSrc) &&
+      /: \(zillowHost \? 40000 : 22000\);/.test(imSrc));
     check("v62.59: proxy attempts get ScraperAPI's full recommended window",
       /const PROXY_PAGE_TIMEOUT_MS = 70000;/.test(imSrc));
     check("v62.60: a fully-failed proxy run asks the account endpoint for the verdict",

@@ -816,10 +816,22 @@ export default async function handler(request, response) {
         // reserves ~30s for the Zillow address rescue; a Zillow import has
         // no rescue, so its final tier gets ScraperAPI's full recommended
         // window. A tier with successors stays tightly capped.
-        const rescueEligible = !!address && !/(^|\.)zillow\.com$/.test(host);
+        //
+        // v62.61 — THE REGRESSION TROY CAUGHT ("our bug fixes broke zillow").
+        // Every pre-tonight successful import ran Zillow premium with the
+        // FULL 40s window; the v62.57 cap cut it to 22s to protect a second
+        // tier that (on Zillow) has never been the one that wins. Zillow's
+        // first tier gets its historical 40s back; the second tier takes
+        // what remains (~34s of the 75s phase). Only rescue-eligible hosts
+        // keep the tight first-tier cap — their budget must also fund the
+        // rescue, and their winner IS the later machinery.
+        const zillowHost = /(^|\.)zillow\.com$/.test(host);
+        const rescueEligible = !!address && !zillowHost;
         // 38s keeps rescue room even on a two-tier rescue-eligible ladder
         // (22 + 38 = 60s spent, ~15s+ of the 75s phase left for the rescue).
-        const tierCapMs = isLastTier ? (rescueEligible ? 38000 : 70000) : 22000;
+        const tierCapMs = isLastTier
+          ? (rescueEligible ? 38000 : 70000)
+          : (zillowHost ? 40000 : 22000);
         try {
           const prox = await fetchWithTimeout(
             `https://api.scraperapi.com/?api_key=${encodeURIComponent(proxyKey)}&url=${encodeURIComponent(url)}&${tier}&country_code=us`,
