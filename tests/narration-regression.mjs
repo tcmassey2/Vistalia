@@ -912,6 +912,20 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       /only exposed\|Zillow listing at this address/.test(llSrc3));
   }
 
+  /* ── v62.64 (Pinnacle Peak): a 12-photo set got ONE OpenAI attempt (the
+     reduced retry only existed >12), and the Gemini failover both lacked
+     its key on Vercel AND would have run on a fixed 45s that could blow
+     the 120s ceiling. Sets >8 get a lighter second attempt; attempt 2 and
+     the failover are wall-clock budgeted; a <10s failover window skips
+     loudly instead of trying doomed. */
+  check("v62.64: photo sets over 8 get a second, lighter vision attempt",
+    /visionPhotos\.length > 8\s*\?\s*\[visionPhotos, visionPhotos\.slice\(0, 8\)\]/.test(planSrc));
+  check("v62.64: attempt 2 is wall-clock budgeted, floored at 12s",
+    /Math\.min\(30000, Math\.max\(12000, \(PLAN_WALL_SEC - 25 - planElapsedSec\(\)\) \* 1000\)\)/.test(planSrc));
+  check("v62.64: the Gemini failover takes what remains of the wall, never a fixed 45s",
+    /geminiBudgetMs/.test(planSrc) && /\}, geminiBudgetMs\);/.test(planSrc) &&
+    /Gemini failover SKIPPED — only/.test(planSrc));
+
   /* ── v62.63: the lead auto-render lane recovers. The Jul 27 ScraperAPI
      outage under the old one-shot policy permanently buried every lead
      that arrived during the incident. Transient failures now retry at

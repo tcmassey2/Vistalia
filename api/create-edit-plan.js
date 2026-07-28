@@ -479,25 +479,38 @@ export default async function handler(request, response) {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       "Content-Type": "application/json"
     };
+    // v62.64 (Pinnacle Peak, 20:51): a 12-photo set got exactly ONE OpenAI
+    // attempt — the reduced-set retry only existed for >12 — so a single
+    // 48s slow-tail vision call went straight to the template (the Gemini
+    // failover was also skipped: no GEMINI_API_KEY on Vercel that night).
+    // Every set over 8 photos now gets a lighter second try.
     const visionAttempts = visionPhotos.length > 12
       ? [visionPhotos, visionPhotos.slice(0, 12)]
-      : [visionPhotos];
+      : visionPhotos.length > 8
+        ? [visionPhotos, visionPhotos.slice(0, 8)]
+        : [visionPhotos];
     let parsed = null;
     let lastFailure = { category: "openai_error", reason: "Motion Director unavailable.", requestId: "" };
     for (let ai = 0; ai < visionAttempts.length && !parsed; ai++) {
       const vp = visionAttempts[ai];
       const attemptLabel = ai === 0 ? `full(${vp.length})` : `reduced(${vp.length})`;
       try {
+        // v62.64: attempt 2 is wall-clock budgeted — 48+48 left the Gemini
+        // failover 24s against a 120s ceiling; 48+~30 leaves it a real
+        // window. Floor of 12s: an attempt shorter than that is noise.
+        const attemptTimeoutMs = ai === 0
+          ? Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS)
+          : Math.min(30000, Math.max(12000, (PLAN_WALL_SEC - 25 - planElapsedSec()) * 1000));
         const directorBody = JSON.stringify(buildOpenAIRequest({ allPhotos: photos, visionPhotos: vp, listingDetails, selectedStyle, exportFormat, engine, brandKit, includeNarration, targetDurationSec }));
         let openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
           method: "POST", headers: directorHeaders, body: directorBody
-        }, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
+        }, attemptTimeoutMs);
         if (!openaiResponse.ok && (openaiResponse.status === 429 || openaiResponse.status >= 500)) {
           logMotionDirector("warn", `OpenAI ${openaiResponse.status} on ${attemptLabel} — retrying once in 4s`, { status: openaiResponse.status });
           await new Promise((r) => setTimeout(r, 4000));
           openaiResponse = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
             method: "POST", headers: directorHeaders, body: directorBody
-          }, Math.min(25000, Number(process.env.OPENAI_MOTION_DIRECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS)));
+          }, Math.min(25000, attemptTimeoutMs));
         }
         const payload = await openaiResponse.json().catch(() => ({}));
         if (!openaiResponse.ok) {
@@ -544,7 +557,19 @@ export default async function handler(request, response) {
     // a Gemini plan that fails validation still falls through to the
     // template exactly as before. Skipped silently when GEMINI_API_KEY is
     // not configured on Vercel.
-    if (!parsed && process.env.GEMINI_API_KEY) {
+    // v62.64: the failover gets whatever honestly remains of the wall —
+    // never a fixed 45s that can push the function past its ceiling, and
+    // never a token window too short to matter. Under 10s, skipping loudly
+    // beats a doomed attempt. (When GEMINI_API_KEY is absent this whole
+    // block silently never runs — the Pinnacle Peak lesson; the key lives
+    // on the worker and belongs on Vercel too.)
+    const geminiBudgetMs = !parsed && process.env.GEMINI_API_KEY
+      ? Math.min(Number(process.env.GEMINI_MOTION_DIRECTOR_TIMEOUT_MS || 45000), Math.max(0, (PLAN_WALL_SEC - 25 - planElapsedSec()) * 1000))
+      : 0;
+    if (!parsed && process.env.GEMINI_API_KEY && geminiBudgetMs < 10000) {
+      logMotionDirector("warn", `Gemini failover SKIPPED — only ${(geminiBudgetMs / 1000).toFixed(0)}s of wall clock left; template next`, { elapsedSec: planElapsedSec() });
+    }
+    if (!parsed && process.env.GEMINI_API_KEY && geminiBudgetMs >= 10000) {
       try {
         const vp = visionAttempts[visionAttempts.length - 1];
         const oaiBody = buildOpenAIRequest({ allPhotos: photos, visionPhotos: vp, listingDetails, selectedStyle, exportFormat, engine, brandKit, includeNarration, targetDurationSec });
@@ -582,7 +607,7 @@ export default async function handler(request, response) {
             contents: [{ role: "user", parts }],
             generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: 0 } }
           })
-        }, Number(process.env.GEMINI_MOTION_DIRECTOR_TIMEOUT_MS || 45000));
+        }, geminiBudgetMs);
         const gPayload = await gRes.json().catch(() => ({}));
         if (gRes.ok) {
           const raw = String(gPayload?.candidates?.[0]?.content?.parts?.map((pt) => pt.text || "").join("") || "");
