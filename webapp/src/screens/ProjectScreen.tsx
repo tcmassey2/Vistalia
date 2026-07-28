@@ -5,6 +5,7 @@ import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHe
 import { createEditPlan, submitRender, pollRender, fetchLibrary, fetchUsage, authHeaders, RenderJobMissingError, type RenderManifest } from "../lib/api";
 import VoiceSection from "../components/VoiceSection";
 import { events, track } from "../lib/analytics";
+import { trackStartTrial } from "../lib/pixel";
 import type { AgentBranding, Photo, RenderEngine, StyleId } from "../lib/types";
 import { cn } from "../lib/cn";
 import { downloadVideo, deliverableFilename } from "../lib/download";
@@ -2450,6 +2451,16 @@ function RenderControls() {
         engine: renderEngine,
         sceneCount: planResult.editPlan.scenes.length
       });
+      // v62.55: Meta pixel StartTrial — fires only for the free-render
+      // class (trial tier, no purchased credits — the same condition that
+      // watermarks, mirrored from the server's tier guard). This is the
+      // event the UGC campaign optimizes on: ad → signup → THIS → $39.
+      // Best-effort by design: analytics never blocks or fails a render.
+      fetchUsage()
+        .then((u) => {
+          if (u && String(u.tier) === "trial" && Number(u.render_credits || 0) < 1) trackStartTrial();
+        })
+        .catch(() => {});
       setRenderJob({
         jobId: submitted.jobId || "",
         projectId, // v62.8

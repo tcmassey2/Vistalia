@@ -4,13 +4,22 @@
 // so dev/preview builds never fire events and there's no snippet rotting in
 // index.html. One source of truth for event names + purchase values.
 //
-// Events wired at launch (GROWTH_PLAN_500 §Week 0):
-//   PageView  — on app boot
-//   Lead      — successful signup (AuthScreen)
-//   Purchase  — Stripe checkout return (?checkout=success), with value
+// Events wired at launch (GROWTH_PLAN_500 §Week 0), completed v62.55 —
+// the full funnel Troy's UGC campaign optimizes on
+// (ad → signup → free watermarked render → $39 unlock):
+//   PageView         — on app boot
+//   Lead             — successful signup (AuthScreen)
+//   StartTrial       — free watermarked render accepted (ProjectScreen);
+//                      the mid-funnel event with real volume, so the
+//                      campaign can conversion-optimize long before
+//                      Purchase counts are statistically usable
+//   InitiateCheckout — paywall tier clicked, pre-Stripe (PaywallModal)
+//   Purchase         — Stripe checkout return (?checkout=success), with value
 //
-// The ads account optimizes LINK_CLICKS until this pixel has ~200 Lead
-// events; then the campaign switches to conversion optimization.
+// The ads account optimizes LINK_CLICKS until this pixel has ~200 of the
+// target event; then the campaign switches to conversion optimization.
+// NOTE: everything below no-ops until VITE_META_PIXEL_ID is set in the
+// Vercel BUILD environment (it is a build-time var — set it, redeploy).
 
 const PIXEL_ID = String(import.meta.env.VITE_META_PIXEL_ID || "").trim();
 
@@ -59,6 +68,19 @@ export function trackLead(): void {
   window.fbq?.("track", "Lead", { content_name: "signup" });
 }
 
+// v62.55: the free watermarked render — the funnel's mid-step and the
+// event with enough volume to conversion-optimize on from week one.
+// predicted_ltv carries the $39 unlock this trial is expected to become.
+export function trackStartTrial(): void {
+  if (!PIXEL_ID) return;
+  window.fbq?.("track", "StartTrial", {
+    value: 0,
+    currency: "USD",
+    content_name: "free_watermarked_render",
+    predicted_ltv: 39
+  });
+}
+
 // q7 price map for Purchase values. Unknown tiers fire without a value
 // rather than firing a wrong one.
 const TIER_VALUES: Record<string, number> = {
@@ -69,6 +91,22 @@ const TIER_VALUES: Record<string, number> = {
   pro_annual: 490,
   studio_annual: 990
 };
+
+// v62.55: paywall click, pre-Stripe. Meta reads InitiateCheckout→Purchase
+// as the checkout-abandonment gap — the number that tells us whether the
+// $39 price or the Stripe page is losing people.
+export function trackInitiateCheckout(tierOrOffer: string): void {
+  if (!PIXEL_ID) return;
+  const key = String(tierOrOffer || "").toLowerCase();
+  const value = TIER_VALUES[key];
+  window.fbq?.(
+    "track",
+    "InitiateCheckout",
+    value
+      ? { value, currency: "USD", content_name: key }
+      : { content_name: key || "unknown" }
+  );
+}
 
 export function trackPurchase(tierOrOffer: string): void {
   if (!PIXEL_ID) return;

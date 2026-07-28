@@ -837,6 +837,35 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.52: mediaBusy clamps at zero so a stray decrement can't wedge the button",
     /adjustMediaBusy: \(delta\) => set\(\(s\) => \(\{ mediaBusy: Math\.max\(0, s\.mediaBusy \+ delta\) \}\)\)/.test(stSrc));
 
+  /* ── v62.55: the Meta pixel, finished. pixel.ts existed with PageView/
+     Lead/Purchase wired; the funnel Troy's UGC campaign optimizes on
+     (ad → signup → free watermarked render → $39 unlock) was missing its
+     middle: StartTrial on the free render, InitiateCheckout on the
+     paywall click. All of it no-ops until VITE_META_PIXEL_ID is set in
+     the Vercel build env. */
+  const pxSrc = fs.readFileSync(path.join(ROOT, "webapp/src/lib/pixel.ts"), "utf8");
+  check("v62.55: StartTrial event exists with the $39 predicted_ltv",
+    /"StartTrial"/.test(pxSrc) && /predicted_ltv: 39/.test(pxSrc) &&
+    /content_name: "free_watermarked_render"/.test(pxSrc));
+  check("v62.55: InitiateCheckout carries tier value from the price map",
+    /trackInitiateCheckout/.test(pxSrc) && /"InitiateCheckout"/.test(pxSrc) &&
+    /payg: 39/.test(pxSrc));
+  check("v62.55: checkout return still scrubs params so refresh can't double-fire Purchase",
+    /searchParams\.delete\("checkout"\)/.test(pxSrc) && /replaceState/.test(pxSrc));
+  check("v62.55: every event no-ops without the env-gated pixel id",
+    (pxSrc.match(/if \(!PIXEL_ID\) return;/g) || []).length >= 4);
+  const pwSrc = fs.readFileSync(path.join(ROOT, "webapp/src/components/PaywallModal.tsx"), "utf8");
+  check("v62.55: paywall click fires InitiateCheckout before the Stripe redirect",
+    /trackInitiateCheckout\(tier\);/.test(pwSrc) &&
+    /import \{ trackInitiateCheckout \} from "\.\.\/lib\/pixel";/.test(pwSrc));
+  check("v62.55: StartTrial fires on render acceptance, gated to the free-render class, best-effort",
+    /trackStartTrial\(\)/.test(psSrc) &&
+    /String\(u\.tier\) === "trial" && Number\(u\.render_credits \|\| 0\) < 1/.test(psSrc) &&
+    /\.catch\(\(\) => \{\}\);/.test(psSrc));
+  const asSrc = fs.readFileSync(path.join(ROOT, "webapp/src/screens/AuthScreen.tsx"), "utf8");
+  check("v62.55: signup still fires the pixel Lead",
+    /trackLead\(\);/.test(asSrc));
+
   /* ── v62.54: the free-render watermark flips stance — v46 was "subtle
      enough that posting it is still tempting"; Troy's conversion call is
      the opposite: the trial video is the demo, the watermark is the

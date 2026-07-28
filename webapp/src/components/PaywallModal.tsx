@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { startCheckout, fetchUsage, type CheckoutTier } from "../lib/api";
 import { useStore } from "../lib/store";
+import { trackInitiateCheckout } from "../lib/pixel";
 
 /**
  * PaywallModal — the free-video → paid moment (q7 pricing, see
@@ -107,6 +108,9 @@ export default function PaywallModal({ open, onClose, reason }: PaywallModalProp
   const handleBuy = async (tier: CheckoutTier) => {
     setBusy(tier);
     setError("");
+    // v62.55: Meta pixel — fire on the click, not the redirect, so the
+    // InitiateCheckout→Purchase gap measures Stripe-page abandonment.
+    trackInitiateCheckout(tier);
     try {
       const result = await startCheckout({
         tier,
