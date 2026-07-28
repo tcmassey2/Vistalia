@@ -855,6 +855,22 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       /factsSource\?: string;/.test(apiSrc2));
   }
 
+  /* ── v62.57: the proxy ladder's budget trap. Tier 1's timeout was
+     min(45s, remaining-of-40s) — the whole page budget — so a tier that
+     TIMED OUT (vs failing fast) starved every later tier below the 12s
+     floor. And realtor.com started on the tier v58.2 had already measured
+     as hopeless there (Kasada), burning credits + the budget the working
+     tier needed. First v62.56 toast caught it live. */
+  {
+    const imSrc = fs.readFileSync(path.join(ROOT, "api/import-listing.js"), "utf8");
+    check("v62.57: realtor.com goes straight to the tier that works there",
+      /\/\(\^\|\\\.\)realtor\\\.com\$\/\.test\(host\)\s*\?\s*\["ultra_premium=true"\]/.test(imSrc));
+    check("v62.57: a tier with successors can't eat the whole page budget",
+      /isLastTier \? remainingMs : 22000/.test(imSrc));
+    check("v62.57: a budget-skipped tier is a response warning, not just a console line",
+      /ran out of time before the \$\{tier\.split\("="\)\[0\]\} tier could run/.test(imSrc));
+  }
+
   /* ── v62.55: the Meta pixel, finished. pixel.ts existed with PageView/
      Lead/Purchase wired; the funnel Troy's UGC campaign optimizes on
      (ad → signup → free watermarked render → $39 unlock) was missing its

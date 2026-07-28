@@ -747,22 +747,42 @@ export default async function handler(request, response) {
       // Every portal now gets the residential ladder realtor.com already
       // used: a trusted IP first, a more expensive one if the page comes
       // back thin.
-      const tiers = ["premium=true", "ultra_premium=true"];
+      /* v62.57 (realtor.com, first toast of the v62.56 era: "Photo proxy
+         (premium) timed out" with zero photos). TWO structural bugs met:
+         1. THE BUDGET TRAP. The page phase deadline is 40s but tier 1's
+            timeout was min(45s, remaining) — the WHOLE budget. A tier that
+            times out (rather than failing fast with a non-200) therefore
+            starved every tier after it below the 12s floor: the ladder's
+            second rung could only ever run after a FAST failure, never
+            after a slow one. Now a tier with successors is capped at 22s,
+            so the next rung always inherits a viable (>=18s) window.
+         2. THE WRONG FIRST RUNG. v58.2 already measured that realtor.com
+            never yields to the standard pool (Kasada) — premium-first
+            there spends 10 credits to burn the budget the working tier
+            needed. realtor.com now goes straight to ultra_premium. */
+      const tiers = /(^|\.)realtor\.com$/.test(host)
+        ? ["ultra_premium=true"]
+        : ["premium=true", "ultra_premium=true"];
       // maxDuration is 60s and photo downloads still have to run, so the
       // page phase gets a hard deadline rather than a per-attempt budget
       // that can overrun it (2 x 35s already exceeded the function ceiling).
       const pagePhaseDeadline = t0 + 40000;
-      for (const tier of tiers) {
+      for (let ti = 0; ti < tiers.length; ti++) {
+        const tier = tiers[ti];
         const remainingMs = pagePhaseDeadline - Date.now();
         if (remainingMs < 12000) {
           console.log(`[import] page phase out of budget — skipping ${tier.split("=")[0]} tier.`);
+          // v62.57: say it in the response too — "we never got to try the
+          // strong tier" and "the strong tier failed" need different toasts.
+          warnings.push(`Photo proxy ran out of time before the ${tier.split("=")[0]} tier could run.`);
           break;
         }
+        const isLastTier = ti === tiers.length - 1;
         try {
           const prox = await fetchWithTimeout(
             `https://api.scraperapi.com/?api_key=${encodeURIComponent(proxyKey)}&url=${encodeURIComponent(url)}&${tier}&country_code=us`,
             { redirect: "follow" },
-            Math.min(PROXY_PAGE_TIMEOUT_MS, remainingMs)
+            Math.min(PROXY_PAGE_TIMEOUT_MS, remainingMs, isLastTier ? remainingMs : 22000)
           );
           if (prox.ok) {
             const body = await prox.text();
