@@ -329,6 +329,10 @@ export interface ImportListingResponse {
     yearBuilt?: number | null; price?: number | null; propertyType?: string | null;
   } | null;
   photoSource?: string;
+  // v62.56: which source produced the four listing facts ("page",
+  // "records", "page+records", "none") — the one-glance discriminator
+  // when an import returns details but zero photos.
+  factsSource?: string;
   photos?: ImportedListingPhoto[];
   warnings?: string[];
 }

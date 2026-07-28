@@ -254,10 +254,22 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
       if (serverWarnings.length > 0) {
         console.info(`[import] server warnings: ${serverWarnings.join(" | ")}`);
       }
+      // v62.56 (Via Del Arbor zero-photo import): the response also says
+      // WHERE things came from — log it so a failed import is diagnosable
+      // from the browser alone, without the Vercel black-box line.
+      console.info(
+        `[import] photos=${(result.photos || []).length} photoSource=${result.photoSource || "?"} factsSource=${result.factsSource || "?"}`
+      );
       // v62.17: when EVERY imported image was excluded, say why. The old
       // zero-case message ("add your photos") read as "we found nothing",
       // which is a different and more alarming thing than "we found only
       // floor plans and thumbnails and left them out".
+      // v62.56: and when the SERVER already said why the photos are missing
+      // (proxy failure, transfer failure), the toast says it too — the
+      // warnings are written as user-facing sentences; the plan-banner
+      // lesson (v62.52) applied here: never blame a generic cause when the
+      // response names the real one.
+      const failNote = serverWarnings[0] || "";
       setToast(
         finalPhotos.length > 0
           ? shortfallNote
@@ -265,7 +277,9 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
             : `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote}${planNote} — review and render.`
           : planNote
             ? `Listing details imported${planNote} — no usable photos, so add your own and render.`
-            : "Listing details imported — add your photos and render."
+            : failNote
+              ? `Listing details imported, but the photos didn't make it: ${failNote}`
+              : "Listing details imported — add your photos and render."
       );
 
       // v62.24: the diversity pass, off the critical path. Deliberately not

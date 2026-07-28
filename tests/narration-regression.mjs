@@ -837,6 +837,24 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.52: mediaBusy clamps at zero so a stray decrement can't wedge the button",
     /adjustMediaBusy: \(delta\) => set\(\(s\) => \(\{ mediaBusy: Math\.max\(0, s\.mediaBusy \+ delta\) \}\)\)/.test(stSrc));
 
+  /* ── v62.56 (Via Del Arbor zero-photo import): the server names WHY an
+     import came back photoless (proxy failure, transfer failure) and WHERE
+     the facts came from (factsSource) — the UI dropped all of it into a
+     generic toast, the same bug class v62.52 fixed on the plan banner.
+     Meanwhile the extractor was live-verified innocent: the shipped regex
+     matches 33/33 photos on the actual Zillow page. */
+  {
+    const llSrc2 = fs.readFileSync(path.join(ROOT, "webapp/src/components/ListingLinkImport.tsx"), "utf8");
+    check("v62.56: zero-photo toast surfaces the server's own reason",
+      /the photos didn't make it: \$\{failNote\}/.test(llSrc2) &&
+      /const failNote = serverWarnings\[0\] \|\| "";/.test(llSrc2));
+    check("v62.56: photoSource/factsSource logged client-side for one-glance diagnosis",
+      /photoSource=\$\{result\.photoSource \|\| "\?"\} factsSource=\$\{result\.factsSource \|\| "\?"\}/.test(llSrc2));
+    const apiSrc2 = fs.readFileSync(path.join(ROOT, "webapp/src/lib/api.ts"), "utf8");
+    check("v62.56: factsSource is typed on the import response",
+      /factsSource\?: string;/.test(apiSrc2));
+  }
+
   /* ── v62.55: the Meta pixel, finished. pixel.ts existed with PageView/
      Lead/Purchase wired; the funnel Troy's UGC campaign optimizes on
      (ad → signup → free watermarked render → $39 unlock) was missing its
