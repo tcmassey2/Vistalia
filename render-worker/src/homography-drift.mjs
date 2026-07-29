@@ -112,8 +112,53 @@ export async function renderHomographyDrift({
   height = 1280,
   roomType = "",
   sceneIndex = 0,
-  cameraMotion = "push_in"
+  cameraMotion = "push_in",
+  __segment = false
 }) {
+  /* ── v62.67 TWO-BEAT LONG FLOORS (Troy: "the hero scene kb fallback was
+     a little brutal"). Voice-first hands the floor the HOOK scene — the
+     longest in the video, 8-10s — and ten seconds of one continuous
+     drift on one photo reads as a still with a slow slide, exactly where
+     the first impression lives. Real listing videos CUT: so over 6.5s,
+     render two beats — the scene's own move for the first half, then a
+     DIFFERENT move family from the opposite flip parity for the second —
+     joined by a 0.7s crossfade into one clip of exactly the asked
+     duration. Each beat also runs at roughly half the v62.35 velocity
+     gain, so the overscan zoom budget relaxes instead of straining at
+     the 10s clamp. Short floors render byte-identical to before. */
+  const TWO_BEAT_MIN_SEC = 6.5;
+  const XFADE_SEC = 0.7;
+  if (!__segment && (Number(durationSec) || 0) > TWO_BEAT_MIN_SEC) {
+    const segDur = +((durationSec + XFADE_SEC) / 2).toFixed(3);
+    const segA = `${outPath}.beatA.mp4`;
+    const segB = `${outPath}.beatB.mp4`;
+    try {
+      await renderHomographyDrift({
+        photoPath, outPath: segA, durationSec: segDur, width, height, roomType,
+        sceneIndex, cameraMotion, __segment: true
+      });
+      await renderHomographyDrift({
+        photoPath, outPath: segB, durationSec: segDur, width, height, roomType,
+        sceneIndex: sceneIndex + 3, cameraMotion: "lateral_pan", __segment: true
+      });
+      await new Promise((resolve, reject) => {
+        const ff = spawn("ffmpeg", [
+          "-y", "-v", "error",
+          "-i", segA, "-i", segB,
+          "-filter_complex", `xfade=transition=fade:duration=${XFADE_SEC}:offset=${(segDur - XFADE_SEC).toFixed(3)}`,
+          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "superfast", "-crf", "19",
+          "-r", "30", outPath
+        ], { stdio: ["ignore", "inherit", "inherit"] });
+        ff.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`two-beat xfade exited ${code}`))));
+        ff.on("error", reject);
+      });
+      console.info(`[floor] two-beat drift: ${durationSec}s as 2×${segDur}s with a ${XFADE_SEC}s crossfade.`);
+      return;
+    } finally {
+      await fsp.unlink(segA).catch(() => {});
+      await fsp.unlink(segB).catch(() => {});
+    }
+  }
   const FPS = 30;
   const N = Math.max(24, Math.round(durationSec * FPS));
   const W = Math.round((width * 3) / 2 / 2) * 2; // 1.5x working res

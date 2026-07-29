@@ -934,6 +934,30 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       /only exposed\|Zillow listing at this address/.test(llSrc3));
   }
 
+  /* ── v62.67 (Pegasus, "ceiling fan" + "brutal hero fallback"): two
+     fixes. (a) An out-of-order BIJECTION no longer demotes the Director —
+     the scenes reorder to follow the monologue (repeats stay fatal); the
+     demotion is what shipped the derived lane's appliance prose. (b)
+     Floors over 6.5s render as TWO beats (scene's own move, then a
+     different family at opposite flip) joined by a 0.7s crossfade —
+     functionally verified: 10s in, 10.03s out, two-beat log present;
+     4s path byte-identical. */
+  check("v62.67: repeats and broken order are separate diagnoses",
+    /let hasRepeat = false;/.test(planSrc) && /let orderBroken = false;/.test(planSrc) &&
+    /if \(hasRepeat\) errors\.push\("photo mapping repeats or breaks scene order"\);/.test(planSrc));
+  check("v62.67: an out-of-order bijection reorders scenes and keeps the Director",
+    /scenes REORDERED to follow the monologue/.test(planSrc) &&
+    /if \(!hasRepeat && orderBroken\)/.test(planSrc) &&
+    /sceneOrderById\.clear\(\);/.test(planSrc));
+  {
+    const hdSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/homography-drift.mjs"), "utf8");
+    check("v62.67: floors over 6.5s render as two beats with a 0.7s crossfade",
+      /const TWO_BEAT_MIN_SEC = 6\.5;/.test(hdSrc) && /const XFADE_SEC = 0\.7;/.test(hdSrc) &&
+      /__segment: true/.test(hdSrc) && /two-beat drift/.test(hdSrc));
+    check("v62.67: the second beat changes move family and flip parity",
+      /sceneIndex: sceneIndex \+ 3, cameraMotion: "lateral_pan"/.test(hdSrc));
+  }
+
   /* ── v62.66: the "took too long" root cause. The Director sent RAW
      full-resolution upload URLs at detail:high — OpenAI downloaded
      100-200MB before thinking, every manual-upload plan. Vision URLs now

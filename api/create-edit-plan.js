@@ -2262,18 +2262,56 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
     if (sentences.length && !sentences[0].photos.length) errors.push("sentence 1 has no photos");
 
     // Mapping: every scene exactly once, ascending in scene order.
+    // v62.67 (Pegasus, "the ceiling fan line was a little odd"): REPEATS
+    // and BROKEN ORDER are different diseases. A repeat is unfixable
+    // without dropping content — still a demotion. But an out-of-order
+    // BIJECTION is the Director narrating a valid tour in its own
+    // rhetorical order — and demoting it ships the derived lane's
+    // appliance prose ("A ceiling fan is installed…"). The scenes are
+    // OURS to arrange: reorder plan.scenes to follow the monologue and
+    // the Director's read survives. Repeats stay fatal.
     const seenOrd = new Set();
     let lastOrd = -1;
-    let orderOk = true;
+    let hasRepeat = false;
+    let orderBroken = false;
     for (const s of sentences) {
       for (const id of s.photos) {
         const ord = sceneOrderById.get(id);
-        if (seenOrd.has(ord) || ord < lastOrd) orderOk = false;
+        if (seenOrd.has(ord)) hasRepeat = true;
+        else if (ord < lastOrd) orderBroken = true;
         seenOrd.add(ord);
         lastOrd = Math.max(lastOrd, ord);
       }
     }
-    if (!orderOk) errors.push("photo mapping repeats or breaks scene order");
+    if (hasRepeat) errors.push("photo mapping repeats or breaks scene order");
+    if (!hasRepeat && orderBroken) {
+      // Stable target order: photos in first-mention order across the
+      // monologue, then any unmapped scenes in their original order
+      // (lingers cover them; relative position preserved).
+      const mentionOrder = [];
+      for (const s of sentences) for (const id of s.photos) mentionOrder.push(String(id));
+      const mentioned = new Set(mentionOrder);
+      const photoScenesInPlan = scenes.slice();
+      const reordered = [
+        ...mentionOrder.map((id) => photoScenesInPlan.find((sc) => String(sc.photoId) === id)).filter(Boolean),
+        ...photoScenesInPlan.filter((sc) => !mentioned.has(String(sc.photoId)))
+      ];
+      // Permute ONLY the photo slots of plan.scenes; non-photo entries
+      // (if any) hold their positions. Then renumber and rebuild the
+      // ordinal map so everything downstream sees the new order.
+      let slot = 0;
+      plan.scenes = (plan.scenes || []).map((sc) =>
+        String(sc.type || "photo").toLowerCase() === "photo" && slot < reordered.length ? reordered[slot++] : sc
+      ).map((sc, i) => ({ ...sc, order: i + 1 }));
+      scenes.length = 0;
+      scenes.push(...(plan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo"));
+      sceneOrderById.clear();
+      scenes.forEach((s, i) => sceneOrderById.set(String(s.photoId), i));
+      console.warn(
+        `[plan] narration mapped photos out of display order — scenes REORDERED to follow the monologue ` +
+        `(the Director's read survives; pre-v62.67 this demoted to derived lines).`
+      );
+    }
     const missing = scenes.filter((_, i) => !seenOrd.has(i)).length;
     if (missing > Math.ceil(scenes.length * 0.4)) {
       errors.push(`${missing}/${scenes.length} scenes unmapped`);
