@@ -83,11 +83,16 @@ export default function ProjectScreen() {
       </Section>
 
       {/* Photos */}
+      {/* v62.68: high-res guidance in BOTH subtitle states — the empty-state
+          dropzone already asked for full-resolution exports, but photos that
+          arrive via link import never show that state, and imported portal
+          photos are exactly the compressed ones (Troy: low-res Zillow scrapes
+          "make the whole render look poor"). */}
       <Section
         title="Photos"
         subtitle={photos.length === 0
-          ? "Drop in 8–25 listing photos. JPG, PNG, or WebP."
-          : `${photos.length} ${photos.length === 1 ? "photo" : "photos"} ready to direct.`}
+          ? "Drop in 8–25 listing photos. JPG, PNG, or WebP — the highest resolution you have."
+          : `${photos.length} ${photos.length === 1 ? "photo" : "photos"} ready to direct. Full-resolution originals make the sharpest video.`}
       >
         {/* v62.46: the listing-URL import, in the render setup itself —
             photos and facts land in THIS project (fills only empty fields). */}
