@@ -374,7 +374,27 @@ export default async function handler(request, response) {
   const photos = normalizeInputPhotos(rawPhotos);
   // Photos sent for VISION analysis are capped for cost. ALL photos are
   // referenced in the plan via metadata.
-  const visionPhotos = photos.slice(0, OPENAI_VISION_PHOTO_LIMIT);
+  /* v62.66 — THE "TOOK TOO LONG" ROOT CAUSE (three banners in two days).
+     The Director's vision items sent RAW photo URLs at detail:"high", and
+     the upload tray deliberately asks agents for original full-resolution
+     exports — so every plan made OpenAI download 12-16 multi-megabyte
+     files before a single token was produced. The 48s timeout wasn't a
+     model slow-tail; it was a 100-200MB fetch bill paid on their side,
+     every time, scaling with photo file size. (Imported photos are
+     ~1536px and rarely hit it — every timeout was a manual-upload
+     project.)
+     Fix: Supabase image transformations (verified enabled on this
+     project, live probe Jul 28): rewrite storage URLs to the CDN resize
+     endpoint at width=1280 — a 20-50x fetch reduction that also speeds
+     the Gemini failover's inlining. Non-Supabase URLs pass through.
+     Safety: one HEAD probe on the first transformed URL; if the feature
+     is ever disabled, every photo reverts to its original URL and the
+     plan behaves exactly as before. */
+  const visionPhotos = photos.slice(0, OPENAI_VISION_PHOTO_LIMIT).map((p) => ({
+    ...p,
+    originalUrl: p.url,
+    url: visionSizedUrl(p.url)
+  }));
   const listingDetails = normalizeListingDetails(body.listingDetails || {});
   const brandKit = normalizeBrandKitForPrompt(body.brandKit || {});
   const selectedStyle = String(body.selectedStyle || "Cinematic Luxury");
@@ -441,6 +461,17 @@ export default async function handler(request, response) {
   }
 
   try {
+    // v62.66: transforms are project-level, so one probe speaks for all —
+    // if the resize endpoint ever stops answering, every photo reverts to
+    // its original URL and the plan behaves exactly as pre-v62.66.
+    const firstTransformed = visionPhotos.find((p) => p.url !== p.originalUrl);
+    if (firstTransformed) {
+      const tProbe = await validateRemotePhoto(firstTransformed);
+      if (!tProbe.valid) {
+        console.warn(`[plan] image transforms unavailable (${tProbe.reason}) — vision falls back to original URLs.`);
+        for (const p of visionPhotos) p.url = p.originalUrl;
+      }
+    }
     const urlCheck = await validateRemotePhotos(visionPhotos);
     if (!urlCheck.valid) {
       const reason = `Motion Director unavailable: ${urlCheck.reason}`;
@@ -3211,6 +3242,16 @@ function invalidInputPhotos(photos) {
       };
     })
     .filter((photo) => !photo.url || isLocalOnlyUrl(photo.url));
+}
+
+// v62.66: rewrite a Supabase public-storage URL to the CDN image-resize
+// endpoint (width=1280 ≈ 150-400KB instead of a multi-MB original — the
+// bytes OpenAI must download before thinking). Anything else — portal
+// CDNs, already-sized imports — passes through untouched.
+function visionSizedUrl(url) {
+  const u = String(url || "");
+  if (!/\/storage\/v1\/object\/public\//.test(u)) return u;
+  return u.replace("/storage/v1/object/public/", "/storage/v1/render/image/public/").split("?")[0] + "?width=1280&quality=78";
 }
 
 async function validateRemotePhotos(photos) {

@@ -934,6 +934,24 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       /only exposed\|Zillow listing at this address/.test(llSrc3));
   }
 
+  /* ── v62.66: the "took too long" root cause. The Director sent RAW
+     full-resolution upload URLs at detail:high — OpenAI downloaded
+     100-200MB before thinking, every manual-upload plan. Vision URLs now
+     route through Supabase's CDN resize endpoint (verified enabled by
+     live probe), with a one-probe global revert if the feature ever
+     goes away. */
+  check("v62.66: vision URLs route through the CDN resize endpoint at 1280px",
+    /function visionSizedUrl\(url\)/.test(planSrc) &&
+    /\/storage\/v1\/render\/image\/public\//.test(planSrc) &&
+    /width=1280&quality=78/.test(planSrc));
+  check("v62.66: non-storage URLs pass through untouched",
+    /if \(!\/\\\/storage\\\/v1\\\/object\\\/public\\\/\/\.test\(u\)\) return u;/.test(planSrc));
+  check("v62.66: visionPhotos carry originalUrl and one probe reverts all on failure",
+    /originalUrl: p\.url,/.test(planSrc) &&
+    /url: visionSizedUrl\(p\.url\)/.test(planSrc) &&
+    /image transforms unavailable/.test(planSrc) &&
+    /for \(const p of visionPhotos\) p\.url = p\.originalUrl;/.test(planSrc));
+
   /* ── v62.64 (Pinnacle Peak): a 12-photo set got ONE OpenAI attempt (the
      reduced retry only existed >12), and the Gemini failover both lacked
      its key on Vercel AND would have run on a fixed 45s that could blow
