@@ -139,6 +139,9 @@ eval(`globalThis.SPEECH_SEC_PER_WORD = ${(planSrc.match(/const SPEECH_SEC_PER_WO
 eval(`globalThis.SPEECH_SEC_PER_STOP = ${(planSrc.match(/const SPEECH_SEC_PER_STOP = ([\d.]+)/) || [])[1]}`);
 eval(`globalThis.SPEECH_PAD_SEC = ${(planSrc.match(/const SPEECH_PAD_SEC = ([\d.]+)/) || [])[1]}`);
 eval(`globalThis.expectedSentenceCount = ${grab(planSrc, "expectedSentenceCount").replace(/^function \w+/, "function")}`);
+// v62.65: narrationWordBudget now consults the per-voice model — extract it too.
+eval(`globalThis.VOICE_SPEECH_MODELS = ${(planSrc.match(/const VOICE_SPEECH_MODELS = (\{[\s\S]*?\});/) || [])[1]}`);
+eval(`globalThis.speechModelFor = ${grab(planSrc, "speechModelFor").replace(/^function \w+/, "function")}`);
 eval(`globalThis.narrationWordBudget = ${grab(planSrc, "narrationWordBudget").replace(/^function \w+/, "function")}`);
 eval(`globalThis.trimNar = ${grab(planSrc, "trimNarrationToBudget").replace(/^function \w+/, "function")}`);
 
@@ -772,7 +775,7 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     check("v62.50: room machinery is extractable for functional testing", start > 0 && end > start);
     const m = new Function(
       planSrc.slice(start, end) +
-      "; return { narrationRoomMismatches, roomTypesNamedIn, sameRoomClass };"
+      "; return { narrationRoomMismatches, roomTypesNamedIn, sameRoomClass, narrationWordBudget };"
     )();
     const rooms = new Map([["p1", "exterior"], ["p4", "amenity"], ["p5", "living"], ["p6", "bathroom"], ["pd", "detail"]]);
     const flag = (text, photos) => m.narrationRoomMismatches([{ text, photos }], rooms).length === 1;
@@ -792,6 +795,25 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       !flag("A bathroom showcases tile counters and a tub.", ["p6"]));
     check("v62.50: repair prompt translates the amenity bucket into usable guidance",
       /a flexible amenity space \(gym, home office, media room/.test(planSrc));
+
+    /* ── v62.65: per-voice speech models, run FUNCTIONALLY. Troy's cloned
+       voice measured 0.346s/word + 0.595s/stop (Jul 28 CALIBRATION) vs
+       the flat 0.395/1.185 — four renders landed 80-93% of their order
+       because the budget modeled a slower voice than the one reading. */
+    check("v62.65: the measured voice gets a bigger word budget than the flat model",
+      m.narrationWordBudget(30, "otrs2Z7sCUTBvhUvjLsP") > m.narrationWordBudget(30));
+    check("v62.65: the cloned-voice 30s budget lands at 78 words (0.346/0.6 constants)",
+      m.narrationWordBudget(30, "otrs2Z7sCUTBvhUvjLsP") === 78,
+      String(m.narrationWordBudget(30, "otrs2Z7sCUTBvhUvjLsP")));
+    check("v62.65: unknown voices keep the conservative flat constants",
+      m.narrationWordBudget(30, "someUnknownVoiceId") === m.narrationWordBudget(30));
+    check("v62.65: every live budget call site carries the resolved voice",
+      (planSrc.match(/narrationWordBudget\(targetDurationSec, planVoiceId\)/g) || []).length >= 2 &&
+      (planSrc.match(/voiceId: planVoiceId/g) || []).length >= 7 &&
+      /const planVoiceId = resolveVoiceId\(brandKit\?\.voiceId\);/.test(planSrc) &&
+      /narrationWordBudget\(clampedDuration, resolveVoiceId\(brandKit\?\.voiceId\)\)/.test(planSrc));
+    check("v62.65: constants updated only from CALIBRATION lines, per the rule",
+      /Update entries ONLY from worker CALIBRATION lines, never by feel\./.test(planSrc));
   }
 
   /* v62.50 worker belt: the grid duration assignment is positional — assert

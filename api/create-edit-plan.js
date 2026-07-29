@@ -17,6 +17,7 @@ const PLAN_WALL_SEC = 120;
 
 import { requireUser } from "./_lib/auth.js";
 import { rateLimit } from "./_lib/rate-limit.js";
+import { resolveVoiceId } from "./_lib/voice-resolver.js";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1-mini";
@@ -403,6 +404,10 @@ export default async function handler(request, response) {
     15,
     Math.min(MAX_TARGET_DURATION_SEC, Number(body?.targetDurationSec) || DEFAULT_TARGET_DURATION_SEC)
   );
+  // v62.65: resolve the render's actual ElevenLabs voice once (slug →
+  // premade id, cloned id → passthrough) so every word budget below uses
+  // that voice's measured speech constants.
+  const planVoiceId = resolveVoiceId(brandKit?.voiceId);
 
   if (photos.length < 3) {
     const error = invalidPhotoUrls.length
@@ -686,7 +691,7 @@ export default async function handler(request, response) {
     // lines, not the raw ones. The Director's own narration passes through
     // untouched when structurally valid.
     if (includeNarration) {
-      attachNarration(normalizedPlan, parsed?.narration, { targetDurationSec });
+      attachNarration(normalizedPlan, parsed?.narration, { targetDurationSec, voiceId: planVoiceId });
       /* ── v62.43 ROOM-REPAIR: fix the two sentences, keep the monologue. ──
          The Jul 27 render finally named what had been demoting the
          Director's monologue three renders running: "2 sentences name a
@@ -725,7 +730,7 @@ export default async function handler(request, response) {
             const repaired = await repairNarrationRooms(parsed.narration, offenders, { roomById, listingDetails, selectedStyle, timeoutMs: repairBudget });
             if (repaired) {
               const probe = { scenes: normalizedPlan.scenes };
-              attachNarration(probe, repaired, { targetDurationSec });
+              attachNarration(probe, repaired, { targetDurationSec, voiceId: planVoiceId });
               if (probe.narration && probe.narration.source === "director") {
                 probe.narration.source = "director+room-repaired";
                 // v62.48: the probe re-validated clean so it carries no reason —
@@ -743,7 +748,7 @@ export default async function handler(request, response) {
           }
           if (!adopted) {
             const probe = { scenes: normalizedPlan.scenes };
-            attachNarration(probe, parsed.narration, { targetDurationSec, roomMismatchPolicy: "warn" });
+            attachNarration(probe, parsed.narration, { targetDurationSec, roomMismatchPolicy: "warn", voiceId: planVoiceId });
             if (probe.narration && probe.narration.source === "director") {
               normalizedPlan.narration = probe.narration;
               normalizedPlan.narrationScript = probe.narrationScript;
@@ -781,7 +786,7 @@ export default async function handler(request, response) {
          fully director-grade. A rewrite that breaks the mapping is discarded
          and the original ships untouched. */
       const nar = normalizedPlan.narration;
-      const budgetTarget = narrationWordBudget(targetDurationSec);
+      const budgetTarget = narrationWordBudget(targetDurationSec, planVoiceId);
       const nowWords = normalizedPlan.narrationScript
         ? normalizedPlan.narrationScript.split(/\s+/).filter(Boolean).length : 0;
       const expandBudget = planOptionalBudgetMs();
@@ -790,14 +795,14 @@ export default async function handler(request, response) {
       }
       if (nar && nowWords > 0 && nowWords < Math.round(budgetTarget * 0.9) && expandBudget >= 12000) {
         console.info(`[plan] t+${planElapsedSec().toFixed(0)}s — expansion start (${nowWords}w → target ${budgetTarget}, budget ${(expandBudget / 1000).toFixed(0)}s).`);
-        const expanded = await expandNarrationToBudget(nar, { targetDurationSec, listingDetails, selectedStyle, timeoutMs: expandBudget });
+        const expanded = await expandNarrationToBudget(nar, { targetDurationSec, listingDetails, selectedStyle, timeoutMs: expandBudget, voiceId: planVoiceId });
         if (expanded) {
           // Re-run the SAME validation on a throwaway object. If the rewrite
           // broke the monologue/sentences equality or the photo mapping,
           // attachNarration degrades it to derived — and we discard it and
           // keep the Director's original rather than shipping a downgrade.
           const probe = { scenes: normalizedPlan.scenes };
-          attachNarration(probe, expanded, { targetDurationSec });
+          attachNarration(probe, expanded, { targetDurationSec, voiceId: planVoiceId });
           const probeWords = probe.narrationScript
             ? probe.narrationScript.split(/\s+/).filter(Boolean).length : 0;
           if (probe.narration && probe.narration.source === "director" && probeWords > nowWords) {
@@ -821,7 +826,7 @@ export default async function handler(request, response) {
       const overWords = normalizedPlan.narrationScript
         ? normalizedPlan.narrationScript.split(/\s+/).filter(Boolean).length : 0;
       if (overNar && overWords > Math.round(budgetTarget * 1.1)) {
-        const trimmed = trimNarrationToBudget(overNar, { targetDurationSec });
+        const trimmed = trimNarrationToBudget(overNar, { targetDurationSec, voiceId: planVoiceId });
         if (trimmed) {
           /* v62.31: a trimmed sentence takes its scenes with it. Validate
              against the REDUCED scene list, so what ships is a shorter tour
@@ -833,7 +838,7 @@ export default async function handler(request, response) {
           );
           const survivingPhotos = survivingScenes.filter((s) => String(s.type || "photo").toLowerCase() === "photo");
           const probe = { scenes: survivingScenes };
-          attachNarration(probe, trimmed, { targetDurationSec });
+          attachNarration(probe, trimmed, { targetDurationSec, voiceId: planVoiceId });
           const probeWords = probe.narrationScript
             ? probe.narrationScript.split(/\s+/).filter(Boolean).length : 0;
           // MIN_PLAN_SCENES-style floor: a tour needs enough rooms to be a tour.
@@ -870,7 +875,7 @@ export default async function handler(request, response) {
     {
       const words = normalizedPlan.narrationScript
         ? normalizedPlan.narrationScript.trim().split(/\s+/).filter(Boolean).length : 0;
-      const target = narrationWordBudget(targetDurationSec);
+      const target = narrationWordBudget(targetDurationSec, planVoiceId);
       const src = normalizedPlan.narration?.source || "none";
       console.info(
         words
@@ -966,7 +971,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   // sentence-length constraints and window-sizing rules no longer apply to
   // it. Word budget anchors to Troy's spec: 70-85 words at the 30s target,
   // scaled linearly. Per-scene lines are kept for regen + the legacy path.
-  const monologueTarget = narrationWordBudget(clampedDuration);
+  const monologueTarget = narrationWordBudget(clampedDuration, resolveVoiceId(brandKit?.voiceId));
   const monologueMin = Math.round(monologueTarget * 0.9);
   const monologueMax = Math.round(monologueTarget * 1.1);
   const narrationGuidance = includeNarration
@@ -1711,9 +1716,9 @@ function stripNarrationAudioTags(text) {
    Deliberately NOT applied to the derived-from-lines fallback: those
    sentences are per-scene lines clamped to beat windows, and expanding
    them is how you get a script that no longer matches its scenes. */
-async function expandNarrationToBudget(narration, { targetDurationSec, listingDetails, selectedStyle, timeoutMs = 30000 }) {
+async function expandNarrationToBudget(narration, { targetDurationSec, listingDetails, selectedStyle, timeoutMs = 30000, voiceId = "" }) {
   if (!process.env.OPENAI_API_KEY) return null;
-  const target = narrationWordBudget(targetDurationSec);
+  const target = narrationWordBudget(targetDurationSec, voiceId);
   const min = Math.round(target * 0.9);
   const max = Math.round(target * 1.1);
   const current = stripNarrationAudioTags(narration.monologue).split(/\s+/).filter(Boolean).length;
@@ -1922,8 +1927,8 @@ async function repairNarrationRooms(narration, offenders, { roomById, listingDet
    Rebuilding the monologue from the surviving sentences loses the [audio
    tags], which only the eleven_v3 expressive rung consumes; a correct runtime
    is worth more than delivery tags, and the caller logs when it happens. */
-function trimNarrationToBudget(narration, { targetDurationSec = 30 } = {}) {
-  const target = narrationWordBudget(targetDurationSec);
+function trimNarrationToBudget(narration, { targetDurationSec = 30, voiceId = "" } = {}) {
+  const target = narrationWordBudget(targetDurationSec, voiceId);
   const maxWords = Math.round(target * 1.1);
   const minWords = Math.round(target * 0.9);
   const wc = (t) => String(t || "").split(/\s+/).filter(Boolean).length;
@@ -2040,6 +2045,26 @@ const SPEECH_SEC_PER_WORD = 0.395;   // articulation + intra-sentence breaths
 const SPEECH_SEC_PER_STOP = 1.185;   // the pause a voice takes at a full stop
 const SPEECH_PAD_SEC = 1.8;          // worker's LEAD_IN (0.6) + TAIL_PAD (1.2)
 
+/* v62.65 — PER-VOICE SPEECH MODELS. The flat constants above were fitted
+   on two Jul 27 renders of one voice — then four renders of Troy's CLONED
+   voice landed at 80-93% of their ordered length, because that voice
+   reads faster per word and pauses HALF as long at a full stop. The
+   Jul 28 CALIBRATION line measured it directly:
+       64w/5s — implied 0.346s/word + 0.595s/stop  (flat model: 31.8s
+       predicted, 25.96s shipped on a 30s order)
+   A voice we have measured budgets with its own constants; an unknown
+   voice keeps the conservative globals — its overshoot is caught by the
+   worker's proven measure-and-trim, while undershoot has no fixer.
+   Update entries ONLY from worker CALIBRATION lines, never by feel. */
+const VOICE_SPEECH_MODELS = {
+  // Troy's cloned voice — the brand voice on every current render.
+  otrs2Z7sCUTBvhUvjLsP: { secPerWord: 0.346, secPerStop: 0.6 }
+};
+function speechModelFor(voiceId) {
+  return VOICE_SPEECH_MODELS[String(voiceId || "")] ||
+    { secPerWord: SPEECH_SEC_PER_WORD, secPerStop: SPEECH_SEC_PER_STOP };
+}
+
 function expectedSentenceCount(targetDurationSec) {
   const t = Number(targetDurationSec) || 30;
   if (t >= 45) return 7;   // 60s: six spoken beats + CTA
@@ -2047,10 +2072,11 @@ function expectedSentenceCount(targetDurationSec) {
   return 3;                // 15s: hook, one beat, CTA
 }
 
-function narrationWordBudget(targetDurationSec) {
+function narrationWordBudget(targetDurationSec, voiceId) {
   const t = Math.max(15, Math.min(90, Number(targetDurationSec) || 30));
   const stops = expectedSentenceCount(t) - 1;
-  return Math.max(30, Math.round((t + 1 - SPEECH_PAD_SEC - stops * SPEECH_SEC_PER_STOP) / SPEECH_SEC_PER_WORD));
+  const m = speechModelFor(voiceId);
+  return Math.max(30, Math.round((t + 1 - SPEECH_PAD_SEC - stops * m.secPerStop) / m.secPerWord));
 }
 
 function roomTypesNamedIn(text) {
@@ -2111,10 +2137,10 @@ function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
   return out;
 }
 
-function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMismatchPolicy = "demote" } = {}) {
+function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMismatchPolicy = "demote", voiceId = "" } = {}) {
   const scenes = (plan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
   const sceneOrderById = new Map(scenes.map((s, i) => [String(s.photoId), i]));
-  const monologueTarget = narrationWordBudget(targetDurationSec);
+  const monologueTarget = narrationWordBudget(targetDurationSec, voiceId);
 
   const deriveFromLines = (reason) => {
     const sentences = [];
