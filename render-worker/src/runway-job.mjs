@@ -758,7 +758,8 @@ export async function renderRunwayJob(body, options = {}) {
   // ceiling, then the serial constrained retry generated for another ~2
   // minutes — a healthy 9-10 min render shipped in 17.4). A stall is not
   // evidence the scene is hard; it is evidence THAT JOB is lost. So once a
-  // primary has been silent for FAL_HEDGE_DELAY_MS (default 180s) the scene
+  // primary has been silent for FAL_HEDGE_DELAY_MS (default 240s, v62.74;
+  // the clock arms at fal-slot acquisition) the scene
   // launches its constrained sibling and ships whichever finishes first.
   // Cost: one extra generation, only on scenes already 3+ minutes silent.
   //   - primary settles before the delay → identical to today: fast
@@ -769,15 +770,34 @@ export async function renderRunwayJob(body, options = {}) {
   // Every FAL_TIMEOUT — winner-side or loser-side — still increments the
   // stall breaker, and the loser's rejection is consumed here so it can
   // never surface as an unhandled rejection.
-  const FAL_HEDGE_DELAY_MS = Math.max(0, Number(process.env.FAL_HEDGE_DELAY_MS ?? 180000));
+  // v62.74 (first night out): the hedge fired on 4/7 scenes and every
+  // primary won anyway — Kling was SLOW, not stalled (its healthy p50 for
+  // pro clips sits around 3-4 min), and scene 7's timer was counting
+  // fal-slot QUEUE time as silence (7 scenes, 6 slots). Two fixes: the
+  // clock now arms when the slot is ACQUIRED — silence starts when fal can
+  // actually hear us — and the default delay moves 180s → 240s, above the
+  // healthy median and meaningfully below the 300s stall ceiling. Every
+  // hedge line now logs the primary's true silent seconds so the next
+  // tuning pass runs on measured latency, not vibes.
+  const FAL_HEDGE_DELAY_MS = Math.max(0, Number(process.env.FAL_HEDGE_DELAY_MS ?? 240000));
   const hedgedVeoClip = async (scene, index, { constrained }) => {
-    const primary = generateVeoSceneClip(scene, manifest, tempDir, index, { constrained });
-    if (!FAL_HEDGE_DELAY_MS) return await primary; // hedge disabled → old path, byte for byte
     let delayTimer = null;
+    let slotAtMs = 0;
+    let armHedge = () => {};
     const HEDGE = Symbol("hedge-delay");
+    const hedgeSignal = new Promise((resolve) => {
+      armHedge = () => {
+        if (delayTimer || !FAL_HEDGE_DELAY_MS) return;
+        slotAtMs = Date.now();
+        delayTimer = setTimeout(() => resolve(HEDGE), FAL_HEDGE_DELAY_MS);
+      };
+    });
+    const sinceSlot = () => (slotAtMs ? `${Math.round((Date.now() - slotAtMs) / 1000)}s after its fal slot` : "before slot telemetry");
+    const primary = generateVeoSceneClip(scene, manifest, tempDir, index, { constrained, onSlotAcquired: () => armHedge() });
+    if (!FAL_HEDGE_DELAY_MS) return await primary; // hedge disabled → old path, byte for byte
     const early = await Promise.race([
       primary.then((r) => ({ r })).catch((e) => ({ e })),
-      new Promise((resolve) => { delayTimer = setTimeout(() => resolve(HEDGE), FAL_HEDGE_DELAY_MS); })
+      hedgeSignal
     ]);
     if (early !== HEDGE) {
       if (delayTimer) clearTimeout(delayTimer);
@@ -785,7 +805,7 @@ export async function renderRunwayJob(body, options = {}) {
       return early.r;             // fast success → no hedge spent
     }
     console.warn(
-      `[veo] scene ${index + 1}: primary silent for ${Math.round(FAL_HEDGE_DELAY_MS / 1000)}s — ` +
+      `[veo] scene ${index + 1}: primary silent for ${Math.round(FAL_HEDGE_DELAY_MS / 1000)}s of fal time — ` +
       `launching constrained hedge sibling; first finisher ships.`
     );
     const sibling = generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
@@ -798,7 +818,7 @@ export async function renderRunwayJob(body, options = {}) {
     const winner = first.r ? first : await races[first.who === "primary" ? 1 : 0];
     if (winner.r) {
       touchWatchdog();
-      return { ...winner.r, __hedgeFired: true, __hedgeSiblingWon: winner.who === "sibling" };
+      return { ...winner.r, __hedgeFired: true, __hedgeSiblingWon: winner.who === "sibling", __hedgeElapsed: sinceSlot() };
     }
     const ex = new Error(
       `hedged generation exhausted (${first.who}: ${String(first.e?.message || "").slice(0, 120)} | ` +
@@ -870,10 +890,11 @@ export async function renderRunwayJob(body, options = {}) {
             if (result.__hedgeSiblingWon) {
               usedConstrained = true;
               fallbackCount++; // surfaces as "retried" in the phase text, same as the old serial retry
-              console.info(`[veo] scene ${index + 1}: hedge sibling shipped (constrained); primary written off.`);
+              console.info(`[veo] scene ${index + 1}: hedge sibling shipped (constrained, ${result.__hedgeElapsed || "?"}); primary written off.`);
             } else {
-              console.info(`[veo] scene ${index + 1}: primary shipped after the hedge fired; sibling written off.`);
+              console.info(`[veo] scene ${index + 1}: primary shipped ${result.__hedgeElapsed || "after the hedge fired"}; sibling written off.`);
             }
+            delete result.__hedgeElapsed;
             delete result.__hedgeFired;
             delete result.__hedgeSiblingWon;
           }
@@ -1941,7 +1962,7 @@ const VEO_FIDELITY_SUFFIX =
 // Per-scene Veo generation, mapped to the same clipResults shape that
 // generateClip / generateKenBurnsFallback return so the stitch pipeline
 // downstream is untouched.
-export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false, gentleReroll = false } = {}) {
+export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex, { constrained = false, strictConstrained = false, gentleReroll = false, onSlotAcquired = null } = {}) {
   const photo = (manifest.orderedPhotos || []).find((p) => p.id === scene.photoId);
   let imageUrl = pickImageUrl(scene, photo);
   if (!imageUrl) throw new Error(`Scene ${sceneIndex + 1} (${scene.photoId}) missing durable image URL.`);
@@ -2101,7 +2122,8 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
       // v61: attempt 1 runs the lively bold camera language; constrained
       // retries (the ladder's 2nd attempt) drop to the steady suffix so
       // de-escalation is real. Troy: "the first one can be more lively."
-      motionStyle: strictConstrained ? "strict" : constrained ? "steady" : "bold"
+      motionStyle: strictConstrained ? "strict" : constrained ? "steady" : "bold",
+      onSlotAcquired
     }),
     new Promise((_, reject) => {
       attemptDeadline = setTimeout(() => {

@@ -873,6 +873,27 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     /gs\.photoOrdinal !== i/.test(rjSrc2) &&
     /does not match scene order/.test(rjSrc2));
 
+  /* ── v62.72/74: the stall hedge, and what its first night taught. It
+     fired on 4/7 scenes and every primary won anyway — Kling was slow,
+     not stalled, and scene 7's timer counted fal-slot queue time as
+     silence. The clock now arms at slot acquisition, defaults to 240s,
+     and logs the primary's true silent seconds on every hedge line. */
+  {
+    const vjSrc74 = fs.readFileSync(path.join(ROOT, "render-worker/src/veo-job.mjs"), "utf8");
+    check("v62.74: hedge delay defaults to 240s",
+      /FAL_HEDGE_DELAY_MS \?\? 240000/.test(rjSrc2));
+    check("v62.74: the hedge clock arms at fal-slot acquisition, not at call time",
+      /onSlotAcquired: \(\) => armHedge\(\)/.test(rjSrc2) &&
+      /armHedge = \(\) =>/.test(rjSrc2));
+    check("v62.74: generateVeoClip reports slot acquisition to its caller",
+      /onSlotAcquired = null/.test(vjSrc74) &&
+      /acquireFalSlot\(\);[\s\S]{0,260}onSlotAcquired\(\)/.test(vjSrc74));
+    check("v62.72: hedge exhaustion floors instead of paying a third generation",
+      /FAL_HEDGE_EXHAUSTED/.test(rjSrc2) && /hedge_exhausted/.test(rjSrc2));
+    check("v62.74: hedge telemetry logs seconds since the fal slot",
+      /after its fal slot/.test(rjSrc2));
+  }
+
   /* ── v62.52: two findings from the Via Del Arbor banner + the curation
      question. (1) The plan API has reported errorCategory since v60.1 and
      the webapp blamed every fallback on "heavy traffic" — now the banner

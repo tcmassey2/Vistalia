@@ -241,7 +241,12 @@ export async function generateVeoClip({
   safetyTolerance = process.env.FAL_SAFETY || DEFAULT_SAFETY,
   // v61: "bold" = first-attempt language (lively camera; the QC ladder is
   // the net), "steady" = constrained-retry language (calm, stabilized).
-  motionStyle = "bold"
+  motionStyle = "bold",
+  // v62.74: observer for the stall hedge — fires once the global fal slot
+  // is ACQUIRED, i.e. when fal can actually start hearing silence. Without
+  // it the hedge counted slot-queue time as stall time and fired spuriously
+  // on any render with more scenes than slots.
+  onSlotAcquired = null
 }) {
   if (!process.env.FAL_KEY) {
     const err = new Error(
@@ -335,6 +340,9 @@ export async function generateVeoClip({
   // Take a global fal slot first so concurrent renders can't exceed fal's
   // account rate limit. Released in the finally below no matter the outcome.
   await acquireFalSlot();
+  if (typeof onSlotAcquired === "function") {
+    try { onSlotAcquired(); } catch { /* an observer must never break generation */ }
+  }
   try {
     let attempt = 0;
     // Retry transient fal errors — short-window 429 rate limits and 5xx — with
