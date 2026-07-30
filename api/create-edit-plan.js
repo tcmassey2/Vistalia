@@ -1848,7 +1848,9 @@ async function repairNarrationRooms(narration, offenders, { roomById, listingDet
     const actualRooms = [...new Set(o.actual)].map((rt) => rt === "amenity"
       ? "a flexible amenity space (gym, home office, media room, wine room — the property details below may say which)"
       : rt).join(" / ");
-    return `Sentence ${o.index + 1} says "${o.claim}" but its photo shows: ${actualRooms}.`;
+    // v62.69: a linger offender has no photos of its own — it plays over
+    // the previous sentence's scene, and the rewrite instruction says so.
+    return `Sentence ${o.index + 1} says "${o.claim}" but the photo${o.linger ? " on screen while it plays" : ""} shows: ${actualRooms}.`;
   }).join("\n");
   const prompt =
     `You wrote this spoken real-estate tour. ${offenders.length} sentence(s) name a room type their photo does not show — ` +
@@ -2131,17 +2133,31 @@ function roomTypesNamedIn(text) {
 // v62.35: sentences whose text names a room their own photos do not show.
 // Only judges a sentence that names EXACTLY ONE room type — "just beyond
 // the kitchen, the great room opens up" is a legitimate transition, not a
-// mistake. Lingers (no photos) continue the previous room and are skipped,
-// as are detail/amenity scenes, which are too vague to contradict.
+// mistake. Detail/amenity scenes are too vague to contradict (v62.50
+// carved out HARD claims over all-amenity).
+// v62.69 (Invergordon, Troy: "at 23 seconds it mentions a pool and patio
+// while still in the kitchen"): LINGERS ARE JUDGED NOW. The v62.35 skip
+// assumed a linger "continues the previous room" — true of the picture,
+// false of the prose. The Director wrote "Outside, enjoy the inviting
+// pool and covered patio…" as a linger ([]) riding the kitchen run, and
+// the skip made the one sentence class that plays over ANOTHER
+// sentence's photos the one class never judged — outdoor narration over
+// 9.5s of kitchen, with room-repair never consulted. A linger is judged
+// against the photos it actually rides: the nearest earlier sentence
+// that owns any. A linger before any owned photo has nothing on screen
+// to contradict and stays skipped.
 // `roomTypeByPhotoId` is a Map|object of photoId → reconciled roomType.
 function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
   const lookup = (id) => (roomTypeByPhotoId instanceof Map
     ? roomTypeByPhotoId.get(String(id))
     : roomTypeByPhotoId?.[String(id)]);
   const out = [];
+  let ridingPhotos = [];
   for (let i = 0; i < sentences.length; i++) {
     const s = sentences[i];
-    const photos = Array.isArray(s?.photos) ? s.photos : [];
+    const own = Array.isArray(s?.photos) ? s.photos : [];
+    if (own.length) ridingPhotos = own;
+    const photos = own.length ? own : ridingPhotos;
     if (!photos.length) continue;
     const named = roomTypesNamedIn(String(s?.text || ""));
     if (named.size !== 1) continue;
@@ -2162,7 +2178,8 @@ function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
       index: i,
       claim,
       actual,
-      detail: `s${i + 1} says "${claim}" over a ${actual.join("+")} scene: "${String(s.text).slice(0, 70)}"`
+      linger: !own.length,
+      detail: `s${i + 1} says "${claim}"${own.length ? "" : " (linger — rides the previous scene's photos)"} over a ${actual.join("+")} scene: "${String(s.text).slice(0, 70)}"`
     });
   }
   return out;
@@ -2337,8 +2354,8 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
     //
     // Only judge a sentence that names EXACTLY ONE room type: "just beyond
     // the kitchen, the great room opens up" is a legitimate transition,
-    // not a mistake. Lingers (no photos) continue the previous room and
-    // are skipped. detail/amenity scenes are too vague to contradict.
+    // not a mistake. Lingers are judged against the photos they ride
+    // (v62.69). detail/amenity scenes are too vague to contradict.
     const roomTypeByPhotoId = new Map(scenes.map((s) => [String(s.photoId), s.roomType]));
     const contradictions = narrationRoomMismatches(sentences, roomTypeByPhotoId);
     for (const c of contradictions) console.warn(`[plan] narration ROOM MISMATCH: ${c.detail}`);

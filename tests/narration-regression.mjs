@@ -796,6 +796,57 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     check("v62.50: repair prompt translates the amenity bucket into usable guidance",
       /a flexible amenity space \(gym, home office, media room/.test(planSrc));
 
+    /* ── v62.69: the Invergordon linger blind spot. "Outside, enjoy the
+       inviting pool and covered patio…" shipped as a linger ([]) riding
+       the kitchen run — and lingers were SKIPPED by the room check, so
+       the one sentence class that plays over another sentence's photos
+       was the one class never judged. 9.5s of pool narration over the
+       kitchen, at 23 seconds, caught by ear. Lingers are judged against
+       the photos they ride now. */
+    {
+      const rooms69 = new Map([["pk", "kitchen"], ["po", "outdoor"], ["pd", "detail"]]);
+      const mm = (sents) => m.narrationRoomMismatches(sents, rooms69);
+      check("v62.69: pool/patio linger over a kitchen run is flagged (Invergordon s4)",
+        (() => {
+          const r = mm([
+            { text: "The kitchen features warm wood cabinetry and gleaming marble countertops.", photos: ["pk"] },
+            { text: "Outside, enjoy the inviting pool and covered patio, ideal for entertaining.", photos: [] }
+          ]);
+          return r.length === 1 && r[0].index === 1 && r[0].claim === "outdoor" && r[0].linger === true;
+        })());
+      check("v62.69: linger that stays in its own room is clean",
+        mm([
+          { text: "The kitchen features warm wood cabinetry.", photos: ["pk"] },
+          { text: "This kitchen was made for slow mornings.", photos: [] }
+        ]).length === 0);
+      check("v62.69: linger naming no room (lifestyle close / CTA) is clean",
+        mm([
+          { text: "The kitchen features warm wood cabinetry.", photos: ["pk"] },
+          { text: "Schedule your private tour today.", photos: [] }
+        ]).length === 0);
+      check("v62.69: a leading linger with nothing on screen stays skipped; a later owned mismatch is still caught",
+        (() => {
+          const r = mm([
+            { text: "A warm welcome awaits.", photos: [] },
+            { text: "The kitchen features warm wood cabinetry.", photos: ["po"] }
+          ]);
+          return r.length === 1 && r[0].index === 1 && r[0].claim === "kitchen" && r[0].linger === false;
+        })());
+      check("v62.69: a linger rides the NEAREST owner, not the first (patio linger after outdoor owner is clean)",
+        mm([
+          { text: "The kitchen features warm wood cabinetry.", photos: ["pk"] },
+          { text: "Out back, a covered patio waits.", photos: ["po"] },
+          { text: "The patio is made for quiet evenings.", photos: [] }
+        ]).length === 0);
+      check("v62.69: linger over a detail closeup stays exempt (faucet rule extends to lingers)",
+        mm([
+          { text: "Every finish is considered.", photos: ["pd"] },
+          { text: "The kitchen shines with granite counters.", photos: [] }
+        ]).length === 0);
+      check("v62.69: repair prompt tells a linger offender the photo is the one ON SCREEN",
+        /the photo\$\{o\.linger \? " on screen while it plays" : ""\} shows/.test(planSrc));
+    }
+
     /* ── v62.65: per-voice speech models, run FUNCTIONALLY. Troy's cloned
        voice measured 0.346s/word + 0.595s/stop (Jul 28 CALIBRATION) vs
        the flat 0.395/1.185 — four renders landed 80-93% of their order
