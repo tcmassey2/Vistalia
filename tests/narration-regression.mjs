@@ -922,6 +922,36 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
       /after its fal slot/.test(rjSrc2));
   }
 
+  /* ── v62.77: square captions scale down (Troy, after the first
+     native-square smoke test: "Lets make the captions smaller for the
+     square", then picked the smallest rendered candidate: "Use the
+     smallest ones"). v62.18's width-parity remains the VERTICAL law —
+     output byte-identical — while squarer-than-9:16 canvases take a
+     0.75 em scale, tunable via CAPTIONS_SQUARE_SCALE (clamped 0.5-1). Run
+     FUNCTIONALLY against the real module, not regexes. */
+  {
+    const cap = await import(path.join(ROOT, "render-worker/src/captions.mjs"));
+    const w77 = [{ text: "private", start: 0.2, end: 0.6, lineStart: true }, { text: "tour", start: 0.6, end: 1.0 }];
+    const fsOf = (ass) => Number((ass.match(/Style: Cap,[^,]+,(\d+),/) || [])[1]);
+    const envBefore = process.env.CAPTIONS_SQUARE_SCALE;
+    delete process.env.CAPTIONS_SQUARE_SCALE;
+    const vert = fsOf(cap.buildCaptionsAss({ words: w77, playW: 1080, playH: 1920, variant: "luxury" }));
+    const sq = fsOf(cap.buildCaptionsAss({ words: w77, playW: 1080, playH: 1080, variant: "luxury" }));
+    check("v62.77: square captions land at ~75% of vertical type at the same width",
+      sq / vert > 0.70 && sq / vert < 0.80, `vert=${vert} sq=${sq}`);
+    process.env.CAPTIONS_SQUARE_SCALE = "0.7";
+    const sq70 = fsOf(cap.buildCaptionsAss({ words: w77, playW: 1080, playH: 1080, variant: "luxury" }));
+    const vertEnv = fsOf(cap.buildCaptionsAss({ words: w77, playW: 1080, playH: 1920, variant: "luxury" }));
+    check("v62.77: CAPTIONS_SQUARE_SCALE tunes square without touching vertical",
+      sq70 < sq && vertEnv === vert, `sq70=${sq70} vertEnv=${vertEnv}`);
+    process.env.CAPTIONS_SQUARE_SCALE = "2";
+    const sqClamp = fsOf(cap.buildCaptionsAss({ words: w77, playW: 1080, playH: 1080, variant: "luxury" }));
+    check("v62.77: the scale clamps at 1 — square can never exceed width-parity",
+      sqClamp === vert, `sqClamp=${sqClamp} vert=${vert}`);
+    if (envBefore === undefined) delete process.env.CAPTIONS_SQUARE_SCALE;
+    else process.env.CAPTIONS_SQUARE_SCALE = envBefore;
+  }
+
   /* ── v62.52: two findings from the Via Del Arbor banner + the curation
      question. (1) The plan API has reported errorCategory since v60.1 and
      the webapp blamed every fallback on "heavy traffic" — now the banner

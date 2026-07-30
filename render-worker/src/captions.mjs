@@ -198,7 +198,24 @@ export function buildCaptionsAss({ words, playW = 1080, playH = 1920, variant = 
   // phone actually depends on. Vertical position stays proportional to the
   // real frame (yC below), so the block still sits at 70% height.
   const typeH = Math.max(playH, Math.round((playW * 16) / 9));
-  const baseEm = Math.round(typeH * v.emFrac);
+  // v62.77 (Troy, after the first native-square smoke test: "Lets make the
+  // captions smaller for the square"): v62.18 sized square captions at full
+  // width-parity with vertical — same pixel type on an identically wide but
+  // 44% shorter frame — and on a real 1:1 master that reads oversized: the
+  // block eats proportionally more of the frame. Squarer-than-9:16 canvases
+  // now scale the em down (default 0.75 — Troy picked the smallest of three
+  // rendered candidates, 1.0/0.85/0.75, by eye on real frames; still well
+  // above the height-parity 0.5625 that v62.18 measured as an unreadably
+  // "different (worse) product"). Everything downstream — Fontsize via cellPerEm,
+  // tracking, outline, shadow, pill — derives from baseEm, so the whole
+  // block scales coherently and the cell math stays intact. Vertical
+  // masters take scale 1 by construction: byte-identical output, the
+  // v62.18 guarantee preserved. CAPTIONS_SQUARE_SCALE tunes it without a
+  // code change (clamped 0.5-1).
+  const squareScale = playH < Math.round((playW * 16) / 9)
+    ? Math.min(1, Math.max(0.5, Number(process.env.CAPTIONS_SQUARE_SCALE) || 0.75))
+    : 1;
+  const baseEm = Math.round(typeH * v.emFrac * squareScale);
   const baseFontSize = Math.round(baseEm * v.cellPerEm);
   const baseSpacing = +(v.trackingEm * baseEm).toFixed(1);
   const yC = Math.round(playH * 0.70);
