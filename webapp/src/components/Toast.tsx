@@ -5,7 +5,9 @@ import { useStore } from "../lib/store";
  * Toast — single-instance notification at the bottom-right.
  *
  * Slide-in animation, click to dismiss, auto-fade after the store's
- * 3.5s timer. Visually mirrors the rest of the brand: surface card with
+ * length-scaled timer (v62.73: 4s floor, +45ms/char, 12s ceiling — long
+ * import toasts get time to be read). Visually mirrors the rest of the
+ * brand: surface card with
  * gold accent stripe on the left so it reads as part of Vistalia
  * rather than a generic OS notification.
  *

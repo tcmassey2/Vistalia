@@ -663,7 +663,17 @@ export const useStore = create<AppState>((set, get) => ({
   setError: (msg) => set({ error: msg }),
   setToast: (msg) => {
     set({ toast: msg });
-    if (msg) setTimeout(() => set((cur) => (cur.toast === msg ? { toast: "" } : {})), 3500);
+    // v62.73 (Troy: "they go away too quickly to read"): 3.5s flat was sized
+    // for "Photo added", then the import toasts grew into sentences —
+    // shortfall notes, exclusion counts, curation results — and a 160-char
+    // message got the same 3.5s as a 15-char one. Visible time now scales
+    // with length (4s floor, +45ms/char, 12s ceiling); click still dismisses
+    // instantly, and the identity check below means a newer toast is never
+    // cleared by an older toast's timer.
+    if (msg) {
+      const visibleMs = Math.min(12000, Math.max(4000, 2500 + msg.length * 45));
+      setTimeout(() => set((cur) => (cur.toast === msg ? { toast: "" } : {})), visibleMs);
+    }
   },
   bumpUsageRefresh: () => set((s) => ({ usageRefresh: s.usageRefresh + 1 })),
   // Clamped at 0 so a stray double-decrement can never wedge the render
