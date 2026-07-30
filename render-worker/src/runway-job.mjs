@@ -754,6 +754,62 @@ export async function renderRunwayJob(body, options = {}) {
     }
   }, 60000);
 
+  // v62.72 THE STALL HEDGE (Invergordon: one fal job sat the full 360s
+  // ceiling, then the serial constrained retry generated for another ~2
+  // minutes — a healthy 9-10 min render shipped in 17.4). A stall is not
+  // evidence the scene is hard; it is evidence THAT JOB is lost. So once a
+  // primary has been silent for FAL_HEDGE_DELAY_MS (default 180s) the scene
+  // launches its constrained sibling and ships whichever finishes first.
+  // Cost: one extra generation, only on scenes already 3+ minutes silent.
+  //   - primary settles before the delay → identical to today: fast
+  //     failures keep the existing retry/floor ladder, fast successes ship.
+  //   - sibling wins → the clip is constrained; the caller marks it so.
+  //   - both fail → FAL_HEDGE_EXHAUSTED: the sibling WAS the constrained
+  //     retry, so the caller skips the serial retry and goes to the floor.
+  // Every FAL_TIMEOUT — winner-side or loser-side — still increments the
+  // stall breaker, and the loser's rejection is consumed here so it can
+  // never surface as an unhandled rejection.
+  const FAL_HEDGE_DELAY_MS = Math.max(0, Number(process.env.FAL_HEDGE_DELAY_MS ?? 180000));
+  const hedgedVeoClip = async (scene, index, { constrained }) => {
+    const primary = generateVeoSceneClip(scene, manifest, tempDir, index, { constrained });
+    if (!FAL_HEDGE_DELAY_MS) return await primary; // hedge disabled → old path, byte for byte
+    let delayTimer = null;
+    const HEDGE = Symbol("hedge-delay");
+    const early = await Promise.race([
+      primary.then((r) => ({ r })).catch((e) => ({ e })),
+      new Promise((resolve) => { delayTimer = setTimeout(() => resolve(HEDGE), FAL_HEDGE_DELAY_MS); })
+    ]);
+    if (early !== HEDGE) {
+      if (delayTimer) clearTimeout(delayTimer);
+      if (early.e) throw early.e; // fast failure → existing ladder unchanged
+      return early.r;             // fast success → no hedge spent
+    }
+    console.warn(
+      `[veo] scene ${index + 1}: primary silent for ${Math.round(FAL_HEDGE_DELAY_MS / 1000)}s — ` +
+      `launching constrained hedge sibling; first finisher ships.`
+    );
+    const sibling = generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true });
+    const wrap = (p, who) => p.then((r) => ({ r, who })).catch((e) => {
+      if (e?.code === "FAL_TIMEOUT") falStallCount++; // the breaker sees every stall
+      return { e, who };
+    });
+    const races = [wrap(primary, "primary"), wrap(sibling, "sibling")];
+    const first = await Promise.race(races);
+    const winner = first.r ? first : await races[first.who === "primary" ? 1 : 0];
+    if (winner.r) {
+      touchWatchdog();
+      return { ...winner.r, __hedgeFired: true, __hedgeSiblingWon: winner.who === "sibling" };
+    }
+    const ex = new Error(
+      `hedged generation exhausted (${first.who}: ${String(first.e?.message || "").slice(0, 120)} | ` +
+      `${winner.who}: ${String(winner.e?.message || "").slice(0, 120)})`
+    );
+    ex.code = isContentPolicyError(first.e) || isContentPolicyError(winner.e)
+      ? "FAL_CONTENT_POLICY"
+      : "FAL_HEDGE_EXHAUSTED";
+    throw ex;
+  };
+
   let rawClipResults;
   try {
   rawClipResults = await pMap(
@@ -804,8 +860,23 @@ export async function renderRunwayJob(body, options = {}) {
           }
         }
         try {
-          result = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained });
+          // v62.72: the hedge wraps ONLY this primary ask. QC's constrained
+          // regens below stay serial — they run after a delivered clip, when
+          // the wall-clock stakes are minutes, not a stalled six.
+          result = await hedgedVeoClip(scene, index, { constrained });
           touchWatchdog();
+          if (result?.__hedgeFired) {
+            attemptsUsed = 2; // two generations paid, whichever shipped
+            if (result.__hedgeSiblingWon) {
+              usedConstrained = true;
+              fallbackCount++; // surfaces as "retried" in the phase text, same as the old serial retry
+              console.info(`[veo] scene ${index + 1}: hedge sibling shipped (constrained); primary written off.`);
+            } else {
+              console.info(`[veo] scene ${index + 1}: primary shipped after the hedge fired; sibling written off.`);
+            }
+            delete result.__hedgeFired;
+            delete result.__hedgeSiblingWon;
+          }
         } catch (error) {
           touchWatchdog();
           if (error?.code === "FAL_TIMEOUT") falStallCount++;
@@ -813,8 +884,19 @@ export async function renderRunwayJob(body, options = {}) {
           // most often means the motion asked too much of the source photo).
           // Exception: if this stall just opened the circuit, the retry would
           // stall another 6 minutes too — skip straight to the floor.
-          console.warn(`[veo] scene ${index + 1} failed (${error.message}). Retrying once, constrained.`);
+          // v62.72: an exhausted hedge already spent the constrained retry —
+          // its skip below floors immediately instead of paying a third time.
+          console.warn(
+            `[veo] scene ${index + 1} failed (${error.message}). ` +
+            (error?.code === "FAL_HEDGE_EXHAUSTED"
+              ? "Hedge consumed the constrained retry — going to the floor."
+              : "Retrying once, constrained.")
+          );
           try {
+            if (error?.code === "FAL_HEDGE_EXHAUSTED") {
+              attemptsUsed = 2;
+              throw error; // both generations already failed — floor now
+            }
             if (error?.code === "FAL_TIMEOUT" && falStallCount >= FAL_STALL_BREAKER) {
               const skip = new Error(`stall circuit open (${falStallCount} fal stalls) — skipping Veo retry`);
               skip.code = "FAL_CIRCUIT_OPEN";
@@ -852,7 +934,9 @@ export async function renderRunwayJob(body, options = {}) {
                   ? "content_policy"
                   : retryError?.code === "FAL_CIRCUIT_OPEN"
                     ? "circuit_open"
-                    : `generation_failed:${String(retryError?.message || "").slice(0, 60)}`
+                    : retryError?.code === "FAL_HEDGE_EXHAUSTED"
+                      ? "hedge_exhausted"
+                      : `generation_failed:${String(retryError?.message || "").slice(0, 60)}`
               };
             } catch (floorErr) {
               console.warn(`[veo] scene ${index + 1} photo-motion floor ALSO failed (${floorErr.message}) — DROPPING this scene.`);
