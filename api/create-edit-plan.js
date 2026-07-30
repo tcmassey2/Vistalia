@@ -2021,6 +2021,19 @@ const ROOM_WORDS = [
   // two types → skipped, so no cross-FP.
   ["living", /\b(living (?:room|area|space)|great room|family room|sitting room)\b/i],
   ["exterior", /\b(exteriors?|facade|façade|curb appeal|driveway|front elevation)\b/i],
+  // v62.76 (Indian Bend, Troy: "yes that was a bathroom"): "Step through
+  // the elegant entryway framed by lush landscaping and a tranquil
+  // fountain" shipped over a BATHROOM — entryway named zero known room
+  // types, so the sentence slipped the check exactly like Cheney's "home
+  // gym" once did. "entry" is a CLAIM-ONLY type (the classifier menu is
+  // unchanged): satisfied by exterior/outdoor/living photos via
+  // ROOM_EQUIV, flagged over bathroom/kitchen/bedroom. Deliberately NOT
+  // added: "landscaping"/"fountain" as outdoor words — they co-occur with
+  // entryway in exactly these sentences, would make them name TWO types,
+  // and the two-type transition skip would swallow the very sentence this
+  // entry exists to catch. No bare "entrance" — "the entrance to the
+  // kitchen" is a preposition, not a claim.
+  ["entry", /\b(entryways?|entry hall|entrance hall|foyers?)\b/i],
   // "pool table" (and "pool-table") is a game room, not a pool.
   ["outdoor", /\b(patio|pool(?:s|side)?\b(?![\s-]*table)|backyard|back yard|courtyard|terrace|deck|firepit|fire pit|outdoor (?:living|seating|kitchen|space|area))\b/i],
   // v62.50 (Cheney Dr): "The home gym offers natural light and equipment"
@@ -2039,7 +2052,14 @@ const ROOM_WORDS = [
 // detection — every mismatch this check exists to catch (a bathroom named
 // over a bedroom, an outdoor space named over an interior, a kitchen named
 // over anything else) still crosses a class boundary.
-const ROOM_EQUIV = [["exterior", "outdoor"], ["living", "bedroom"]];
+const ROOM_EQUIV = [
+  ["exterior", "outdoor"], ["living", "bedroom"],
+  // v62.76: "entry" claims are honest over front-entry shots (exterior),
+  // entry courtyards (outdoor), and interior foyers (living) — the
+  // classifier has no entry bucket, so all three are legitimate homes.
+  // Entry over bathroom/kitchen/bedroom stays a mismatch.
+  ["entry", "exterior"], ["entry", "outdoor"], ["entry", "living"]
+];
 function sameRoomClass(a, b) {
   if (a === b) return true;
   return ROOM_EQUIV.some((pair) => pair.includes(a) && pair.includes(b));

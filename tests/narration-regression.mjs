@@ -845,6 +845,32 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
         ]).length === 0);
       check("v62.69: repair prompt tells a linger offender the photo is the one ON SCREEN",
         /the photo\$\{o\.linger \? " on screen while it plays" : ""\} shows/.test(planSrc));
+
+      /* ── v62.76: the Indian Bend entryway. "Step through the elegant
+         entryway framed by lush landscaping and a tranquil fountain"
+         shipped over a BATHROOM — "entryway" named zero known room
+         types, the Cheney "home gym" class all over again. "entry" is a
+         claim-only type: honest over exterior/outdoor/living, flagged
+         over wet rooms and bedrooms. */
+      {
+        const rooms76 = new Map([["pb", "bathroom"], ["px", "exterior"], ["pl", "living"], ["po2", "outdoor"], ["pbed", "bedroom"]]);
+        const mm76 = (sents) => m.narrationRoomMismatches(sents, rooms76);
+        check("v62.76: the exact Indian Bend sentence now flags over a bathroom",
+          (() => {
+            const r = mm76([{ text: "Step through the elegant entryway framed by lush landscaping and a tranquil fountain.", photos: ["pb"] }]);
+            return r.length === 1 && r[0].claim === "entry";
+          })());
+        check("v62.76: entryway over a front-entry exterior is clean",
+          mm76([{ text: "The entryway welcomes you with a custom iron door.", photos: ["px"] }]).length === 0);
+        check("v62.76: foyer over a living-classified interior is clean",
+          mm76([{ text: "The foyer opens to soaring ceilings.", photos: ["pl"] }]).length === 0);
+        check("v62.76: entry courtyard over an outdoor photo is clean",
+          mm76([{ text: "A gated entryway with a stone path.", photos: ["po2"] }]).length === 0);
+        check("v62.76: entryway over a bedroom flags (no entry-bedroom equivalence)",
+          mm76([{ text: "The entryway sets the tone for the home.", photos: ["pbed"] }]).length === 1);
+        check("v62.76: entry + living in one sentence stays a two-room transition (skipped)",
+          mm76([{ text: "Just past the entryway, the living room opens up.", photos: ["pb"] }]).length === 0);
+      }
     }
 
     /* ── v62.65: per-voice speech models, run FUNCTIONALLY. Troy's cloned
@@ -915,6 +941,17 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.52: motionRisk is a tie-breaker, never a reject",
     /motionRisk NEVER rejects a photo/.test(curSrc) &&
     /lower motionRisk one opens/.test(curSrc));
+
+  /* ── v62.76: annotated aerials are curated out. The Indian Bend render
+     shipped a red property-boundary outline into a Cinematic Luxury cut —
+     QC preserved it faithfully because faithfulness is QC's job; the
+     selector is the only honest place to stop it. */
+  check("v62.76: curation prompt rejects photos with drawn markup (boundary outlines, callouts)",
+    /ANNOTATED PHOTOS/.test(curSrc) &&
+    /property-boundary outlines/.test(curSrc) &&
+    /tourOrder=0, pickWorthiness no higher than 15/.test(curSrc));
+  check("v62.76: clean aerials keep their score — only drawn graphics reject",
+    /clean aerial with NO drawn graphics keeps its normal score/.test(curSrc));
   check("v62.52: absent motionRisk defaults neutral (50), not zero",
     /clampNumber\(row\.motionRisk \?\? 50, 0, 100\)/.test(curSrc));
   const psSrc = fs.readFileSync(path.join(ROOT, "webapp/src/screens/ProjectScreen.tsx"), "utf8");

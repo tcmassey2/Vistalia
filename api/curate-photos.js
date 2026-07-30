@@ -338,6 +338,13 @@ function buildOpenAIRequest(photos) {
     "",
     "FIRST, contentType — the absolute gate: for every image decide if it is an actual PHOTOGRAPH (or photoreal architectural rendering) of this property → 'property_photo', or a GRAPHIC: 'floor_plan_or_site_plan' (any architectural drawing, plat, survey, elevation sheet), 'document_or_brochure' (MLS sheets, flyers, text pages), 'map', or 'other_graphic' (logos, agent headshots, collages). Anything that is not 'property_photo' is ALWAYS rejected (tourOrder=0) — no other rule, default, or keep-target overrides this. A video scene animating a floor plan is a customer-facing defect.",
     "PLAN-DETECTION CARE: COLORED site plans and landscape plans — top-down orthographic drawings on white/paper backgrounds, even with rendered pools, lawns, furniture symbols, or room fills — are 'floor_plan_or_site_plan', NOT photos and NOT aerial views. A real aerial photo has terrain, shadows, and perspective; a drawing has uniform paper background and drafted line work. When an image is a straight-down diagram of the whole property, it is a plan.",
+    // v62.76 (Indian Bend smoke test: a red property-boundary outline rode
+    // an aerial into a Cinematic Luxury render; QC faithfully preserved it
+    // — "the red outline is consistent across all frames" — because
+    // faithfulness is QC's whole job. Troy: "the best course of action
+    // would be to avoid them." Selection is the only honest place to stop
+    // them, and this pass is the selector.)
+    "ANNOTATED PHOTOS: a real photograph — most often an aerial/drone shot — carrying DRAWN markup: property-boundary outlines (typically red or yellow lot lines), highlighted parcels, arrows, text callouts, dimension labels, or 'lot lines approximate' stamps. contentType stays 'property_photo' (it IS a photo), but REJECT it: tourOrder=0, pickWorthiness no higher than 15, reason naming the markup (e.g. 'aerial with drawn lot lines'). A cinematic tour scene with a red boundary line crawling across it reads as an MLS printout, not film. A clean aerial with NO drawn graphics keeps its normal score.",
     "",
     "INCLUSION DEFAULT (applies ONLY to property_photo images): agents have already curated their upload; lean toward INCLUDING photos in the tour. Only reject if a photo is genuinely unusable. A typical listing should have 90%+ of uploads in the final cut. Aim to KEEP at least 80% of input photos, more for sets under 25.",
     "",
