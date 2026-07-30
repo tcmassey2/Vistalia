@@ -284,6 +284,7 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
   const reorderPhotos = useStore((s) => s.reorderPhotos);
   const setError = useStore((s) => s.setError);
   const setToast = useStore((s) => s.setToast);
+  const outputFormat = useStore((s) => s.outputFormat);
 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
@@ -413,6 +414,29 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
   const photoCountLabel = `${photos.length} of ${MAX_PHOTOS}`;
   const isFull = photos.length >= MAX_PHOTOS;
 
+  // v62.70 (Invergordon: every scene generated from a ~2.4x upscale and the
+  // whole render read soft): the set-level low-res check. The import gate
+  // (v62.15) is median-RELATIVE — a uniformly small set has no odd one out —
+  // and render QC checks consistency with the photo, so a faithful render of
+  // a soft photo passes every gate downstream. This is the one moment the
+  // customer can still act. Same arithmetic as the worker's [src] line: fit
+  // the delivery aspect inside each photo, compare that crop against the
+  // 1080-wide delivery frame (1080x1920 vertical, 1080x1080 square), and
+  // speak up when the MEDIAN photo needs real enlarging. Factual and
+  // source-blind: a soft camera export warns exactly like a soft portal set.
+  const measured = photos.filter((p) => p.width > 0 && p.height > 0);
+  let lowRes: { median: number; soft: number; total: number } | null = null;
+  if (measured.length >= 3) {
+    const aspect = outputFormat === "square" ? 1 : 9 / 16;
+    const factors = measured
+      .map((p) => 1080 / Math.max(1, Math.min(p.width, p.height * aspect)))
+      .sort((a, b) => a - b);
+    const median = factors[Math.floor(factors.length / 2)];
+    if (median > 1.35) {
+      lowRes = { median, soft: factors.filter((f) => f > 1.35).length, total: measured.length };
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {/* Drop zone — now genuinely drag-and-drop */}
@@ -534,6 +558,13 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
             Photo 1 is your <span className="text-gold-light font-semibold">hero shot</span> — the AI opens the video on it.
             Drag the corner controls to reorder, or hand the whole set to AI for a curated walkthrough.
           </p>
+          {lowRes && (
+            <p className="text-[11px] text-amber-300/90 leading-relaxed">
+              These photos are below full resolution for {outputFormat === "square" ? "square" : "vertical"} video —
+              {" "}{lowRes.soft} of {lowRes.total} would be enlarged about {lowRes.median.toFixed(1)}× to fill the frame,
+              which can read as soft. Full-size originals make the sharpest video.
+            </p>
+          )}
         </div>
       )}
 
