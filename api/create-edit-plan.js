@@ -2091,7 +2091,13 @@ const SPEECH_PAD_SEC = 1.8;          // worker's LEAD_IN (0.6) + TAIL_PAD (1.2)
    Update entries ONLY from worker CALIBRATION lines, never by feel. */
 const VOICE_SPEECH_MODELS = {
   // Troy's cloned voice — the brand voice on every current render.
-  otrs2Z7sCUTBvhUvjLsP: { secPerWord: 0.346, secPerStop: 0.6 }
+  // v62.71: two CALIBRATION samples — Jul 28 measured 0.346/0.595, Jul 29
+  // (Invergordon) measured 0.367/0.604. Budgeted at 0.346, the Director
+  // wrote 81 words, the voice measured 34.0s on a 30s order, and the trim
+  // ate a body sentence. Overshoot has a fixer and undershoot doesn't, so
+  // the entry takes the SLOWER sample: ~74-word budget instead of 78, and
+  // the Director keeps its own sentences.
+  otrs2Z7sCUTBvhUvjLsP: { secPerWord: 0.367, secPerStop: 0.604 }
 };
 function speechModelFor(voiceId) {
   return VOICE_SPEECH_MODELS[String(voiceId || "")] ||

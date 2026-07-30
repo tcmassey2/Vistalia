@@ -853,8 +853,8 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
        because the budget modeled a slower voice than the one reading. */
     check("v62.65: the measured voice gets a bigger word budget than the flat model",
       m.narrationWordBudget(30, "otrs2Z7sCUTBvhUvjLsP") > m.narrationWordBudget(30));
-    check("v62.65: the cloned-voice 30s budget lands at 78 words (0.346/0.6 constants)",
-      m.narrationWordBudget(30, "otrs2Z7sCUTBvhUvjLsP") === 78,
+    check("v62.71: the cloned-voice 30s budget lands at 74 words (0.367/0.604, Jul 29 CALIBRATION)",
+      m.narrationWordBudget(30, "otrs2Z7sCUTBvhUvjLsP") === 74,
       String(m.narrationWordBudget(30, "otrs2Z7sCUTBvhUvjLsP")));
     check("v62.65: unknown voices keep the conservative flat constants",
       m.narrationWordBudget(30, "someUnknownVoiceId") === m.narrationWordBudget(30));
