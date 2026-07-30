@@ -758,7 +758,7 @@ export async function renderRunwayJob(body, options = {}) {
   // ceiling, then the serial constrained retry generated for another ~2
   // minutes — a healthy 9-10 min render shipped in 17.4). A stall is not
   // evidence the scene is hard; it is evidence THAT JOB is lost. So once a
-  // primary has been silent for FAL_HEDGE_DELAY_MS (default 240s, v62.74;
+  // primary has been silent for FAL_HEDGE_DELAY_MS (default 300s, v62.75;
   // the clock arms at fal-slot acquisition) the scene
   // launches its constrained sibling and ships whichever finishes first.
   // Cost: one extra generation, only on scenes already 3+ minutes silent.
@@ -775,11 +775,16 @@ export async function renderRunwayJob(body, options = {}) {
   // pro clips sits around 3-4 min), and scene 7's timer was counting
   // fal-slot QUEUE time as silence (7 scenes, 6 slots). Two fixes: the
   // clock now arms when the slot is ACQUIRED — silence starts when fal can
-  // actually hear us — and the default delay moves 180s → 240s, above the
-  // healthy median and meaningfully below the 300s stall ceiling. Every
-  // hedge line now logs the primary's true silent seconds so the next
-  // tuning pass runs on measured latency, not vibes.
-  const FAL_HEDGE_DELAY_MS = Math.max(0, Number(process.env.FAL_HEDGE_DELAY_MS ?? 240000));
+  // actually hear us — and every hedge line logs the primary's true silent
+  // seconds so tuning runs on measured latency, not vibes.
+  // v62.75: the telemetry immediately earned its keep. Next render: 4/5
+  // hedged again, primaries won at 244/260/285/285s — the healthy band
+  // reaches ~290s, so 240s was STILL inside normal and the 300s stall
+  // ceiling left no daylight above healthy p95. Delay moves to 300s and
+  // the subscribe ceiling goes back to 360s (veo-job): a scene only hedges
+  // once it is slower than every healthy completion ever measured, and a
+  // genuine stall still ships through the sibling by ~10 min.
+  const FAL_HEDGE_DELAY_MS = Math.max(0, Number(process.env.FAL_HEDGE_DELAY_MS ?? 300000));
   const hedgedVeoClip = async (scene, index, { constrained }) => {
     let delayTimer = null;
     let slotAtMs = 0;

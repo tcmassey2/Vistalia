@@ -330,12 +330,13 @@ export async function generateVeoClip({
   // REJECTS instead of hanging; that rejection trips the retry-once-constrained
   // path in runway-job.mjs (and, if the retry also stalls, the clean refund).
   // The orphaned fal job simply finishes unused on fal's side.
-  // v62.72: 360s → 300s. Healthy Kling v3 pro clips return in 2-5 min; the
-  // Invergordon stall sat the full 6 before the serial retry even started.
-  // The stall hedge (runway-job) launches a constrained sibling at 180s, so
-  // a slow SUCCESS still ships through the sibling even when this primary
-  // is declared stalled at 300s.
-  const SUBSCRIBE_TIMEOUT_MS = Number(process.env.FAL_SCENE_TIMEOUT_MS) || 300000; // 5 min
+  // v62.72 dropped this 360s → 300s; v62.75 puts it BACK. The hedge's
+  // elapsed telemetry measured healthy Kling pro completions at 244-285s —
+  // a 300s ceiling would declare a healthy 310s clip stalled and pay a
+  // full regeneration for a video that was seconds from done. The hedge
+  // (runway-job, 300s) covers the slow tail; this ceiling only exists to
+  // call genuinely dead jobs, and Invergordon's real stall sat past 360.
+  const SUBSCRIBE_TIMEOUT_MS = Number(process.env.FAL_SCENE_TIMEOUT_MS) || 360000; // 6 min
   let result;
   // Take a global fal slot first so concurrent renders can't exceed fal's
   // account rate limit. Released in the finally below no matter the outcome.

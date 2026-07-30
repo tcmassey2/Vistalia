@@ -880,8 +880,10 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
      and logs the primary's true silent seconds on every hedge line. */
   {
     const vjSrc74 = fs.readFileSync(path.join(ROOT, "render-worker/src/veo-job.mjs"), "utf8");
-    check("v62.74: hedge delay defaults to 240s",
-      /FAL_HEDGE_DELAY_MS \?\? 240000/.test(rjSrc2));
+    check("v62.75: hedge delay defaults to 300s (above every measured healthy completion)",
+      /FAL_HEDGE_DELAY_MS \?\? 300000/.test(rjSrc2));
+    check("v62.75: subscribe ceiling back at 360s — the hedge covers the slow tail, the ceiling calls the dead",
+      /FAL_SCENE_TIMEOUT_MS\) \|\| 360000/.test(vjSrc74));
     check("v62.74: the hedge clock arms at fal-slot acquisition, not at call time",
       /onSlotAcquired: \(\) => armHedge\(\)/.test(rjSrc2) &&
       /armHedge = \(\) =>/.test(rjSrc2));
