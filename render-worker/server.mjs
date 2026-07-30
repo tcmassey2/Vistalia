@@ -820,9 +820,18 @@ async function runRenderJob(jobId, body) {
             thumbnailUrl: publishedResult?.thumbnailUrl || "",
             listingTitle: body?.manifest?.project?.address || body?.manifest?.project?.title || "Your listing video"
           })
-        }).then((r) => {
-          if (!r.ok) console.warn(`[notify] render-complete email HTTP ${r.status} for ${jobId}`);
-          else console.info(`[notify] render-complete email sent for ${jobId}`);
+        }).then(async (r) => {
+          if (!r.ok) { console.warn(`[notify] render-complete email HTTP ${r.status} for ${jobId}`); return; }
+          // v62.78: a 200 is NOT a delivery. The api returns 200 with
+          // {sent:false, skipped:true} when RESEND_API_KEY is missing on
+          // Vercel — and this line spent the week of Jul 23-30 logging
+          // "sent" for emails that never existed (the key was pulled; the
+          // free funnel's deliverable IS this email). Read the body and
+          // say the truth: sent, SKIPPED, or the api's own words.
+          const info = await r.json().catch(() => null);
+          if (info?.sent === true) console.info(`[notify] render-complete email sent for ${jobId}`);
+          else if (info?.skipped) console.warn(`[notify] render-complete email SKIPPED for ${jobId} — RESEND_API_KEY missing on Vercel; nothing was delivered.`);
+          else console.warn(`[notify] render-complete email uncertain for ${jobId} — api says: ${JSON.stringify(info || {}).slice(0, 140)}`);
         }).catch((e) => console.warn(`[notify] render-complete email failed: ${e.message}`));
       }
     } catch { /* never block completion on email */ }

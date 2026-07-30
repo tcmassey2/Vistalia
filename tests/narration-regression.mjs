@@ -952,6 +952,19 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     else process.env.CAPTIONS_SQUARE_SCALE = envBefore;
   }
 
+  /* ── v62.78: the render-complete notify line can no longer lie. The api
+     returns HTTP 200 with {sent:false, skipped:true} when RESEND_API_KEY
+     is missing on Vercel, and the worker logged "email sent" off r.ok
+     alone — a week of sent-lines covering zero deliveries (the free
+     funnel's deliverable IS this email). */
+  {
+    const svSrc = fs.readFileSync(path.join(ROOT, "render-worker/server.mjs"), "utf8");
+    check("v62.78: worker reads the notify response body — a 200 is not a delivery",
+      /info\?\.sent === true/.test(svSrc) && /email SKIPPED for/.test(svSrc));
+    check("v62.78: the skip line names the cause and the consequence",
+      /RESEND_API_KEY missing on Vercel; nothing was delivered\./.test(svSrc));
+  }
+
   /* ── v62.52: two findings from the Via Del Arbor banner + the curation
      question. (1) The plan API has reported errorCategory since v60.1 and
      the webapp blamed every fallback on "heavy traffic" — now the banner
