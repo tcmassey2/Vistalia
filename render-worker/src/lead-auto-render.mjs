@@ -166,6 +166,23 @@ function buildManifest({ userId, projectId, address, facts, photos, editPlan }) 
     promptVersion: editPlan.promptVersion || null,
     introCard: editPlan.introCard,
     outroCard: editPlan.outroCard,
+    // v62.80 — THE MISSING SPINE. buildManifest copied the plan field by
+    // field and simply never carried `narration`, so every auto-rendered
+    // lead video reached the worker without a monologue and logged
+    // "[voice-first] manifest carries no narration.monologue (pre-v62
+    // plan) — legacy voice path." Two visible consequences, both reported
+    // by Troy on the Jul 31 batch: (1) THE ADDRESS WAS NEVER SPOKEN — the
+    // v62 plan prompt mandates the street address as the monologue's
+    // opening sentence ("the spoken address is the one sentence every
+    // listing video must carry"), and that sentence lives ONLY in the
+    // monologue; the legacy per-scene narrationLine path has no such
+    // requirement. (2) THE VOICE SOUNDED STRANGE — the legacy path speaks
+    // disconnected per-scene fragments (18-37 words against a ~74-word
+    // 30s budget) with no arc, no connective transitions and no [warm]/
+    // [pause] delivery tags, so it reads as clipped and robotic.
+    // The plan endpoint was building the monologue correctly the whole
+    // time; the manifest just dropped it on the floor.
+    narration: editPlan.narration || null,
     narrationScript: editPlan.narrationScript || "",
     musicMood: editPlan.musicMood,
     musicTrack: "",

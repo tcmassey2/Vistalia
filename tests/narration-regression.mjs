@@ -738,6 +738,7 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
      series, frame 0 dropped) is the smoothness meter the gimbal verdict
      needs. Telemetry only — no gate may ever hang off it. */
   const rjSrc2 = fs.readFileSync(path.join(ROOT, "render-worker/src/runway-job.mjs"), "utf8");
+  const leadSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/lead-auto-render.mjs"), "utf8");
   check("v62.49/51: motion probe computes smoothness on the series minus frame 0",
     /const run = xs\.slice\(1\);/.test(rjSrc2) && /jitter = sdOf\(env, m\) \/ m;/.test(rjSrc2));
   check("v62.49: the v60.5 mean is untouched (all frames, same formula)",
@@ -1198,23 +1199,49 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.55: signup still fires the pixel Lead",
     /trackLead\(\);/.test(asSrc));
 
-  /* ── v62.54: the free-render watermark flips stance — v46 was "subtle
-     enough that posting it is still tempting"; Troy's conversion call is
-     the opposite: the trial video is the demo, the watermark is the
-     paywall. Five drawtext layers: pill + breathing center FREE PREVIEW +
-     two crop-defeating echoes + upgrade banner. Rendered and verified at
-     9:16, 1:1, 16:9 (w/7 clipped both ends on 9:16 — w/9 fits). */
-  check("v62.54: watermark carries the breathing center mark",
-    /text='FREE PREVIEW'/.test(rjSrc2) && /sin\(2\*PI\*t\/4\)/.test(rjSrc2));
-  check("v62.54: crop-defeating echoes and the upgrade banner exist",
-    (rjSrc2.match(/text='VISTALIA'/g) || []).length === 2 &&
-    /upgrade at vistalia\.ai to remove/.test(rjSrc2));
-  check("v62.54: center mark sized to fit every canvas (w/9, height-capped)",
-    /Math\.min\(Math\.round\(w \/ 9\), Math\.round\(h \/ 6\)\)/.test(rjSrc2));
-  check("v62.54: banner clears the agent badge zone (h-130) on every aspect",
-    /const bannerY = h - 210;/.test(rjSrc2));
-  check("v62.54: the v46 brand pill survives in its launch position",
+  /* ── v62.79: the watermark swings back. v62.54 built a wall (breathing
+     centre FREE PREVIEW + two crop-defeating echoes + upgrade banner);
+     Troy killed it — "that is too much" — because the wall buried the
+     footage that sells the upgrade. One quiet serif mark now, in the
+     title card's voice. These tests are inverted on purpose: they guard
+     the ABSENCE of the wall, which is the thing a future "make the trial
+     convert harder" instinct would silently reintroduce. */
+  check("v62.79: the free-render wall is gone (no centre mark, echoes, banner)",
+    !/FREE PREVIEW/.test(rjSrc2.replace(/\/\/[^\n]*/g, "")) &&
+    !/text='VISTALIA'/.test(rjSrc2) &&
+    !/upgrade at vistalia\.ai to remove/.test(rjSrc2));
+  check("v62.79: exactly one drawtext survives in the free-render mark",
+    (() => {
+      const fn = rjSrc2.match(/export function buildFreeRenderWatermark[\s\S]*?\n}/);
+      return !!fn && (fn[0].match(/drawtext=/g) || []).length === 1;
+    })());
+  check("v62.79: the mark is the title card's serif, shadowed, unboxed",
+    /VistaliaSerif-SemiBold\.ttf/.test(rjSrc2) &&
+    (() => {
+      const fn = rjSrc2.match(/export function buildFreeRenderWatermark[\s\S]*?\n}/)[0];
+      return /shadowcolor=black@0\.55/.test(fn) && !/box=1/.test(fn);
+    })());
+  check("v62.79: the vistalia.ai mark keeps its launch position",
     /text='vistalia\.ai'/.test(rjSrc2) && /x=36:y=40/.test(rjSrc2));
+  check("v62.79: agent lower-third speaks the card's voice, not boxed plates",
+    (() => {
+      const fn = rjSrc2.match(/function buildWatermarkDrawtext[\s\S]*?\n}/)[0];
+      return !/box=1/.test(fn) && /0xC7A76C/.test(fn) && /toUpperCase\(\)/.test(fn);
+    })());
+
+  /* ── v62.80: the lead auto-render manifest must carry the v62 monologue.
+     buildManifest copied the plan field by field and omitted `narration`,
+     so every auto-rendered lead fell to the legacy voice path: the street
+     address — mandated as the monologue's opening sentence — was never
+     spoken, and the voice read as clipped fragments. Silent for five
+     delivered customer videos before Troy caught it by ear. */
+  check("v62.80: lead manifest carries plan narration (voice-first spine)",
+    /narration: editPlan\.narration \|\| null/.test(leadSrc));
+  check("v62.80: the legacy narration fields ride alongside, not instead",
+    /narrationScript: editPlan\.narrationScript \|\| ""/.test(leadSrc) &&
+    /narrationLine: scene\.narrationLine \|\| ""/.test(leadSrc));
+  check("v62.80: the plan prompt still mandates the spoken address",
+    /the spoken address is the one sentence every listing video must carry/.test(planSrc));
 
   /* ── v62.53: the Director's scene selection carries the same risk
      tie-breaker as import curation — it picks WHICH photos become scenes
