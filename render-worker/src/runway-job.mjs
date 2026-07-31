@@ -3089,65 +3089,30 @@ function runwayDimensions(manifest) {
   return { width: 1080, height: 1920 };
 }
 
-// v46 (Troy, launch day): FREE-render watermark. v46 kept it "subtle enough
-// that posting it is still tempting" — v62.54 reverses that stance on
-// Troy's call: the trial video is the DEMO, not the deliverable, and the
-// watermark is the paywall. Design intent, in tension and in order:
-//   1. UNPUBLISHABLE — no agent posts a listing video with FREE PREVIEW
-//      breathing across the middle of every frame. That is the conversion
-//      forcing function.
-//   2. QUALITY STILL VISIBLE — the preview has to sell the render itself,
-//      so the center mark is low-alpha and pulses (0.10-0.22) rather than
-//      sitting opaque; the property is always readable underneath.
-//   3. UNCROPPABLE — corner echoes + center + bottom banner mean no
-//      reframe/crop rescues a clean region.
-// Geometry dodges every resident overlay: top-left pill row, top-right
-// corner headshot, scene-1 address chip (top-center ~6%), captions
-// (~70% height), agent identity badge (bottom-left, h-130). Static text
-// only — no user input reaches this filter.
+// v46 (Troy, launch day): FREE-render watermark. v46 kept it "subtle
+// enough that posting it is still tempting"; v62.54 swung to a full wall
+// (pulsing center FREE PREVIEW, corner echoes, bottom banner). v62.79
+// swings back on Troy's call: "that is too much" — the wall buried the
+// exact footage that sells the upgrade. The free render now carries ONE
+// mark: vistalia.ai at the top, set in the title card's serif voice
+// (VistaliaSerif-SemiBold, soft shadow, no box) at a similar size, so the
+// brand reads as part of the film rather than a bug overlay. Top-LEFT, not
+// centered — the scene-1 title card owns top-center for its first ~5s.
+// Conversion pressure moves to the email + portal upgrade path. Serif
+// missing on disk → Liberation fallback in the SAME clean shadow styling
+// (never the old boxed pill). Static text only — no user input here.
 export function buildFreeRenderWatermark(dimensions) {
   const w = dimensions.width;
-  const h = dimensions.height;
-  const pillSize = Math.max(24, Math.round(w / 28));
-  // w/9 is the widest "FREE PREVIEW" fits inside every canvas with margins
-  // (w/7 clipped both ends on 9:16); height cap keeps 16:9 sane.
-  const bigSize = Math.max(72, Math.min(Math.round(w / 9), Math.round(h / 6)));
-  const echoSize = Math.max(48, Math.round(w / 12));
-  const bannerSize = Math.max(22, Math.round(w / 34));
-  const bannerY = h - 210; // clear of the badge (h-130) on every aspect
-  // Slow 4s breath: alive enough to read as "preview", never strobing.
-  const pulse = "0.16+0.06*sin(2*PI*t/4)";
-  return [
-    // The v46 brand pill, kept in its launch position.
-    `drawtext=fontfile='${FFMPEG_FONT}'` +
+  const markSize = Math.max(26, Math.round(w / 30));
+  const serifPath = path.join(CAPTIONS_FONTS_DIR, "VistaliaSerif-SemiBold.ttf");
+  const font = existsSync(serifPath) ? serifPath : FFMPEG_FONT;
+  return (
+    `drawtext=fontfile='${font}'` +
     `:text='vistalia.ai'` +
-    `:fontcolor=white@0.92:fontsize=${pillSize}` +
+    `:fontcolor=white@0.94:fontsize=${markSize}` +
     `:x=36:y=40` +
-    `:box=1:boxcolor=black@0.40:boxborderw=16`,
-    // Center mark — the headline. Breathes so it cannot be unseen.
-    `drawtext=fontfile='${FFMPEG_FONT}'` +
-    `:text='FREE PREVIEW'` +
-    `:fontcolor=white:fontsize=${bigSize}` +
-    `:x=(w-text_w)/2:y=(h-text_h)/2` +
-    `:alpha='${pulse}'`,
-    // Corner echoes — off-center so no crop yields a clean frame.
-    `drawtext=fontfile='${FFMPEG_FONT}'` +
-    `:text='VISTALIA'` +
-    `:fontcolor=white:fontsize=${echoSize}` +
-    `:x=(w-text_w)*0.10:y=h*0.27` +
-    `:alpha=0.10`,
-    `drawtext=fontfile='${FFMPEG_FONT}'` +
-    `:text='VISTALIA'` +
-    `:fontcolor=white:fontsize=${echoSize}` +
-    `:x=(w-text_w)*0.90:y=h*0.58` +
-    `:alpha=0.10`,
-    // Bottom banner — says exactly what to do about all of the above.
-    `drawtext=fontfile='${FFMPEG_FONT}'` +
-    `:text='Free preview — upgrade at vistalia.ai to remove'` +
-    `:fontcolor=white@0.95:fontsize=${bannerSize}` +
-    `:x=(w-text_w)/2:y=${bannerY}` +
-    `:box=1:boxcolor=black@0.55:boxborderw=14`
-  ].join(",");
+    `:shadowcolor=black@0.55:shadowx=0:shadowy=2`
+  );
 }
 
 // v48: scene-one address chip — a listing video should say WHERE. Reads
@@ -3274,31 +3239,42 @@ function buildTitleIntro(manifest, dimensions, clipDuration, styleKey) {
   }
 }
 
-// Lower-left tinted plate with name + brokerage. drawtext box is the closest
-// ffmpeg-native equivalent of the Reel-e.ai persistent identity badge.
+// Lower-left agent identity: name + brokerage. v62.79 (Troy: "whatever is
+// there now looks old") — the boxed Liberation plates are replaced with the
+// title card's own voice: name in VistaliaSerif-SemiBold white with the
+// card's soft shadow, brokerage as gold caps beneath it (the card's city-
+// line language). No boxes. NOTE: name/brokerage arrive ALREADY ffEscape()d
+// (normalizeBrandKitForFFmpeg) — uppercase is safe on escaped text (escape
+// sequences contain no letters), but the city line's letter-spacing trick
+// (split/join) is NOT: it would wedge spaces inside "\:" and un-escape the
+// colon, so brokerage caps run untracked here. Serif missing on disk →
+// same layout in Liberation with the shadow styling (never the old boxes).
 function buildWatermarkDrawtext({ name, brokerage }, dimensions) {
   if (!name && !brokerage) return "";
   const baseY = dimensions.height - 130;
   const fontSize = Math.max(22, Math.round(dimensions.width / 50));
-  const subSize = Math.max(18, Math.round(dimensions.width / 64));
+  const subSize = Math.max(16, Math.round(dimensions.width / 66));
+  const serifPath = path.join(CAPTIONS_FONTS_DIR, "VistaliaSerif-SemiBold.ttf");
+  const nameFont = existsSync(serifPath) ? serifPath : FFMPEG_FONT;
+  const subFont = existsSync(serifPath) ? serifPath : FFMPEG_FONT_REGULAR;
   const filters = [];
   if (name) {
     filters.push(
-      `drawtext=fontfile='${FFMPEG_FONT}'` +
+      `drawtext=fontfile='${nameFont}'` +
       `:text='${name}'` +
-      `:fontcolor=white:fontsize=${fontSize}` +
+      `:fontcolor=white@0.96:fontsize=${fontSize}` +
       `:x=36:y=${baseY}` +
-      `:box=1:boxcolor=black@0.55:boxborderw=12`
+      `:shadowcolor=black@0.55:shadowx=0:shadowy=2`
     );
   }
   if (brokerage) {
-    const subY = name ? baseY + fontSize + 10 : baseY;
+    const subY = name ? baseY + fontSize + 12 : baseY;
     filters.push(
-      `drawtext=fontfile='${FFMPEG_FONT_REGULAR}'` +
-      `:text='${brokerage}'` +
-      `:fontcolor=white@0.85:fontsize=${subSize}` +
+      `drawtext=fontfile='${subFont}'` +
+      `:text='${String(brokerage).toUpperCase()}'` +
+      `:fontcolor=0xC7A76C@0.95:fontsize=${subSize}` +
       `:x=36:y=${subY}` +
-      `:box=1:boxcolor=black@0.55:boxborderw=10`
+      `:shadowcolor=black@0.5:shadowx=0:shadowy=1`
     );
   }
   return filters.join(",");

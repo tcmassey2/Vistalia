@@ -82,15 +82,19 @@
   var token = m ? m[1] : new URLSearchParams(location.search).get("token") || "";
   var stateEl = document.getElementById("state");
 
+  // Demo certificate. Sample media is SYNTHETIC (generated for this page —
+  // not a real listing, not a customer render); the title is a fictional
+  // sample residence on purpose: no live listing's address belongs in
+  // marketing surfaces.
   var MOCK = {
-    title: "28412 N Summit Springs Road",
-    address: "Rio Verde, Arizona",
+    title: "The Solano Residence",
+    address: "Sample certificate · Scottsdale, Arizona",
     createdAt: new Date().toISOString(),
-    summary: { totalScenes: 2, verified: 2, deterministic: 0, line: "2 scenes · 2 verified against source photography" },
+    summary: { totalScenes: 2, verified: 1, deterministic: 1, line: "2 scenes · 1 verified against source photography · 1 direct photo motion" },
     attestation: "Every scene in this video was checked against the agent's original listing photograph before delivery. Scenes that could not be verified to match were replaced with deterministic photo motion, which cannot invent detail.",
     scenes: [
-      { index: 1, roomType: "exterior", photoUrl: "", clipUrl: "", status: "verified", statusLabel: "Verified — matches the source photograph", statusDetail: "This scene was machine-checked against the agent's original listing photograph before delivery." },
-      { index: 2, roomType: "kitchen", photoUrl: "", clipUrl: "", status: "deterministic", statusLabel: "Direct photo motion — animated from the photograph itself", statusDetail: "By construction this scene cannot differ from the photograph." }
+      { index: 1, roomType: "exterior", photoUrl: "/cert-demo/exterior.jpg", clipUrl: "/cert-demo/exterior.mp4", status: "verified", statusLabel: "Verified — matches the source photograph", statusDetail: "This scene was machine-checked against the agent's original listing photograph before delivery." },
+      { index: 2, roomType: "kitchen", photoUrl: "/cert-demo/kitchen.jpg", clipUrl: "/cert-demo/kitchen.mp4", status: "deterministic", statusLabel: "Direct photo motion — animated from the photograph itself", statusDetail: "By construction this scene cannot differ from the photograph." }
     ],
     token: "demo"
   };
