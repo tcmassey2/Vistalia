@@ -1493,6 +1493,12 @@ export async function renderRunwayJob(body, options = {}) {
   // −22.9 LUFS — 8-9dB quiet vs platform norm). The narrated path's stem
   // makeup gain never runs when narration is skipped/failed, so level here.
   if (!narration.narrationApplied) {
+    // v62.83: when a master is about to ship with no audio BY REQUEST, say
+    // so in the log — skipMusic + no narration means silent is the contract.
+    // Pairs with the [audio] terminal-state lines in levelMusicOnlyMaster.
+    if (manifest?.skipMusic) {
+      console.info("[audio] manifest.skipMusic=true and narration not applied — master ships SILENT (as the manifest requested).");
+    }
     masterForVariants = await levelMusicOnlyMaster(masterForVariants, tempDir, jobId);
   }
 

@@ -151,9 +151,19 @@ const MUSIC_ONLY_TARGET_I = -16;
 export async function levelMusicOnlyMaster(masterMp4, tempDir, jobId) {
   try {
     const i = await measureLoudnessI(masterMp4);
-    if (i === null) return masterMp4; // silent or unmeasurable — leave it
+    if (i === null) {
+      // v62.83: this return was SILENT — the Aug 5 trial render shipped a
+      // fully silent master and the log carried zero evidence of it (found
+      // by ear in the founder portal). The terminal audio state of every
+      // no-narration master now gets said out loud.
+      console.warn("[audio] master has NO measurable audio (no stream or digital silence) — shipping as-is. Expected iff manifest.skipMusic was set; investigate otherwise.");
+      return masterMp4;
+    }
     const gain = clampDb(MUSIC_ONLY_TARGET_I - i, 0, 12);
-    if (gain < 1) return masterMp4;
+    if (gain < 1) {
+      console.info(`[audio] music-only master already at target (${i.toFixed(1)} LUFS) — no makeup gain applied.`);
+      return masterMp4;
+    }
     const out = path.join(tempDir, `${jobId}-music-leveled.mp4`);
     await new Promise((resolve, reject) => {
       const proc = spawn("ffmpeg", [
