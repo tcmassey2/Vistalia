@@ -63,9 +63,31 @@ export function initPixel(): void {
   w.fbq?.("track", "PageView");
 }
 
+// v62.84: first-touch attribution captured by the static site's head snippet
+// (?src / utm_* / fbclid → localStorage "vistalia.attribution.v1", same
+// origin as /app). It rides along on conversion events as custom params, so
+// per-channel conversion counts read straight out of Events Manager — the
+// weekly ritual's "?src visits → StartTrial" join, with no backend column.
+// Fail-open: no stored attribution → events fire exactly as before.
+function attribution(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem("vistalia.attribution.v1");
+    if (!raw) return {};
+    const d = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const k of ["src", "utm_source", "utm_campaign", "landing"]) {
+      const v = d[k];
+      if (typeof v === "string" && v) out[k] = v.slice(0, 120);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export function trackLead(): void {
   if (!PIXEL_ID) return;
-  window.fbq?.("track", "Lead", { content_name: "signup" });
+  window.fbq?.("track", "Lead", { content_name: "signup", ...attribution() });
 }
 
 // v62.55: the free watermarked render — the funnel's mid-step and the
@@ -77,7 +99,8 @@ export function trackStartTrial(): void {
     value: 0,
     currency: "USD",
     content_name: "free_watermarked_render",
-    predicted_ltv: 39
+    predicted_ltv: 39,
+    ...attribution()
   });
 }
 
@@ -116,8 +139,8 @@ export function trackPurchase(tierOrOffer: string): void {
     "track",
     "Purchase",
     value
-      ? { value, currency: "USD", content_name: key }
-      : { content_name: key || "unknown" }
+      ? { value, currency: "USD", content_name: key, ...attribution() }
+      : { content_name: key || "unknown", ...attribution() }
   );
 }
 

@@ -356,6 +356,12 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<script>
+/* v62.84: first-touch attribution — ?src / utm_* / fbclid persist in localStorage
+   so the app can tie Lead/StartTrial/Purchase events back to the channel.
+   First touch wins; no-ops when no params are present. */
+(function(){try{var K="vistalia.attribution.v1";if(localStorage.getItem(K))return;var q=new URLSearchParams(location.search);var d={};["src","utm_source","utm_medium","utm_campaign","utm_content","fbclid","gclid"].forEach(function(k){var v=q.get(k);if(v)d[k]=v.slice(0,120)});if(Object.keys(d).length===0)return;d.landing=location.pathname;d.ts=Date.now();localStorage.setItem(K,JSON.stringify(d))}catch(e){}})();
+</script>
 </head>
 <body>
 
