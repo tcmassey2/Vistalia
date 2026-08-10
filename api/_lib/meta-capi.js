@@ -40,7 +40,17 @@ function sha256(value) {
  * @param {object} [p.customData]  small, non-PII payload (booleans/ids only)
  */
 export async function sendMetaCapiEvent({ eventName, email, eventId, leadId, customData }) {
-  const token = (process.env.META_CAPI_ACCESS_TOKEN || "").trim();
+  // v62.86: fall back to META_PAGE_ACCESS_TOKEN — Troy: that token was
+  // "originally pulled for pixel info", so it likely carries events
+  // permission already. Explicit META_CAPI_ACCESS_TOKEN always wins. If the
+  // page token turns out not to have dataset access, the first lead logs
+  // "[capi] Lead rejected: 401/403 …" in Vercel — then generate the
+  // dedicated token in Events Manager and set META_CAPI_ACCESS_TOKEN.
+  const token = (
+    process.env.META_CAPI_ACCESS_TOKEN ||
+    process.env.META_PAGE_ACCESS_TOKEN ||
+    ""
+  ).trim();
   if (!token) return { sent: false, reason: "no_token" };
   const datasetId = (process.env.META_DATASET_ID || DEFAULT_DATASET_ID).trim();
   const cleanEmail = String(email || "").toLowerCase().trim();
