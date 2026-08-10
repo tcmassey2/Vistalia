@@ -29,6 +29,7 @@
 
 import { sendTransactionalEmail } from "./_lib/email.js";
 import { leadWelcomeEmail, leadNudgeEmail, firstRenderUpsellEmail } from "./_lib/email-templates.js";
+import { sendMetaCapiEvent } from "./_lib/meta-capi.js";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 const DEFAULT_PAGE_ID = "1250774388114584"; // Vistalia (true Graph id)
@@ -256,6 +257,19 @@ async function processLead({ lead, formId, supabaseUrl, serviceKey, summary }) {
   const inserted = await insertRes.json().catch(() => []);
   if (!Array.isArray(inserted) || inserted.length === 0) return false; // already processed elsewhere
   summary.new++;
+
+  // v62.85: server-side Lead event — the browser pixel never sees instant-form
+  // leads, so this is the ONLY way Ads Manager learns the form worked. Owned
+  // insert = fires once per lead; event_id makes retries idempotent anyway.
+  // Fail-open: never blocks lead processing. No listing URL leaves our system —
+  // custom_data carries a boolean.
+  await sendMetaCapiEvent({
+    eventName: "Lead",
+    email,
+    eventId: `lead-${lead.id}`,
+    leadId: lead.id,
+    customData: { has_listing_url: Boolean(fields.listingUrl), form_id: String(formId) }
+  });
 
   // Provision the account. 422 = already registered → still magic-link them.
   let userId = null;

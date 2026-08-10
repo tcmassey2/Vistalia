@@ -11,6 +11,7 @@
 
 import { sendTransactionalEmail } from "./_lib/email.js";
 import { renderComplete } from "./_lib/email-templates.js";
+import { sendMetaCapiEvent } from "./_lib/meta-capi.js";
 
 export default async function handler(request, response) {
   setCors(response);
@@ -128,6 +129,18 @@ export default async function handler(request, response) {
   if (!result.ok && !result.skipped) {
     return response.status(500).json({ error: result.error || "Email send failed." });
   }
+
+  // v62.85: RenderDelivered server event — the mid-funnel milestone Ads
+  // Manager can build a custom conversion on (URL lead → finished video in
+  // inbox). Fires for every render-complete email, lead-funnel or app;
+  // event_id = jobId so requeues/retries don't double-count. Fail-open.
+  await sendMetaCapiEvent({
+    eventName: "RenderDelivered",
+    email,
+    eventId: `render-${jobId}`,
+    customData: { job_id: String(jobId) }
+  });
+
   return response.status(200).json({
     status: "ok",
     sent: result.ok === true,
