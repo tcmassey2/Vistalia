@@ -78,3 +78,7 @@ showcase/photosets/*.zip
 # Dreamina/Seedance working references — local ad-gen inputs, never committed
 marketing/seedance-refs/
 bakeoff-results/
+
+# Bridge-session sweep debris (stranded git locks, patch drop folders).
+# Contents are staging artifacts meant for the Trash, never for history.
+_to_delete/
