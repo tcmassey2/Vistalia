@@ -1257,6 +1257,78 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     /twilight\/dusk shots where foliage fills much of the frame/.test(curSrc));
 }
 
+/* ── v62.88: the repetitive-voiceover fix (638 Eddie Robinson Sr Dr) ───── */
+{
+  // Pull the real implementations under their real names so intra-calls
+  // resolve. ROOM_WORDS is already on globalThis from the v62.40 block.
+  eval(`globalThis.roomTypesNamedIn = ${grab(planSrc, "roomTypesNamedIn").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.NARRATION_DEDUP_STOP = ${(planSrc.match(/const NARRATION_DEDUP_STOP = (new Set\(\[[\s\S]*?\]\));/) || [])[1]}`);
+  eval(`globalThis.narrationContentWords = ${grab(planSrc, "narrationContentWords").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.isNearDuplicateNarration = ${grab(planSrc, "isNearDuplicateNarration").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.dedupeConsecutiveNarrationSentences = ${grab(planSrc, "dedupeConsecutiveNarrationSentences").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.repairAdjacentPhotoRepeats = ${grab(planSrc, "repairAdjacentPhotoRepeats").replace(/^function \w+/, "function")}`);
+
+  // The exact pair that shipped on Aug 11 (worker log, verbatim).
+  const kitchenA = "The kitchen features sleek stainless steel appliances paired with crisp white cabinetry that gleams under soft lighting.";
+  const kitchenB = "The kitchen’s modern stainless steel appliances perfectly complement the clean, white cabinetry, creating a fresh and functional cooking space.";
+  check("v62.88: the Eddie Robinson kitchen pair reads as a near-duplicate",
+    isNearDuplicateNarration(kitchenA, kitchenB) === true);
+
+  // Legitimate neighbors must NOT collapse.
+  check("v62.88: a room transition is not a duplicate",
+    isNearDuplicateNarration(
+      "The dining space flows seamlessly into a modern kitchen with sleek countertops.",
+      "This home offers comfortable bedrooms and stylish bathrooms for your daily retreat."
+    ) === false);
+  check("v62.88: two different rooms with shared adjectives are not duplicates",
+    isNearDuplicateNarration(
+      "The primary bedroom offers soft natural light and warm wood floors.",
+      "The living room pairs warm wood tones with a stone fireplace."
+    ) === false);
+
+  // The join collapses the rerun and the photos ride as a linger.
+  const joined = [
+    { text: "Welcome to 638 Eddie Robinson Sr Dr.", photos: ["p1"] },
+    { text: kitchenA, photos: ["p2"] },
+    { text: kitchenB, photos: ["p3"] },
+    { text: "Schedule your private tour today.", photos: ["p4"] }
+  ];
+  const drops = dedupeConsecutiveNarrationSentences(joined);
+  check("v62.88: derived join drops exactly the rerun sentence",
+    drops.length === 1 && joined.length === 3 && /modern stainless steel/.test(drops[0]));
+  check("v62.88: the dropped sentence's photo rides the previous scene as a linger",
+    joined[1].photos.join(",") === "p2,p3");
+
+  // Director repair: an ADJACENT re-mention becomes a linger…
+  const ordOf = new Map([["a", 0], ["b", 1], ["c", 2]]);
+  const dwell = [
+    { text: "s1", photos: ["a"] },
+    { text: "s2", photos: ["a", "b"] },
+    { text: "s3", photos: ["c"] }
+  ];
+  const repairedDwell = repairAdjacentPhotoRepeats(dwell, ordOf);
+  check("v62.88: adjacent re-mention repaired to a linger (Director's read survives)",
+    repairedDwell === 1 && dwell[1].photos.join(",") === "b");
+  // …while a genuine double-back stays for the fatal scan.
+  const doubleBack = [
+    { text: "s1", photos: ["a"] },
+    { text: "s2", photos: ["b"] },
+    { text: "s3", photos: ["a"] }
+  ];
+  const repairedBack = repairAdjacentPhotoRepeats(doubleBack, ordOf);
+  check("v62.88: non-adjacent repeat is NOT repaired — stays fatal downstream",
+    repairedBack === 0 && doubleBack[2].photos.join(",") === "a");
+
+  // Wiring: repair runs before the fatal repeat verdict; dedup runs inside
+  // the derived join before the address hook.
+  check("v62.88: repair is wired ahead of the repeat verdict",
+    planSrc.indexOf("repairAdjacentPhotoRepeats(sentences") !== -1 &&
+    planSrc.indexOf("repairAdjacentPhotoRepeats(sentences") < planSrc.indexOf('errors.push("photo mapping repeats'));
+  check("v62.88: dedupe is wired into the derived join before the address hook",
+    planSrc.indexOf("dedupeConsecutiveNarrationSentences(sentences)") !== -1 &&
+    planSrc.indexOf("dedupeConsecutiveNarrationSentences(sentences)") < planSrc.indexOf("const addrLine"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

@@ -2156,6 +2156,91 @@ function roomTypesNamedIn(text) {
   return named;
 }
 
+// ── v62.88: the repetitive-voiceover fix (638 Eddie Robinson Sr Dr) ──────
+// Troy, on the Aug 11 render: "repetitive text voiceover." The log agreed:
+// the Director's monologue was demoted over ONE adjacent photo re-mention,
+// and the derived join then read the kitchen twice back-to-back ("sleek
+// stainless steel appliances … crisp white cabinetry", twice). Two guards,
+// both deterministic — no model call, no rewriting of surviving text:
+//  1. repairAdjacentPhotoRepeats — an ADJACENT re-mention is the Director
+//     dwelling on a room, not a broken tour. The later mention loses the
+//     photo and becomes a linger (empty-photo sentences already ride the
+//     previous scene in the voice grid). Non-adjacent repeats — a tour
+//     genuinely doubling back — stay fatal, unchanged.
+//  2. dedupeConsecutiveNarrationSentences — when the derived join DOES run,
+//     near-duplicate consecutive sentences collapse: the later text drops,
+//     its photos ride the prior sentence as a linger (a dwell, not a rerun).
+function repairAdjacentPhotoRepeats(sentences, sceneOrderById) {
+  let repaired = 0;
+  const firstMention = new Map(); // scene ordinal -> index of first mentioning sentence
+  for (let i = 0; i < sentences.length; i++) {
+    const kept = [];
+    const inThisSentence = new Set();
+    for (const id of sentences[i].photos) {
+      const ord = sceneOrderById.get(id);
+      if (inThisSentence.has(ord)) { repaired++; continue; } // dup within one sentence
+      inThisSentence.add(ord);
+      if (firstMention.has(ord) && firstMention.get(ord) === i - 1) { repaired++; continue; } // dwell → linger
+      if (!firstMention.has(ord)) firstMention.set(ord, i);
+      kept.push(id); // non-adjacent repeats stay — the scan below keeps them fatal
+    }
+    sentences[i].photos = kept;
+  }
+  return repaired;
+}
+
+// Filler verbs/adverbs that make different sentences look alike; the nouns
+// are what mark a true rerun ("stainless steel appliances", "white
+// cabinetry" twice), so strip the connective tissue before comparing.
+const NARRATION_DEDUP_STOP = new Set([
+  "the", "and", "with", "that", "this", "for", "your", "into", "over",
+  "under", "from", "are", "has", "have", "its", "was", "were", "you",
+  "our", "their", "features", "offers", "boasts", "showcases", "perfectly",
+  "beautifully", "seamlessly", "complete", "plenty"
+]);
+function narrationContentWords(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !NARRATION_DEDUP_STOP.has(w));
+}
+function isNearDuplicateNarration(aText, bText) {
+  const wa = narrationContentWords(aText);
+  const wb = narrationContentWords(bText);
+  if (!wa.length || !wb.length) return false;
+  const setA = new Set(wa);
+  const setB = new Set(wb);
+  let shared = 0;
+  for (const w of setB) if (setA.has(w)) shared++;
+  const overlap = shared / Math.min(setA.size, setB.size);
+  const bigA = new Set();
+  for (let i = 0; i + 1 < wa.length; i++) bigA.add(`${wa[i]} ${wa[i + 1]}`);
+  let sharedBigrams = 0;
+  for (let i = 0; i + 1 < wb.length; i++) if (bigA.has(`${wb[i]} ${wb[i + 1]}`)) sharedBigrams++;
+  const ra = roomTypesNamedIn(aText);
+  const rb = roomTypesNamedIn(bText);
+  const sameRoom = ra.size === 1 && rb.size === 1 && [...ra][0] === [...rb][0];
+  // Same single room + real lexical overlap = a rerun. Without a room
+  // signal the bar is higher, so transitions ("just beyond the kitchen…")
+  // and genuinely new rooms never collapse.
+  return overlap >= 0.6 || (sameRoom && (overlap >= 0.4 || sharedBigrams >= 2));
+}
+function dedupeConsecutiveNarrationSentences(sentences) {
+  const drops = [];
+  for (let i = 1; i < sentences.length; i++) {
+    const prev = sentences[i - 1];
+    const cur = sentences[i];
+    if (!prev.text || !cur.text) continue;
+    if (!isNearDuplicateNarration(prev.text, cur.text)) continue;
+    drops.push(cur.text);
+    prev.photos.push(...cur.photos); // the shot still shows — as a dwell
+    sentences.splice(i, 1);
+    i--; // chain: A≈B≈C collapses to A
+  }
+  return drops;
+}
+
 // v62.35: sentences whose text names a room their own photos do not show.
 // Only judges a sentence that names EXACTLY ONE room type — "just beyond
 // the kitchen, the great room opens up" is a legitimate transition, not a
@@ -2231,6 +2316,14 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
         sentences.push(current);
       }
     }
+    // v62.88: per-scene lines are written photo-by-photo with no cross-scene
+    // memory — two shots of the same room join into a stutter. Collapse
+    // near-duplicate consecutive sentences before the address hook and the
+    // long-sentence splitter see them.
+    const dedupDrops = dedupeConsecutiveNarrationSentences(sentences);
+    for (const d of dedupDrops) {
+      console.warn(`[plan] derived narration: near-duplicate of the previous sentence dropped ("${d.slice(0, 70)}") — its photos ride the prior scene as a linger.`);
+    }
     // v62.43: the derived path never spoke the ADDRESS — that lives in the
     // Director's HOOK, and every demotion silently lost it (Troy: "The
     // voiceover is not mentioning the address at any point like it used
@@ -2303,6 +2396,15 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
       .filter((s) => s.text);
     if (sentences.length < 2) errors.push("fewer than 2 usable sentences");
     if (sentences.length && !sentences[0].photos.length) errors.push("sentence 1 has no photos");
+
+    // v62.88: repair adjacent re-mentions BEFORE judging repeats — this is
+    // the demotion that ate 638 Eddie Robinson (one repeated kitchen ref
+    // threw away a good Director read and shipped the stiff derived join).
+    const repairedLingers = repairAdjacentPhotoRepeats(sentences, sceneOrderById);
+    if (repairedLingers) {
+      warnings.push(`${repairedLingers} adjacent re-mention(s) became lingers`);
+      console.warn(`[plan] narration mapping repaired: ${repairedLingers} adjacent re-mention(s) converted to lingers — the Director's read survives.`);
+    }
 
     // Mapping: every scene exactly once, ascending in scene order.
     // v62.67 (Pegasus, "the ceiling fan line was a little odd"): REPEATS
