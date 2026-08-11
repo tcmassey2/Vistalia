@@ -113,6 +113,137 @@ export async function qcVeoClip({ clipPath, sourceImageUrl, sceneIndex, roomType
   }
 }
 
+/**
+ * v62.89 PHOTO-SWAP GATE — judge whether an UNUSED listing photo can
+ * honestly replace a failed scene's photo under that scene's narration.
+ *
+ * Unlike every other verdict in this module, this one FAILS CLOSED:
+ * { match: false, checked: false } on any infrastructure error. The
+ * asymmetry is deliberate — a rejected swap costs nothing (the
+ * deterministic floor is right behind it), while a wrongly-approved swap
+ * ships a video whose voiceover describes a different room. checked=false
+ * tells the caller the provider was dark, not that the photo failed.
+ */
+export async function qcSwapCandidatePhoto({ imageUrl, roomType, narrationText, sceneIndex = 0 }) {
+  if (!qcEnabled()) return { match: false, checked: false, reason: "qc disabled" };
+  const room = String(roomType || "").trim();
+  const narration = String(narrationText || "").trim().slice(0, 500);
+  if (!room && !narration) return { match: false, checked: false, reason: "nothing to verify against" };
+  try {
+    const systemText =
+      "You are a strict gatekeeper for a real-estate video pipeline. A scene's original " +
+      "photo failed video generation, and the SAME scene's narration will play over a " +
+      "REPLACEMENT photo from the same listing. You receive ONE candidate photo. Decide " +
+      "whether it can honestly play under that narration. Respond with strict JSON: " +
+      '{"match": boolean, "reason": "<=15 words"}. ' +
+      "match=true ONLY if ALL of these hold: " +
+      "(1) the photo is a real photograph of the property space itself — match=false for " +
+      "floor plans, site maps, plat maps, documents, brochures, flyers, collages, " +
+      "agent or family portraits, pets, logos, or close-up detail shots that do not show " +
+      "the room; " +
+      "(2) the photo clearly shows the stated room type — a bedroom cannot stand in for " +
+      "a kitchen; " +
+      "(3) nothing in the narration is contradicted by the photo — every color, material, " +
+      "finish, fixture, and feature the narration names must be visibly present or at " +
+      "least plausible in the photo (narration says white cabinetry: dark wood cabinets " +
+      "= match=false; narration says stainless appliances: no appliances visible in a " +
+      "kitchen = match=false); " +
+      "(4) no person is visible anywhere in the photo, including reflections in mirrors " +
+      "and glass — the video generator refuses photos containing people, so approving " +
+      "one wastes the attempt. " +
+      "When uncertain on ANY point, match=false — the pipeline has a safe fallback and " +
+      "a wrong approval misrepresents the property.";
+    const userText =
+      `Room type: ${room || "unknown"}. ` +
+      `Narration that will play over this photo: ${narration ? `"${narration}"` : "(none — judge room type only)"}. ` +
+      "One candidate photo follows.";
+
+    const callOpenAI = async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), QC_TIMEOUT_MS);
+      try {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: QC_MODEL,
+            response_format: { type: "json_object" },
+            max_tokens: 120,
+            messages: [
+              { role: "system", content: systemText },
+              { role: "user", content: [
+                { type: "text", text: userText },
+                { type: "image_url", image_url: { url: imageUrl, detail: "high" } }
+              ] }
+            ]
+          }),
+          signal: controller.signal
+        });
+        if (!res.ok) return { ok: false, status: res.status };
+        const data = await res.json().catch(() => null);
+        return { ok: true, rawText: data?.choices?.[0]?.message?.content || "" };
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const callGemini = async () => {
+      const src = await fetchSourceImageB64(imageUrl);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), QC_TIMEOUT_MS);
+      try {
+        const res = await fetch(GEMINI_ENDPOINT, {
+          method: "POST",
+          headers: { "x-goog-api-key": GEMINI_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemText }] },
+            contents: [{ role: "user", parts: [
+              { text: userText },
+              { inline_data: { mime_type: src.mime, data: src.data } }
+            ] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              maxOutputTokens: 512,
+              temperature: 0,
+              thinkingConfig: { thinkingBudget: 0 }
+            }
+          }),
+          signal: controller.signal
+        });
+        if (!res.ok) return { ok: false, status: res.status };
+        const data = await res.json().catch(() => null);
+        return { ok: true, rawText: (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("") };
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    const primary = resolveQcProvider();
+    const secondary = primary === "gemini" ? "openai" : "gemini";
+    let out = await (primary === "gemini" ? callGemini() : callOpenAI()).catch((e) => ({ ok: false, status: e.message }));
+    if (!out.ok && providerAvailable(secondary)) {
+      out = await (secondary === "gemini" ? callGemini() : callOpenAI()).catch((e) => ({ ok: false, status: e.message }));
+    }
+    if (!out.ok) {
+      console.warn(`[swap-gate] scene ${sceneIndex + 1}: providers unavailable (${out.status}) — FAIL CLOSED, no swap.`);
+      return { match: false, checked: false, reason: `providers unavailable (${out.status})` };
+    }
+    let verdict;
+    try { verdict = JSON.parse(stripJsonFences(out.rawText)); } catch {
+      console.warn(`[swap-gate] scene ${sceneIndex + 1}: unparseable verdict — FAIL CLOSED, no swap. raw="${String(out.rawText || "").slice(0, 100)}"`);
+      return { match: false, checked: false, reason: "unparseable verdict" };
+    }
+    const match = verdict.match === true;
+    console.info(
+      `[swap-gate] scene ${sceneIndex + 1} (${room || "?"}): candidate ${match ? "APPROVED" : "REJECTED"}` +
+      (verdict.reason ? ` — ${String(verdict.reason).slice(0, 80)}` : "")
+    );
+    return { match, checked: true, reason: String(verdict.reason || "") };
+  } catch (err) {
+    console.warn(`[swap-gate] scene ${sceneIndex + 1}: gate error (${err.message}) — FAIL CLOSED, no swap.`);
+    return { match: false, checked: false, reason: err.message };
+  }
+}
+
 /** Shared inspection core — used by the per-clip pass ("qc") and the
  *  final master sweep ("sweep"). v43. */
 async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, logTag = "qc", extraContext = "" }) {

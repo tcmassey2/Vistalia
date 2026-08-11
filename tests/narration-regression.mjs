@@ -1329,6 +1329,95 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     planSrc.indexOf("dedupeConsecutiveNarrationSentences(sentences)") < planSrc.indexOf("const addrLine"));
 }
 
+/* ── v62.89: the photo-swap rung (minimize Ken Burns floors) ──────────── */
+{
+  const rjSrc89 = fs.readFileSync(path.join(ROOT, "render-worker/src/runway-job.mjs"), "utf8");
+  const vqSrc89 = fs.readFileSync(path.join(ROOT, "render-worker/src/veo-qc.mjs"), "utf8");
+  eval(`globalThis.pickSwapCandidate = ${grab(rjSrc89, "pickSwapCandidate").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.narrationTextForPhoto = ${grab(rjSrc89, "narrationTextForPhoto").replace(/^function \w+/, "function")}`);
+
+  const photos = [
+    { id: "p1", publicUrl: "u1" },
+    { id: "p2", publicUrl: "u2" },
+    { id: "p3", publicUrl: "u3" },
+    { id: "p4", publicUrl: "u4" },
+    { id: "p5", publicUrl: "u5" },
+    { id: "p6", publicUrl: "u6" }
+  ];
+  const mani = { orderedPhotos: photos, scenes: [{ photoId: "p1" }, { photoId: "p3" }, { photoId: "p5" }] };
+  const failing = { photoId: "p3", roomType: "kitchen" };
+
+  // Listing exports group rooms — the unused photo NEXT TO the failing one
+  // is likeliest the same room. p2/p4/p6 are unused; p2 and p4 tie at
+  // distance 1 and the earlier wins.
+  check("v62.89: picks the nearest unused neighbor of the failing photo",
+    pickSwapCandidate(failing, mani)?.id === "p2");
+  check("v62.89: excludeIds (claimed/rejected candidates) are respected",
+    pickSwapCandidate(failing, mani, { excludeIds: new Set(["p2"]) })?.id === "p4");
+  check("v62.89: every photo used by a scene → no candidate",
+    pickSwapCandidate(
+      { photoId: "p1" },
+      { orderedPhotos: photos.slice(0, 2), scenes: [{ photoId: "p1" }, { photoId: "p2" }] }
+    ) === null);
+  check("v62.89: candidates without a usable URL are filtered out",
+    pickSwapCandidate(failing, {
+      orderedPhotos: [photos[0], { id: "p2" }, photos[2], photos[3], photos[4], photos[5]],
+      scenes: mani.scenes
+    })?.id === "p4");
+  check("v62.89: the failing photo itself is never its own candidate",
+    pickSwapCandidate(
+      { photoId: "p1" },
+      { orderedPhotos: photos.slice(0, 2), scenes: [{ photoId: "p2" }] }
+    ) === null);
+  check("v62.89: room-labeled unused photos take priority over proximity",
+    pickSwapCandidate(failing, {
+      orderedPhotos: [photos[0], photos[1], photos[2], photos[3], photos[4], { id: "p6", publicUrl: "u6", roomType: "Kitchen" }],
+      scenes: mani.scenes
+    })?.id === "p6");
+
+  const nMani = { narration: { sentences: [
+    { text: "Welcome home.", photos: ["p1"] },
+    { text: "The kitchen gleams with stainless appliances.", photos: ["p2"] },
+    { text: "White cabinetry wraps the island.", photos: ["p2", "p3"] },
+    { text: "Schedule your tour.", photos: [] }
+  ] } };
+  check("v62.89: narrationTextForPhoto joins exactly the sentences mapped to the photo",
+    narrationTextForPhoto(nMani, "p2") === "The kitchen gleams with stainless appliances. White cabinetry wraps the island." &&
+    narrationTextForPhoto(nMani, "p1") === "Welcome home.");
+  check("v62.89: pre-v62 manifests (no narration.sentences) yield empty text",
+    narrationTextForPhoto({}, "p2") === "" && narrationTextForPhoto({ narration: {} }, "p2") === "");
+
+  // ── Wiring: the rung sits BEFORE the floor at both surrender points. ──
+  check("v62.89: rung wired at both floor sites, ahead of each floor",
+    (rjSrc89.match(/await attemptPhotoSwapRung\(scene, index/g) || []).length === 2 &&
+    rjSrc89.indexOf("const swappedA") !== -1 &&
+    rjSrc89.indexOf("const swappedA") < rjSrc89.indexOf("failed twice (") &&
+    rjSrc89.indexOf("const swappedB") !== -1 &&
+    rjSrc89.indexOf("const swappedB") < rjSrc89.indexOf("hard-failed all three attempts"));
+  check("v62.89: a substitute ships ONLY on a completed full QC pass (fail-closed)",
+    /!verdict\.checked \|\| !verdict\.pass/.test(rjSrc89) &&
+    /fail-closed for substitutes/.test(rjSrc89));
+  check("v62.89: swapped source threaded to the final sweep's reference",
+    rjSrc89.includes("scene.__deliveryAspectUrl = swapSrcUrl"));
+  check("v62.89: swap clone keeps scene identity — strips URL fields and plan prompts only",
+    /durable_url: "", publicUrl: "", public_url: "", imageUrl: ""/.test(rjSrc89) &&
+    /veoPrompt: "", veo_prompt: "", runwayPrompt: "", runway_prompt: ""/.test(rjSrc89) &&
+    !/photoId: candidate\.id/.test(rjSrc89));
+  check("v62.89: candidates are claimed before any await (concurrent scenes can't collide)",
+    rjSrc89.indexOf("swapConsumedIds.add(String(candidate.id))") !== -1 &&
+    rjSrc89.indexOf("swapConsumedIds.add(String(candidate.id))") < rjSrc89.indexOf("await qcSwapCandidatePhoto"));
+  check("v62.89: audit rows carry swap provenance for floor-rate queries",
+    rjSrc89.includes("swappedPhotoId: original.swappedPhotoId || null") &&
+    rjSrc89.includes("swappedPhotoUrl"));
+  check("v62.89: kill switch and per-job cap exist",
+    rjSrc89.includes("PHOTO_SWAP_RUNG") && rjSrc89.includes("MAX_SWAPS_PER_JOB"));
+  check("v62.89: vision gate exported, fails CLOSED, and rejects non-room junk photos",
+    vqSrc89.includes("export async function qcSwapCandidatePhoto") &&
+    /match: false, checked: false/.test(vqSrc89) &&
+    /floor plans, site maps/.test(vqSrc89) &&
+    rjSrc89.includes('qcSwapCandidatePhoto } from "./veo-qc.mjs"'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

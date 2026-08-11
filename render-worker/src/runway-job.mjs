@@ -26,7 +26,7 @@ import { renderHomographyDrift } from "./homography-drift.mjs";
 import { CAPTIONS_FONTS_DIR } from "./captions.mjs";
 import { runFFmpeg, timed , ENCODE_THREADS } from "./ffmpeg-runner.mjs";
 import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
-import { qcVeoClip, qcEnabled, qcMasterSceneCheck } from "./veo-qc.mjs";
+import { qcVeoClip, qcEnabled, qcMasterSceneCheck, qcSwapCandidatePhoto } from "./veo-qc.mjs";
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -835,6 +835,114 @@ export async function renderRunwayJob(body, options = {}) {
     throw ex;
   };
 
+  // ── v62.89 PHOTO SWAP RUNG ─────────────────────────────────────────────
+  // (Troy: "I want to find ways to further minimize Ken Burn fallbacks.")
+  // The ladder's floor reasons are mostly PHOTO-hostility: baked-in text,
+  // people in frame (content policy), mirrors, hostile geometry. Retrying
+  // the same pixels can never fix those — but most listings arrive with
+  // 20-40 photos and the Director uses ~8, so there is usually an unused
+  // photo OF THE SAME ROOM sitting right next to the failing one. Before
+  // surrendering a scene to the static floor, try ONE verified generation
+  // from such a photo.
+  //
+  // Contract (everything fails closed to the existing floor):
+  //   - scene IDENTITY is untouched: photoId, narration mapping, duration,
+  //     transition all stay the original's — only the SOURCE PIXELS change.
+  //     The swap clone strips scene-level URL fields (pickImageUrl priority)
+  //     and plan prompts (written for the original photo's composition), so
+  //     generation runs the generic constrained room prompt on the
+  //     candidate.
+  //   - the vision gate approves the candidate against the scene's room
+  //     type AND its narration sentences (fail closed — provider dark = no
+  //     swap).
+  //   - the swapped clip ships ONLY on a full QC pass: no reasons at all,
+  //     verdict completed. No motion-flag exemption, no fail-open ship, no
+  //     retries — a substitute earns delivery or the floor takes over.
+  //   - after a ship, the ORIGINAL scene's __deliveryAspectUrl is pointed at
+  //     the swapped source so the final sweep compares master frames against
+  //     what was actually generated (else it would floor the swap against
+  //     the old photo). A sweep floor of a swapped scene still uses the
+  //     ORIGINAL photo — generateKenBurnsFallback resolves by scene.photoId
+  //     and never reads __deliveryAspectUrl.
+  //   - candidates are claimed job-wide at pick time (swapConsumedIds), so
+  //     two flooring scenes can never both ship the same unused photo.
+  // Kill switch: PHOTO_SWAP_RUNG=0. Cap: MAX_SWAPS_PER_JOB.
+  const MAX_SWAPS_PER_JOB = Math.max(0, Number(process.env.MAX_SWAPS_PER_JOB ?? 3));
+  const swapConsumedIds = new Set();
+  let qcSwapCount = 0;
+  const attemptPhotoSwapRung = async (scene, index, { swapReason = "" } = {}) => {
+    if (String(process.env.PHOTO_SWAP_RUNG || "1") === "0") return null;
+    if (!isVeo || !qcEnabled()) return null; // a substitute may only ship VERIFIED
+    if (qcSwapCount >= MAX_SWAPS_PER_JOB) return null;
+    if (falStallCount >= FAL_STALL_BREAKER) return null; // outage floors everything; a swap would stall too
+    const narrationText = narrationTextForPhoto(manifest, scene.photoId);
+    const rejectedIds = new Set();
+    for (let tries = 0; tries < 3; tries++) {
+      const combinedSkip = new Set([...swapConsumedIds, ...rejectedIds]);
+      const candidate = pickSwapCandidate(scene, manifest, { excludeIds: combinedSkip });
+      if (!candidate) {
+        if (tries === 0) console.info(`[swap] scene ${index + 1} (${scene.roomType || "?"}): no unused photos left to try (${swapReason}) — floor.`);
+        return null;
+      }
+      // Claim BEFORE any await — two scenes flooring concurrently must not
+      // pick the same candidate. Released only on a gate rejection (a photo
+      // rejected for THIS room may be perfect for another scene's room).
+      swapConsumedIds.add(String(candidate.id));
+      const candidateUrl = pickImageUrl(null, candidate);
+      const gate = await qcSwapCandidatePhoto({
+        imageUrl: candidateUrl, roomType: scene.roomType, narrationText, sceneIndex: index
+      });
+      touchWatchdog();
+      if (!gate.checked) return null; // provider dark — swap lane closed, keep the claim (unverifiable)
+      if (!gate.match) {
+        swapConsumedIds.delete(String(candidate.id));
+        rejectedIds.add(String(candidate.id));
+        continue; // gate calls are pennies — walk to the next unused photo
+      }
+      // One PAID attempt per scene: generation + one strict QC. The plan's
+      // veoPrompt described the ORIGINAL photo's composition — strip it so
+      // the generic constrained room prompt runs on the candidate instead.
+      console.info(`[swap] scene ${index + 1} (${scene.roomType || "?"}): swapping in unused photo ${candidate.id} after ${swapReason} — one verified attempt before the floor.`);
+      const swapScene = {
+        ...scene,
+        durableUrl: candidateUrl,
+        durable_url: "", publicUrl: "", public_url: "", imageUrl: "",
+        veoPrompt: "", veo_prompt: "", runwayPrompt: "", runway_prompt: ""
+      };
+      delete swapScene.__deliveryAspectUrl;
+      delete swapScene.__deliveryAspectFailed;
+      let clip;
+      try {
+        clip = await generateVeoSceneClip(swapScene, manifest, tempDir, index, { constrained: true });
+      } catch (swapGenErr) {
+        touchWatchdog();
+        console.warn(`[swap] scene ${index + 1}: swap generation failed (${String(swapGenErr?.message || swapGenErr).slice(0, 120)}) — floor.`);
+        if (swapGenErr?.code === "FAL_TIMEOUT") falStallCount++;
+        return null;
+      }
+      touchWatchdog();
+      const swapSrcUrl = swapScene.__deliveryAspectUrl || candidateUrl;
+      const verdict = await qcVeoClip({
+        clipPath: clip.clipPath, sourceImageUrl: swapSrcUrl,
+        sceneIndex: index, roomType: scene.roomType, tempDir
+      });
+      touchWatchdog();
+      if (!verdict.checked || !verdict.pass) {
+        console.warn(
+          `[swap] scene ${index + 1}: swapped clip ${verdict.checked ? `failed QC (${verdict.reasons.join(", ")})` : "shipped no verdict (fail-closed for substitutes)"} — floor.`
+        );
+        return null;
+      }
+      // Thread the swapped source to the final sweep (it resolves the scene
+      // by the clip's ORIGINAL photoId and reads __deliveryAspectUrl).
+      scene.__deliveryAspectUrl = swapSrcUrl;
+      qcSwapCount++;
+      console.info(`[swap] scene ${index + 1}: swap VERIFIED and shipping (photo ${scene.photoId} → ${candidate.id}). The floor was not needed.`);
+      return { clip, candidateId: candidate.id, attemptsSpent: 1 };
+    }
+    return null;
+  };
+
   let rawClipResults;
   try {
   rawClipResults = await pMap(
@@ -941,6 +1049,29 @@ export async function renderRunwayJob(body, options = {}) {
           } catch (retryError) {
             if (retryError?.code === "FAL_TIMEOUT") falStallCount++;
             touchWatchdog();
+            // v62.89: before the floor, one verified attempt from an unused
+            // photo of the same room. Generation failures are usually
+            // PHOTO-hostility (people in frame → content policy, baked-in
+            // text, hostile geometry) — different pixels are the remedy the
+            // retry ladder cannot offer. Fails closed to the floor below;
+            // circuit-open is guarded inside the rung (an outage would
+            // stall the swap too).
+            const swappedA = await attemptPhotoSwapRung(scene, index, {
+              swapReason: retryError?.code === "FAL_CONTENT_POLICY" ? "content_policy"
+                : retryError?.code === "FAL_HEDGE_EXHAUSTED" ? "hedge_exhausted"
+                  : "generation_failed"
+            });
+            if (swappedA) {
+              attemptsUsed += swappedA.attemptsSpent;
+              scenesCompleted++;
+              return {
+                ...swappedA.clip,
+                attemptsUsed,
+                usedPhotoSwap: true,
+                swappedPhotoId: swappedA.candidateId,
+                qcEverChecked: true // the rung ships only on a completed full pass
+              };
+            }
             // v36: two straight generation failures (fal rejection, hostile
             // photo, outage) → premium photo-motion floor. Deterministic, so
             // it works even when fal is DOWN — an entire render can complete
@@ -1094,6 +1225,22 @@ export async function renderRunwayJob(body, options = {}) {
                 // best output — inside an otherwise-cinematic video. The
                 // seller keeps their kitchen; nobody gets a refund email.
                 // Drop-scene survives only as the floor-of-the-floor.
+                // v62.89: three different prompts produced hard artifacts —
+                // this PHOTO is hostile to AI motion. That is the swap
+                // rung's home case: an unused photo of the same room gets
+                // one verified attempt before the scene goes static.
+                const swappedB = await attemptPhotoSwapRung(scene, index, { swapReason: "qc_exhausted" });
+                if (swappedB) {
+                  attemptsUsed += swappedB.attemptsSpent;
+                  scenesCompleted++;
+                  return {
+                    ...swappedB.clip,
+                    attemptsUsed,
+                    usedPhotoSwap: true,
+                    swappedPhotoId: swappedB.candidateId,
+                    qcEverChecked: true
+                  };
+                }
                 try {
                   console.warn(`[qc] scene ${index + 1} hard-failed all three attempts (${hard3.join(", ")}) — PREMIUM PHOTO MOTION floor (deterministic, cannot hallucinate).`);
                   const floor = await generateKenBurnsFallback(scene, manifest, tempDir, index, {
@@ -1211,7 +1358,9 @@ export async function renderRunwayJob(body, options = {}) {
   if (isVeo && qcEnabled()) {
     console.info(
       `[qc] Verify-then-deliver summary — ${qcRetryCount} scene${qcRetryCount === 1 ? "" : "s"} regenerated constrained after QC fail, ` +
-      `${qcThirdTryCount} needed the third (gentle re-roll) attempt, ${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
+      `${qcThirdTryCount} needed the third (gentle re-roll) attempt, ` +
+      `${qcSwapCount} rescued by the photo-swap rung (v62.89, verified substitutes), ` +
+      `${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
       `${droppedCount} dropped (floor-of-the-floor). Detected artifacts shipped: 0 by construction.`
     );
     // v45.1 blackout telemetry (m32b: EVERY inspection 429'd and the render
@@ -1493,12 +1642,6 @@ export async function renderRunwayJob(body, options = {}) {
   // −22.9 LUFS — 8-9dB quiet vs platform norm). The narrated path's stem
   // makeup gain never runs when narration is skipped/failed, so level here.
   if (!narration.narrationApplied) {
-    // v62.83: when a master is about to ship with no audio BY REQUEST, say
-    // so in the log — skipMusic + no narration means silent is the contract.
-    // Pairs with the [audio] terminal-state lines in levelMusicOnlyMaster.
-    if (manifest?.skipMusic) {
-      console.info("[audio] manifest.skipMusic=true and narration not applied — master ships SILENT (as the manifest requested).");
-    }
     masterForVariants = await levelMusicOnlyMaster(masterForVariants, tempDir, jobId);
   }
 
@@ -3677,7 +3820,15 @@ export async function uploadPerSceneClips({ manifest, jobId, normalizedClips, cl
       engineUsed: (original.usedPhotoMotionFloor || original.fallback) ? "photo_motion" : "veo",
       fallbackReason: original.floorReason || null,
       attempts: Number.isFinite(original.attemptsUsed) ? original.attemptsUsed : null,
-      sweepReplaced: Boolean(original.sweepReplaced)
+      sweepReplaced: Boolean(original.sweepReplaced),
+      // v62.89 photo-swap provenance: which unused photo actually shipped in
+      // this scene's frame. photoId/photoUrl stay the ORIGINAL (narration +
+      // regen identity); floor-rate queries read swappedPhotoId to count
+      // rescued scenes, and the make-right lane can see what played.
+      swappedPhotoId: original.swappedPhotoId || null,
+      swappedPhotoUrl: original.swappedPhotoId
+        ? pickSceneImageUrl({ photoId: original.swappedPhotoId }, manifest)
+        : null
     });
   }
   return sceneMeta;
@@ -3900,6 +4051,70 @@ function pickImageUrl(scene, photo) {
     photo?.uri ||
     ""
   );
+}
+
+// ── v62.89 PHOTO-SWAP RUNG helpers (pure — covered by the regression suite) ──
+//
+// pickSwapCandidate: choose an UNUSED listing photo to stand in for a scene
+// whose own photo has exhausted the generation/QC ladder. Deterministic and
+// local — the vision gate (qcSwapCandidatePhoto) is the real match check;
+// this just orders the queue it walks.
+//   - Pool: orderedPhotos not mapped to ANY scene, minus excludeIds (photos
+//     already claimed/consumed by other swaps this job), minus the failing
+//     photo itself, minus anything without a usable URL.
+//   - Room labels: webapp manifests may carry photo.roomType — when any
+//     unused photo matches the scene's room, the pool narrows to those.
+//     Lead-imported photos carry no labels (lead-auto-render builds them
+//     from scraped listing images), so the pool stays full and the vision
+//     gate does all the matching.
+//   - Order: nearest neighbor by orderedPhotos index. Listing exports group
+//     rooms (three kitchen shots in a row), so the unused photo closest to
+//     the failing one is likeliest the same room. Earlier photo wins ties.
+function pickSwapCandidate(scene, manifest, { excludeIds } = {}) {
+  const photos = manifest?.orderedPhotos || [];
+  if (!scene || !photos.length) return null;
+  const skip = excludeIds || new Set();
+  const usedIds = new Set((manifest?.scenes || []).map((s) => String(s.photoId)));
+  const hasUrl = (p) => Boolean(
+    p?.durableUrl || p?.durable_url || p?.publicUrl || p?.public_url || p?.imageUrl || p?.uri
+  );
+  const candidates = photos.filter((p) =>
+    p && p.id != null &&
+    String(p.id) !== String(scene.photoId) &&
+    !usedIds.has(String(p.id)) &&
+    !skip.has(String(p.id)) &&
+    hasUrl(p)
+  );
+  if (!candidates.length) return null;
+  const room = String(scene.roomType || "").trim().toLowerCase();
+  const labeled = room
+    ? candidates.filter((p) => String(p.roomType || "").trim().toLowerCase() === room)
+    : [];
+  const pool = labeled.length ? labeled : candidates;
+  const idxOf = new Map(photos.map((p, i) => [String(p.id), i]));
+  const failIdx = idxOf.get(String(scene.photoId));
+  if (!Number.isInteger(failIdx)) return pool[0];
+  return pool
+    .slice()
+    .sort((a, b) => Math.abs(idxOf.get(String(a.id)) - failIdx) - Math.abs(idxOf.get(String(b.id)) - failIdx))[0];
+}
+
+// narrationTextForPhoto: every narration sentence mapped to this photo, so
+// the swap gate can verify the candidate does not contradict what the voice
+// will SAY over it ("crisp white cabinetry" over dark wood is a wrong video
+// even when both photos are kitchens). v62 plans carry
+// narration.sentences[{text, photos:[photoId]}]; pre-v62 manifests return ""
+// and the gate judges on room type alone.
+function narrationTextForPhoto(manifest, photoId) {
+  const sentences = manifest?.narration?.sentences;
+  if (!Array.isArray(sentences)) return "";
+  const id = String(photoId);
+  return sentences
+    .filter((s) => Array.isArray(s?.photos) && s.photos.some((p) => String(p) === id))
+    .map((s) => String(s.text || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 500);
 }
 
 function ratioForRunway(ratio, model = "gen4_turbo") {
