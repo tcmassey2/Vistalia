@@ -1896,6 +1896,67 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     fl97.includes("created_time.desc.nullslast"));
 }
 
+/* ── v62.98: pre-scale security hardening (audit fixes) ── */
+{
+  const mig40 = fs.readFileSync(path.join(ROOT, "supabase/migrations/40_security_hardening.sql"), "utf8");
+  const authSrc = fs.readFileSync(path.join(ROOT, "api/_lib/auth.js"), "utf8");
+  const guardSrc = fs.readFileSync(path.join(ROOT, "api/_lib/url-guard.js"), "utf8");
+  const impSrc = fs.readFileSync(path.join(ROOT, "api/import-listing.js"), "utf8");
+  const regSrc = fs.readFileSync(path.join(ROOT, "api/regenerate-scene.js"), "utf8");
+
+  check("v62.98: migration 40 revokes the three anon-callable SECURITY DEFINER RPCs 36 missed",
+    /revoke all on function public\.clear_trial_state\(uuid\)\s+from public, anon, authenticated/.test(mig40) &&
+    /revoke all on function public\.increment_trial_render\(uuid\)\s+from public, anon, authenticated/.test(mig40) &&
+    /revoke all on function public\.get_user_organization\(uuid\)\s+from public, anon, authenticated/.test(mig40));
+  check("v62.98: migration 40 leaves is_org_admin alone (it runs inside the org RLS policies)",
+    !/revoke[^\n]*is_org_admin/i.test(mig40));
+  check("v62.98: migration 40 enables RLS + self-policies on brand_kits (the un-hardened PII table)",
+    mig40.includes("alter table public.brand_kits enable row level security") &&
+    mig40.includes('create policy "brand_kits_self_select" on public.brand_kits') &&
+    mig40.includes("using (auth.uid() = user_id)"));
+  check("v62.98: migration 40 makes the audit views security_invoker and revokes anon",
+    mig40.includes("security_invoker = on") &&
+    mig40.includes("render_scene_breakdown") &&
+    mig40.includes("render_engine_summary") &&
+    /revoke select on public\.render_scene_breakdown from anon/.test(mig40));
+  check("v62.98: migration 40 pins the entitlement columns on profiles self-update",
+    mig40.includes('drop policy if exists "profiles_self_update" on public.profiles') &&
+    mig40.includes("render_credits         is not distinct from") &&
+    mig40.includes("subscription_status    is not distinct from") &&
+    mig40.includes("videos_used_this_month is not distinct from"));
+  check("v62.98: migration 40 pins credit_balance + subscription_status on users self-update",
+    mig40.includes('drop policy if exists "Users can update own profile" on public.users') &&
+    mig40.includes("credit_balance      is not distinct from") &&
+    mig40.includes("subscription_status is not distinct from"));
+
+  check("v62.98: requireUser fails CLOSED when Supabase is unconfigured unless ALLOW_ANON_FALLBACK",
+    authSrc.includes('process.env.ALLOW_ANON_FALLBACK === "true"') &&
+    authSrc.includes("response.status(503)") &&
+    // the unconditional open-wallet return is gone
+    !/if \(!supabaseUrl \|\| !anonKey\) \{\s*return \{ ok: true, userId: null, softPass: true \};/.test(authSrc));
+
+  check("v62.98: the SSRF guard blocks private/link-local/non-web targets, allows named public hosts",
+    guardSrc.includes("export function isBlockedFetchTarget") &&
+    guardSrc.includes('parsed.protocol !== "https:" && parsed.protocol !== "http:"') &&
+    // a bare-IPv4 range check (not a single hardcoded IP) catches loopback/link-local/private in one
+    /\{1,3\}\(\?:\\\.\\d\{1,3\}\)\{3\}/.test(guardSrc) &&
+    guardSrc.includes('host === "localhost"') &&
+    guardSrc.includes('.endsWith(".internal")'));
+  check("v62.98: import-listing screens every direct fetch through the SSRF guard",
+    impSrc.includes('import { isBlockedFetchTarget } from "./_lib/url-guard.js"') &&
+    impSrc.includes("if (isBlockedFetchTarget(photoUrl)) throw new Error") &&
+    impSrc.includes("!proxyKey && !isBlockedFetchTarget(url)"));
+
+  check("v62.98: regenerate-scene binds jobId to the caller, blocking only a proven cross-tenant match",
+    regSrc.includes("verifyJobOwnership(jobId, tierGuard.userId)") &&
+    regSrc.includes("if (!ownership.allow)") &&
+    regSrc.includes("render_audit_log?select=agent_user_id&job_id=eq.") &&
+    regSrc.includes("if (owner && owner !== userId) return { allow: false }"));
+  check("v62.98: job-ownership check fails OPEN on ambiguity so no legit redo is refused",
+    regSrc.includes("if (!supabaseUrl || !serviceKey || !userId || !jobId) return { allow: true }") &&
+    regSrc.includes("if (!res.ok) return { allow: true }"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

@@ -1,3 +1,5 @@
+import { isBlockedFetchTarget } from "./_lib/url-guard.js";
+
 // Vistalia — Listing URL import (v52).
 //
 // POST /api/import-listing   { url, projectId }
@@ -607,6 +609,12 @@ export function extractAddressFromHtml(html) {
 // v58: some portal CDNs referer-check direct image GETs — one proxy retry
 // (no rendering, cheap credit) before giving up on the photo.
 async function fetchImageBuffer(photoUrl) {
+  // v62.98 (security audit): this is the one choke point where every photo
+  // URL — including a scraped, host-unrestricted og:image — is fetched
+  // directly from the server. Block SSRF targets (private/link-local IPs,
+  // localhost, non-web schemes) before the direct connection. The ScraperAPI
+  // retry below is safe (ScraperAPI does the fetch), but the direct hop is not.
+  if (isBlockedFetchTarget(photoUrl)) throw new Error("blocked non-public image host");
   let r = await fetchWithTimeout(photoUrl, { headers: BROWSER_HEADERS }, PHOTO_TIMEOUT_MS).catch(() => null);
   if ((!r || !r.ok) && process.env.SCRAPER_API_KEY) {
     r = await fetchWithTimeout(
@@ -915,7 +923,7 @@ export default async function handler(request, response) {
     // direct fetches dead on every major portal, so running one after the
     // proxy ladder failed just spent 9s of the budget the Zillow rescue
     // below needs, on a fetch we already knew would bot-wall.
-    if (pagePhotoUrls.length === 0 && !proxyKey) {
+    if (pagePhotoUrls.length === 0 && !proxyKey && !isBlockedFetchTarget(url)) {
       try {
         const page = await fetchWithTimeout(url, { headers: BROWSER_HEADERS, redirect: "follow" }, PAGE_TIMEOUT_MS);
         if (page.ok) {

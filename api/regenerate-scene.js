@@ -100,6 +100,20 @@ export default async function handler(request, response) {
       return;
     }
 
+    // v62.98 (security audit): bind jobId to the caller before touching the
+    // worker. The regen re-stitches and re-uploads the master at the job's
+    // public URL; a jobId + userId is discoverable from any public certificate
+    // link. Without this check a tier-eligible attacker could pass a victim's
+    // jobId plus their own manifest and drive a re-stitch on the victim's
+    // render. We block only when the audit row PROVES the job belongs to
+    // someone else — a missing/owner-less row (older renders) still passes, so
+    // no legitimate redo is ever refused.
+    const ownership = await verifyJobOwnership(jobId, tierGuard.userId);
+    if (!ownership.allow) {
+      response.status(403).json({ status: "failed", error: "That render was not found on your account." });
+      return;
+    }
+
     // v46: regens re-stitch the whole master, so the free-render watermark
     // must be re-derived here or a trial user's redo would silently launder
     // the mark off. Same rule as /api/render: trial tier + no purchased
@@ -214,6 +228,30 @@ async function fetchWithTimeout(url, options, timeoutMs) {
    regen is gated by the same rules. mode=kenburns sidesteps the
    Runway engine check (still free for all paying tiers).
    ============================================================ */
+// v62.98 (security audit): does render_audit_log show this jobId belonging to
+// a DIFFERENT user? Returns {allow:false} only on a proven cross-tenant match.
+// Fail-open on any ambiguity (Supabase unconfigured, lookup blip, missing or
+// owner-less row) so a legitimate scene fix is never blocked — the goal is to
+// stop tampering with someone else's clearly-owned render, not to gate redos.
+async function verifyJobOwnership(jobId, userId) {
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey || !userId || !jobId) return { allow: true };
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/render_audit_log?select=agent_user_id&job_id=eq.${encodeURIComponent(jobId)}&limit=1`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } }
+    );
+    if (!res.ok) return { allow: true };
+    const rows = await res.json().catch(() => []);
+    const owner = Array.isArray(rows) && rows[0] ? rows[0].agent_user_id : null;
+    if (owner && owner !== userId) return { allow: false };
+    return { allow: true };
+  } catch {
+    return { allow: true };
+  }
+}
+
 async function enforceTierGuard(request, manifest) {
   const supabaseUrl = process.env.SUPABASE_URL || "";
   const anonKey = process.env.SUPABASE_ANON_KEY || "";

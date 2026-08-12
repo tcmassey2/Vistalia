@@ -26,8 +26,25 @@ export async function requireUser(request, response) {
   const anonKey = process.env.SUPABASE_ANON_KEY || "";
 
   // Soft-pass: Supabase not configured → dev/mock mode, allow.
+  //
+  // v62.98 (security audit): this used to fail OPEN unconditionally — a single
+  // missing/renamed SUPABASE_URL or SUPABASE_ANON_KEY in prod would silently
+  // turn every paid endpoint (OpenAI, ElevenLabs, ScraperAPI, RentCast) into
+  // an unauthenticated free-for-all. render.js already documents a prod outage
+  // from exactly this env-var class. Now the open-wallet fallback is OFF unless
+  // explicitly opted in with ALLOW_ANON_FALLBACK=true (local dev / mock only);
+  // in prod, a missing Supabase config fails CLOSED with a clear 503 instead of
+  // handing out third-party spend.
   if (!supabaseUrl || !anonKey) {
-    return { ok: true, userId: null, softPass: true };
+    if (process.env.ALLOW_ANON_FALLBACK === "true") {
+      return { ok: true, userId: null, softPass: true };
+    }
+    response.status(503).json({
+      status: "failed",
+      error: "Authentication is temporarily unavailable.",
+      authRequired: true
+    });
+    return { ok: false };
   }
 
   const auth = String(request.headers.authorization || "");
