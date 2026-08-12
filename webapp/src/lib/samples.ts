@@ -10,7 +10,11 @@ export const SAMPLE_LISTING: ListingDetails = {
   beds: "5",
   baths: "5.5",
   squareFeet: "5,640",
-  hook: "A modern desert retreat built for evenings outside."
+  hook: "A modern desert retreat built for evenings outside.",
+  // v62.97.1: remarks became part of ListingDetails in v62.96 — the sample
+  // fills it so test renders exercise the MINE-THE-REMARKS narration lane.
+  remarks:
+    "Remodeled desert contemporary — chef's kitchen with waterfall island, split primary suite, spa bath, and a resort backyard with heated pool and covered patio."
 };
 
 export const SAMPLE_PROJECT_TITLE = "Sample listing — Scottsdale";
