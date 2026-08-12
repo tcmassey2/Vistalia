@@ -297,11 +297,36 @@ async function processOne() {
   const projectId = `project-lead-${String(lead.lead_id).slice(-10)}-${Date.now()}`;
 
   try {
+    // 0. v62.95 FREE-TEXT RESOLVE: a listing_url without a scheme is a
+    // typed address or MLS number (meta-leads-sync now promotes those).
+    // Turn it into a real listing URL via the fail-closed resolver before
+    // the importer sees it. fetch_failed is transient (scraper flake —
+    // retry lane); not_found is terminal (the address won't get better) —
+    // the lead stays in the normal nudge/manual flow, exactly as today.
+    let listingUrl = String(lead.listing_url || "").trim();
+    if (listingUrl && !/^https?:\/\//i.test(listingUrl)) {
+      const resv = await fetchJson(`${APP_URL}/api/resolve-listing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-internal-secret": secret },
+        body: JSON.stringify({ query: listingUrl })
+      }, IMPORT_TIMEOUT_MS);
+      if (resv.ok && resv.json?.status === "ok" && resv.json?.url) {
+        console.info(`[auto-render] ${lead.lead_id} resolved "${listingUrl.slice(0, 50)}" → ${resv.json.url}`);
+        listingUrl = resv.json.url;
+      } else if (resv.ok && resv.json?.status === "fetch_failed") {
+        await failOrRetry(supabaseUrl, lead, "resolve(fetch_failed)", { retryable: true });
+        return;
+      } else {
+        await failOrRetry(supabaseUrl, lead, `resolve(${resv.json?.status || resv.status})`, { retryable: false });
+        return;
+      }
+    }
+
     // 1. Import: address + facts + photos into THEIR storage.
     const imp = await fetchJson(`${APP_URL}/api/import-listing`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-internal-secret": secret },
-      body: JSON.stringify({ url: lead.listing_url, projectId, onBehalfOfUserId: lead.user_id })
+      body: JSON.stringify({ url: listingUrl, projectId, onBehalfOfUserId: lead.user_id })
     }, IMPORT_TIMEOUT_MS);
     // v58.4: the import response photos are raw storage objects
     // ({fileName, publicUrl, storagePath, bucket, size}) — no id, no

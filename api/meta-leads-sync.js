@@ -28,8 +28,9 @@
 //   META_PAGE_ID             optional — defaults to the Vistalia Page.
 
 import { sendTransactionalEmail } from "./_lib/email.js";
+// v62.95: shared gate for "is this free text worth resolving to a listing".
+import { looksLikeListingQuery } from "./resolve-listing.js";
 import { leadWelcomeEmail, leadNudgeEmail, firstRenderUpsellEmail } from "./_lib/email-templates.js";
-import { sendMetaCapiEvent } from "./_lib/meta-capi.js";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 const DEFAULT_PAGE_ID = "1250774388114584"; // Vistalia (true Graph id)
@@ -258,19 +259,6 @@ async function processLead({ lead, formId, supabaseUrl, serviceKey, summary }) {
   if (!Array.isArray(inserted) || inserted.length === 0) return false; // already processed elsewhere
   summary.new++;
 
-  // v62.85: server-side Lead event — the browser pixel never sees instant-form
-  // leads, so this is the ONLY way Ads Manager learns the form worked. Owned
-  // insert = fires once per lead; event_id makes retries idempotent anyway.
-  // Fail-open: never blocks lead processing. No listing URL leaves our system —
-  // custom_data carries a boolean.
-  await sendMetaCapiEvent({
-    eventName: "Lead",
-    email,
-    eventId: `lead-${lead.id}`,
-    leadId: lead.id,
-    customData: { has_listing_url: Boolean(fields.listingUrl), form_id: String(formId) }
-  });
-
   // Provision the account. 422 = already registered → still magic-link them.
   let userId = null;
   let userCreated = false;
@@ -377,6 +365,14 @@ function parseFieldData(fieldData) {
       const v = value.trim();
       if (/^https?:\/\/\S+$/i.test(v)) out.listingUrl = v;
       else if (/^(www\.)?(zillow|redfin|realtor|homes|trulia|compass|kw|exp)\S*\.\S+/i.test(v)) out.listingUrl = `https://${v}`;
+      // v62.95: address-like free text promotes too. The worker spots the
+      // missing scheme and routes it through /api/resolve-listing (portal
+      // search + fail-closed address verification) before importing —
+      // closing the exact gap v57 documented ("a typed street address …
+      // doesn't trigger auto-render"; nine of thirteen misses on Aug 11).
+      // Partial fragments ("110 Hunter") fail looksLikeListingQuery and
+      // stay in the manual email lane, as before.
+      else if (looksLikeListingQuery(v)) out.listingUrl = v;
     }
   }
   return out;

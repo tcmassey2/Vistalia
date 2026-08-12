@@ -1732,6 +1732,54 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     plan94.includes("listing-attributed facts a photo could never show"));
 }
 
+/* ── v62.95: the free-text listing resolver (Steve Katsaros gap) ───────── */
+{
+  const res95 = fs.readFileSync(path.join(ROOT, "api/resolve-listing.js"), "utf8");
+  const sync95 = fs.readFileSync(path.join(ROOT, "api/meta-leads-sync.js"), "utf8");
+  const lead95 = fs.readFileSync(path.join(ROOT, "render-worker/src/lead-auto-render.mjs"), "utf8");
+  eval(`globalThis.looksLikeListingQuery = ${grab(res95, "looksLikeListingQuery").replace(/^export function \w+/, "function").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.hdUrl = ${grab(res95, "homedetailsUrlFromHtml").replace(/^export function \w+/, "function").replace(/^function \w+/, "function")}`);
+
+  check("v62.95: full addresses and MLS numbers qualify as resolvable queries",
+    looksLikeListingQuery("4320 Floramar Terrace, New Port Richey FL") === true &&
+    looksLikeListingQuery("33578 E 160th Avenue Hudson CO 80642") === true &&
+    looksLikeListingQuery("MLS# 2534567") === true);
+  check("v62.95: fragments, replies, emails, and URLs stay in the manual lane",
+    looksLikeListingQuery("110 Hunter") === false &&
+    looksLikeListingQuery("Send me sample.") === false &&
+    looksLikeListingQuery("steve@stevekatsaros.com") === false &&
+    looksLikeListingQuery("https://www.zillow.com/homedetails/x_zpid/") === false &&
+    looksLikeListingQuery("123 456 789") === false);
+  check("v62.95: homedetails URL extracted from canonical, hdpUrl, and og:url shapes",
+    hdUrl('<link rel="canonical" href="https://www.zillow.com/homedetails/4320-Floramar-Terrace/46349025_zpid/"/>') ===
+      "https://www.zillow.com/homedetails/4320-Floramar-Terrace/46349025_zpid/" &&
+    hdUrl('{"hdpUrl":"/homedetails/110-Hunter-Rd/123_zpid/"}') ===
+      "https://www.zillow.com/homedetails/110-Hunter-Rd/123_zpid/" &&
+    hdUrl('<link rel="canonical" href="https://www.zillow.com/new-port-richey-fl/"/>') === "");
+
+  // parseFieldData promotes address-like text (URL behavior unchanged).
+  eval(`globalThis.parseFields = ${grab(sync95, "parseFieldData").replace(/^function \w+/, "function")}`);
+  const promoted = parseFields([{ name: "your listing link", values: ["4320 Floramar Terrace, New Port Richey FL"] }]);
+  const fragment = parseFields([{ name: "your listing link", values: ["110 Hunter"] }]);
+  const urlLead = parseFields([{ name: "your listing link", values: ["https://www.zillow.com/homedetails/x/1_zpid/"] }]);
+  check("v62.95: sync promotes full addresses, keeps fragments manual, leaves URLs untouched",
+    promoted.listingUrl === "4320 Floramar Terrace, New Port Richey FL" &&
+    fragment.listingUrl === "" &&
+    urlLead.listingUrl === "https://www.zillow.com/homedetails/x/1_zpid/");
+
+  // Wiring: fail-closed verification, worker-only secret, retry taxonomy.
+  check("v62.95: resolver verifies the page address fail-closed and is worker-only",
+    res95.includes("samePropertyAddress({ line: query }, pageAddress)") &&
+    res95.includes("Fail closed") &&
+    res95.includes("internalSecret !== process.env.CRON_SECRET"));
+  check("v62.95: worker resolves scheme-less listing_url before import — transient retries, not_found terminal",
+    lead95.includes('!/^https?:\\/\\//i.test(listingUrl)') &&
+    lead95.includes("/api/resolve-listing") &&
+    lead95.includes('"resolve(fetch_failed)", { retryable: true }') &&
+    lead95.includes("retryable: false") &&
+    lead95.includes("url: listingUrl, projectId"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);
