@@ -1831,6 +1831,57 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     res96.includes('bucket: "resolve-listing"'));
 }
 
+/* ── v62.97: founder-portal baby CRM — the lead dossier ── */
+{
+  const fl97 = fs.readFileSync(path.join(ROOT, "api/founder-lead.js"), "utf8");
+  const fh97 = fs.readFileSync(path.join(ROOT, "founder.html"), "utf8");
+  const mig97 = fs.readFileSync(path.join(ROOT, "supabase/migrations/39_meta_leads_crm.sql"), "utf8");
+
+  check("v62.97: founder-lead sits behind the same METRICS_TOKEN bearer gate as metrics",
+    fl97.includes("process.env.METRICS_TOKEN") &&
+    fl97.includes("Bearer ${token}") &&
+    fl97.includes('response.status(401)'));
+  check("v62.97: dossier reads the lead with select=* so pre-migration schemas still answer",
+    fl97.includes("meta_leads?select=*&email=eq.") &&
+    fl97.includes("order=created_time.desc&limit=1"));
+  check("v62.97: crm.ready is detected off the row, and provenance + answers come from raw",
+    fl97.includes('"contacted_at" in lead') &&
+    fl97.includes("raw.field_data") &&
+    fl97.includes("raw.adgroup_id || raw.adset_id"));
+  check("v62.97: account resolves by lead user_id first, roster scan as the fallback",
+    fl97.includes("auth/v1/admin/users/") &&
+    fl97.includes("per_page=200"));
+  check("v62.97: renders come from the audit log and early deaths from render_jobs, deduped",
+    fl97.includes("render_audit_log?select=") &&
+    fl97.includes("status=neq.completed") &&
+    fl97.includes("!auditIds.has(f.job_id)"));
+  check("v62.97: POST marks contact and names migration 39 when the columns are missing",
+    fl97.includes('request.body?.contacted === true') &&
+    /contacted_at\|contact_note/.test(fl97) &&
+    fl97.includes('migration: "39_meta_leads_crm.sql"') &&
+    fl97.includes('"no_lead_row"'));
+  check("v62.97: migration 39 is additive-only meta_leads columns",
+    mig97.includes("add column if not exists contacted_at timestamptz") &&
+    mig97.includes("add column if not exists contact_note text") &&
+    !/drop\s|delete\s/i.test(mig97));
+  check("v62.97: roster rows are clickable and open the dossier by email",
+    fh97.includes('class="row clickable" data-i=') &&
+    fh97.includes("openLead(u.email)"));
+  check("v62.97: the portal can look up any lead by email, roster or not",
+    fh97.includes('id="lfind-in"') &&
+    fh97.includes("openLead(v)"));
+  check("v62.97: the dossier fetches founder-lead with the stored bearer token",
+    fh97.includes("'/api/founder-lead?email='+encodeURIComponent(email)") &&
+    fh97.includes("Authorization:'Bearer '+token()"));
+  check("v62.97: contact tracking saves via POST and surfaces the migration hint",
+    fh97.includes("JSON.stringify({email:j.email,contacted:") &&
+    fh97.includes("migration_needed") &&
+    fh97.includes("39_meta_leads_crm.sql"));
+  check("v62.97: the dossier plays renders through the existing player and offers mailto",
+    fh97.includes("openPlayer(r.mp4_url, r.title, r.city||j.email)") &&
+    fh97.includes('href="mailto:'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

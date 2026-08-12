@@ -68,6 +68,33 @@
   .rcard .rmeta{padding:8px 10px 10px}
   .rcard .rtitle{font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .rcard .rsub{font-size:10px;color:var(--ink-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* v62.97 baby CRM — the lead dossier */
+  .row.clickable{cursor:pointer;transition:background .12s}
+  .row.clickable:hover{background:rgba(199,167,108,.06)}
+  .lfind{display:flex;gap:8px;margin-bottom:10px}
+  .lfind input{flex:1;min-width:0;background:var(--surface);border:1px solid var(--edge);border-radius:10px;padding:9px 12px;color:var(--ink);font-size:13px;outline:none}
+  .lfind input:focus{border-color:var(--gold)}
+  .lbtn{background:var(--gold);color:#0E0E10;border:none;border-radius:9px;padding:9px 16px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .lbtn.ghost{background:none;border:1px solid var(--gold);color:var(--gold-light);text-decoration:none;display:inline-block;padding:7px 14px}
+  #lead{position:fixed;inset:0;background:rgba(11,11,13,.94);z-index:15;overflow-y:auto;padding:28px 14px 60px}
+  #lead .lbox{background:var(--surface);border:1px solid var(--edge);border-radius:16px;max-width:560px;margin:0 auto;padding:24px 22px 26px}
+  #lead .lhead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+  #lead h3{font-size:17px;font-weight:650;letter-spacing:-.01em}
+  #lead .lsub{font-size:12px;color:var(--ink-dim);margin-top:3px;word-break:break-all}
+  #lead .lclose{background:none;border:1px solid var(--edge);color:var(--ink-muted);border-radius:8px;width:30px;height:30px;font-size:13px;cursor:pointer;flex-shrink:0}
+  #lead .lclose:hover{border-color:var(--gold);color:var(--gold-light)}
+  #lead .lsec{margin-top:18px;border-top:1px solid var(--edge-soft);padding-top:14px}
+  #lead .lsec h4{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold);font-weight:600;margin-bottom:7px}
+  #lead .kv{font-size:12.5px;line-height:1.8;word-break:break-word}
+  #lead .kv .k{display:inline-block;min-width:112px;color:var(--ink-dim)}
+  #lead textarea{width:100%;background:#0B0B0D;border:1px solid var(--edge);border-radius:10px;padding:10px 12px;color:var(--ink);font-size:12.5px;line-height:1.5;min-height:64px;resize:vertical;outline:none;margin-top:8px;font-family:inherit}
+  #lead textarea:focus{border-color:var(--gold)}
+  #lead .lrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--edge-soft);cursor:pointer}
+  #lead .lrow:last-of-type{border-bottom:none}
+  #lead .lr-main{flex:1;min-width:0}
+  #lead .lr-t{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #lead .lr-s{font-size:11px;color:var(--ink-dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #lead .lr-play{width:28px;height:28px;border-radius:50%;background:rgba(11,11,13,.6);border:1px solid rgba(230,206,142,.55);display:grid;place-items:center;color:var(--gold-light);font-size:11px;padding-left:2px;flex-shrink:0}
   #player{position:fixed;inset:0;background:rgba(11,11,13,.95);display:grid;place-items:center;z-index:20;padding:16px}
   #player video{max-height:84vh;max-width:min(92vw,486px);border-radius:14px;border:1px solid var(--edge);background:#000;outline:none}
   #player .pmeta{position:fixed;bottom:12px;left:0;right:0;text-align:center;font-size:12px;color:var(--ink-muted);padding:0 20px}
@@ -124,7 +151,8 @@
   </section>
 
   <section>
-    <h2>Recent signups</h2>
+    <h2>Recent signups — click anyone for the full story</h2>
+    <div class="lfind"><input id="lfind-in" type="text" placeholder="…or look up any lead by email" autocomplete="off"><button id="lfind-go" class="lbtn">Open</button></div>
     <div id="roster" class="roster"><div class="empty">—</div></div>
   </section>
 
@@ -149,6 +177,9 @@
   document.getElementById('go').onclick=function(){ var v=tok.value.trim(); if(!v)return; try{localStorage.setItem(KEY,v)}catch(e){} gate.classList.add('hidden'); load(); };
   tok.addEventListener('keydown',function(e){ if(e.key==='Enter')document.getElementById('go').onclick(); });
   document.getElementById('relock').onclick=function(e){ e.preventDefault(); try{localStorage.removeItem(KEY)}catch(err){} showGate(); };
+  // v62.97 baby CRM — look up any lead by email, roster or not.
+  document.getElementById('lfind-go').onclick=function(){ var v=document.getElementById('lfind-in').value.trim().toLowerCase(); if(v) openLead(v); };
+  document.getElementById('lfind-in').addEventListener('keydown',function(e){ if(e.key==='Enter') document.getElementById('lfind-go').onclick(); });
 
   function put(id,v){ document.getElementById(id).textContent=(v===null||v===undefined)?'—':Number(v).toLocaleString(); }
 
@@ -162,7 +193,7 @@
   function renderRoster(list){
     var el=document.getElementById('roster');
     if(!list.length){ el.innerHTML='<div class="empty">No signups yet today — they’ll appear here the moment they land.</div>'; return; }
-    el.innerHTML=list.map(function(u){
+    el.innerHTML=list.map(function(u,i){
       var isPaying=(u.tier==='pro'||u.tier==='studio'||(u.credits&&u.credits>0));
       var badge=isPaying?'<span class="badge paying">'+esc(u.tier||'credits')+'</span>'
         :(u.source==='meta_lead'?'<span class="badge lead">Lead'+(u.licensed===false?' · unlic':'')+'</span>':'<span class="badge direct">Direct</span>');
@@ -174,13 +205,17 @@
       } else {
         seen=' · never signed in';
       }
-      return '<div class="row">'+
+      return '<div class="row clickable" data-i="'+i+'" title="Open the full story">'+
         '<div class="who"><div class="name">'+esc(u.name||u.email.split('@')[0])+'</div>'+
         '<div class="email">'+esc(u.email)+'</div></div>'+
         badge+
         '<div class="meta">'+ago(u.created_at)+seen+'<br>'+renders+'</div>'+
       '</div>';
     }).join('');
+    // v62.97 baby CRM — any signup row opens the lead dossier.
+    Array.prototype.forEach.call(el.querySelectorAll('.row.clickable'),function(row){
+      row.onclick=function(){ var u=list[Number(row.getAttribute('data-i'))]; if(u&&u.email) openLead(u.email); };
+    });
   }
 
   function openPlayer(url,title,sub){
@@ -193,6 +228,148 @@
     document.addEventListener('keydown',onKey);
     document.body.appendChild(ov);
   }
+
+  /* ── v62.97 baby CRM — click a lead, get the whole story ─────────── */
+  function attr(t){ return esc(t).replace(/"/g,'&quot;'); }
+  function fmtDate(iso){ if(!iso) return '—'; var d=new Date(iso); return d.toLocaleDateString([], {month:'short',day:'numeric'})+' '+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}); }
+  function onLeadKey(e){ if(e.key==='Escape'&&!document.getElementById('player')) closeLead(); }
+  function closeLead(){ var ov=document.getElementById('lead'); if(ov){ ov.remove(); document.removeEventListener('keydown',onLeadKey); } }
+  function openLead(email){
+    closeLead();
+    var ov=document.createElement('div'); ov.id='lead';
+    ov.innerHTML='<div class="lbox"><div class="kv" style="color:var(--ink-dim)">Loading '+esc(email)+'…</div></div>';
+    ov.addEventListener('click',function(e){ if(e.target===ov) closeLead(); });
+    document.addEventListener('keydown',onLeadKey);
+    document.body.appendChild(ov);
+    fetch('/api/founder-lead?email='+encodeURIComponent(email),{headers:{Authorization:'Bearer '+token()}})
+      .then(function(r){ if(r.status===401){ closeLead(); showGate(); throw new Error('unauthorized'); } if(!r.ok) throw new Error('http '+r.status); return r.json(); })
+      .then(function(j){ renderLead(ov,j); })
+      .catch(function(e){ var b=ov.querySelector('.lbox'); if(b) b.innerHTML='<div class="kv" style="color:var(--red)">Could not load this lead — '+esc(String(e.message||e))+'</div>'; });
+  }
+  function renderLead(ov,j){
+    var L=j.lead, A=j.account, T=j.touches||{}, crm=j.crm||{}, cf=j.came_from||{};
+    var name=(L&&L.full_name)?L.full_name:j.email.split('@')[0];
+
+    var badges='';
+    if(A&&(A.tier==='pro'||A.tier==='studio'||(A.credits&&A.credits>0))) badges+='<span class="badge paying">'+esc(A.tier||'credits')+'</span> ';
+    badges+=L?'<span class="badge lead">Lead'+(L.licensed===false?' · unlic':'')+'</span>':'<span class="badge direct">Direct</span>';
+    if(crm.contacted_at) badges+=' <span class="badge canary">Contacted</span>';
+
+    var head='<div class="lhead"><div style="min-width:0"><h3>'+esc(name)+'</h3><div class="lsub">'+esc(j.email)+'</div>'+
+      '<div style="margin-top:9px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+badges+
+      ' <a class="lbtn ghost" href="mailto:'+attr(j.email)+'">Email them</a></div></div>'+
+      '<button class="lclose" title="Close">✕</button></div>';
+
+    if(!L&&!A){
+      ov.querySelector('.lbox').innerHTML=head+
+        '<div class="lsec"><div class="kv" style="color:var(--ink-dim)">Nothing on file for this email — no lead row, no account. Check the spelling, or they haven’t landed yet.</div></div>';
+      ov.querySelector('.lclose').onclick=closeLead;
+      return;
+    }
+
+    // Where they came from.
+    var from='';
+    if(L){
+      from='<div class="kv"><span class="k">Arrived</span>'+fmtDate(L.created_time)+' · Meta Instant Form</div>';
+      if(cf.platform) from+='<div class="kv"><span class="k">Platform</span>'+esc(cf.platform)+'</div>';
+      if(cf.campaign_id) from+='<div class="kv"><span class="k">Campaign</span>'+esc(cf.campaign_id)+'</div>';
+      if(cf.adset_id) from+='<div class="kv"><span class="k">Ad set</span>'+esc(cf.adset_id)+'</div>';
+      if(cf.ad_id) from+='<div class="kv"><span class="k">Ad</span>'+esc(cf.ad_id)+'</div>';
+      if(cf.form_id) from+='<div class="kv"><span class="k">Form</span>'+esc(cf.form_id)+'</div>';
+    } else {
+      from='<div class="kv">Direct signup — found us on their own'+(A&&A.created_at?', '+fmtDate(A.created_at):'')+'.</div>';
+    }
+
+    // What they typed into the form.
+    var ans=(j.answers||[]).map(function(x){
+      return '<div class="kv"><span class="k">'+esc(x.q)+'</span>'+(x.a?esc(x.a):'—')+'</div>';
+    }).join('');
+    if(L&&L.listing_url){
+      var lu=L.listing_url;
+      ans+='<div class="kv"><span class="k">Listing</span>'+(/^https?:\/\//i.test(lu)
+        ?'<a href="'+attr(lu)+'" target="_blank" rel="noopener" style="color:var(--gold-light)">'+esc(lu)+'</a>'
+        :esc(lu)+' <span style="color:var(--ink-dim)">(address — the resolver hunts the listing)</span>')+'</div>';
+    }
+    if(!ans) ans='<div class="kv" style="color:var(--ink-dim)">Nothing on file.</div>';
+
+    // Machine touches.
+    var touches;
+    if(L){
+      touches='<div class="kv"><span class="k">Welcome email</span>'+(T.welcomed_at?fmtDate(T.welcomed_at):'<span style="color:var(--ink-dim)">not sent</span>')+'</div>'+
+        '<div class="kv"><span class="k">Nudge</span>'+(T.nudged_at?fmtDate(T.nudged_at):'<span style="color:var(--ink-dim)">not sent</span>')+'</div>';
+      if(T.auto_render_status){
+        var col=T.auto_render_status==='completed'?'var(--green)':(/fail|skip|error|exhaust/i.test(T.auto_render_status)?'var(--red)':'var(--gold-light)');
+        touches+='<div class="kv"><span class="k">Auto-render</span><span style="color:'+col+'">'+esc(T.auto_render_status)+'</span>'+
+          (T.auto_render_attempts?' · attempt '+Number(T.auto_render_attempts):'')+
+          (T.auto_render_at?' · '+fmtDate(T.auto_render_at):'')+'</div>';
+      }
+    } else {
+      touches='<div class="kv" style="color:var(--ink-dim)">No automated touches — direct signups skip the lead machine.</div>';
+    }
+
+    // Founder contact tracking.
+    var crmHtml;
+    if(L){
+      crmHtml='<label class="kv" style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="crm-c"'+(crm.contacted_at?' checked':'')+'> I’ve contacted this lead'+(crm.contacted_at?' <span style="color:var(--ink-dim)">('+fmtDate(crm.contacted_at)+')</span>':'')+'</label>'+
+        '<textarea id="crm-n" placeholder="Notes — what you sent, what they said…">'+esc(crm.note||'')+'</textarea>'+
+        '<div style="display:flex;align-items:center;gap:10px;margin-top:8px"><button id="crm-save" class="lbtn">Save</button><span id="crm-msg" class="kv" style="color:var(--ink-dim)"></span></div>'+
+        (crm.ready?'':'<div class="kv" style="color:var(--gold-light);margin-top:6px">Heads-up: run <b>supabase/migrations/39_meta_leads_crm.sql</b> once in the SQL editor so this saves.</div>');
+    } else {
+      crmHtml='<div class="kv" style="color:var(--ink-dim)">Contact tracking lives on the lead row — direct signups don’t have one.</div>';
+    }
+
+    // Account.
+    var acct=A
+      ? '<div class="kv"><span class="k">Account made</span>'+fmtDate(A.created_at)+'</div>'+
+        '<div class="kv"><span class="k">Last sign-in</span>'+(A.last_sign_in_at?ago(A.last_sign_in_at)+' · '+fmtDate(A.last_sign_in_at):'<span style="color:var(--red)">never</span>')+'</div>'+
+        '<div class="kv"><span class="k">Tier</span>'+esc(A.tier||'free')+((A.credits!==null&&A.credits!==undefined)?' · '+Number(A.credits)+' credit'+(Number(A.credits)===1?'':'s'):'')+'</div>'
+      : '<div class="kv" style="color:var(--ink-dim)">No account yet'+(L&&L.user_created?' found — the invite may still be in flight':'')+'.</div>';
+
+    // Renders + early deaths.
+    var rrows=(j.renders&&j.renders.length)
+      ? j.renders.map(function(r,i){
+          var failed=r.status&&r.status!=='completed';
+          return '<div class="lrow" data-r="'+i+'">'+
+            '<div class="lr-main"><div class="lr-t">'+esc(r.title)+(r.internal?' <span class="badge internal">Internal</span>':'')+'</div>'+
+            '<div class="lr-s">'+ago(r.created_at)+(r.city?' · '+esc(r.city):'')+(r.engine?' · '+esc(r.engine):'')+(r.narrated?' · narrated':' · music-only')+(failed?' · <span style="color:var(--red)">'+esc(r.status)+'</span>':'')+'</div></div>'+
+            (r.mp4_url?'<span class="lr-play">▶</span>':'')+
+          '</div>';
+        }).join('')
+      : '<div class="kv" style="color:var(--ink-dim)">No renders yet.</div>';
+    if(j.failed_jobs&&j.failed_jobs.length){
+      rrows+=j.failed_jobs.map(function(f){
+        return '<div class="kv" style="color:var(--red)">✕ '+esc(f.status||'failed')+' · '+ago(f.created_at)+(f.error?' — '+esc(f.error.slice(0,90)):'')+'</div>';
+      }).join('');
+    }
+
+    ov.querySelector('.lbox').innerHTML=head+
+      '<div class="lsec"><h4>Where they came from</h4>'+from+'</div>'+
+      '<div class="lsec"><h4>What they sent in</h4>'+ans+'</div>'+
+      '<div class="lsec"><h4>Machine touches</h4>'+touches+'</div>'+
+      '<div class="lsec"><h4>Your contact</h4>'+crmHtml+'</div>'+
+      '<div class="lsec"><h4>Account</h4>'+acct+'</div>'+
+      '<div class="lsec"><h4>Renders</h4>'+rrows+'</div>';
+
+    ov.querySelector('.lclose').onclick=closeLead;
+    Array.prototype.forEach.call(ov.querySelectorAll('.lrow'),function(el2){
+      el2.onclick=function(){ var r=j.renders[Number(el2.getAttribute('data-r'))]; if(r&&r.mp4_url) openPlayer(r.mp4_url, r.title, r.city||j.email); };
+    });
+    var save=ov.querySelector('#crm-save');
+    if(save) save.onclick=function(){
+      var msg=ov.querySelector('#crm-msg'); msg.textContent='saving…'; msg.style.color='var(--ink-dim)';
+      fetch('/api/founder-lead',{method:'POST',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},
+        body:JSON.stringify({email:j.email,contacted:ov.querySelector('#crm-c').checked,note:ov.querySelector('#crm-n').value})})
+        .then(function(r){ return r.json(); })
+        .then(function(res){
+          if(res.status==='ok'){ msg.textContent='saved'; msg.style.color='var(--green)'; }
+          else if(res.status==='migration_needed'){ msg.textContent='run migration '+res.migration+' first'; msg.style.color='var(--gold-light)'; }
+          else if(res.status==='no_lead_row'){ msg.textContent='no lead row to mark'; msg.style.color='var(--gold-light)'; }
+          else { msg.textContent='save failed'+(res.error?' — '+res.error:''); msg.style.color='var(--red)'; }
+        })
+        .catch(function(){ msg.textContent='save failed — network'; msg.style.color='var(--red)'; });
+    };
+  }
+
   function renderLibrary(list){
     var el=document.getElementById('renders');
     if(!list.length){ el.innerHTML='<div class="empty">No customer renders yet — the first one lands here automatically.</div>'; return; }
