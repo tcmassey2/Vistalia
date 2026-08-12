@@ -290,6 +290,19 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
             "looks architecturally plausible. Also check large furniture SHAPE: a sofa " +
             "or sectional that stretches, extends, bends, or changes configuration " +
             "versus the photo = object_artifacts=true. " +
+            "FOR ANY SCENE WITH STORAGE OR STAGING — closets, wardrobes, pantries, " +
+            "shelving, built-ins, styled racks (Pryor OK miss: a staged walk-in closet " +
+            "EMPTIED ITSELF mid-clip — garments vanished, a bare hanger rod with shoes " +
+            "appeared — and passed as 'consistent'): do a CONTENTS INVENTORY. Count the " +
+            "racks, rods, shelves, and clusters of hanging or folded garments in the " +
+            "frames against the original photo, AND compare the LAST frame against the " +
+            "FIRST frame — the contents must be the SAME ITEMS in the SAME arrangement " +
+            "in every frame, merely seen from a moving camera. Garments, shoes, boxes, " +
+            "or props that vanish, multiply, or reorganize; rack sections that empty " +
+            "out or fill in; a bare rod, empty shelf, or new prop appearing where the " +
+            "photo shows otherwise = object_artifacts=true, EVEN IF each frame still " +
+            "plausibly 'looks like a closet.' The standard is the same contents, not " +
+            "plausible contents. " +
             "Also do a THROUGH-WINDOW INVENTORY (master-26 miss: a house " +
             "was invented outside a living-room window): check the view through every " +
             "window and glass door in the frames against the same window in the photo. " +
@@ -313,7 +326,8 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
             "FRAME (not to the photo — a boiling texture can match the photo in every " +
             "single frame while morphing between them; master-58 shipped chattering tree " +
             "branches this way). Look at tree branches, foliage clusters, leaves, grasses, " +
-            "railings, brickwork, tile patterns, and any fine repeating texture: between " +
+            "railings, brickwork, tile patterns, racks of hanging clothes, folded garment " +
+            "stacks, fabric folds, and any fine repeating texture: between " +
             "consecutive frames their INTERNAL STRUCTURE must stay the same structure, " +
             "merely shifted by the camera move. Needles or leaves that sprout, vanish, or " +
             "reorganize; branch layouts that redraw; patterns that crawl, rewrite, or " +

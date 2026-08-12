@@ -1458,6 +1458,87 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     rj90.includes("INVERTED-LADDER FIX"));
 }
 
+/* ── v62.91: Pryor OK — absent-room set-guard + QC contents inventory ──── */
+{
+  const plan91 = fs.readFileSync(path.join(ROOT, "api/create-edit-plan.js"), "utf8");
+  const vq91 = fs.readFileSync(path.join(ROOT, "render-worker/src/veo-qc.mjs"), "utf8");
+  eval(`globalThis.setAbsent = ${grab(plan91, "narrationSetAbsentRoomOffenses").replace(/^function \w+/, "function")}`);
+
+  // The Pryor cut, reconstructed: living ×2, bathroom ×2, staged-closet
+  // detail ×2 — and the exact bedrooms sentence that shipped off-track.
+  const rooms = new Map([["p1", "living"], ["p2", "living"], ["p3", "bathroom"], ["p4", "detail"], ["p5", "detail"], ["p6", "bathroom"]]);
+  const cut = ["living", "living", "bathroom", "detail", "detail", "bathroom"];
+  const pryor = [
+    { text: "Welcome to 1021 N 4345th Rd in Pryor Oklahoma.", photos: ["p1"] },
+    { text: "Step inside to a bright open space with vaulted ceilings and a modern fireplace.", photos: ["p2"] },
+    { text: "Bedrooms offer spacious layouts with ample sunlight and the bathrooms showcase clean contemporary finishes.", photos: ["p3"] },
+    { text: "Enjoy organized closets and thoughtful storage throughout.", photos: ["p4", "p5"] },
+    { text: "This home blends comfort and style perfectly.", photos: ["p6"] },
+    { text: "Contact the listing agent at their brokerage to see it today.", photos: [] }
+  ];
+  const off = setAbsent(pryor, rooms, cut);
+  check("v62.91: the Pryor bedrooms sentence is caught — one offense, right sentence, right claim",
+    off.length === 1 && off[0].index === 2 && off[0].claim === "bedroom");
+  check("v62.91: the closets sentence survives (no ROOM_WORD, detail-mapped)",
+    !off.some((o) => o.index === 3));
+  check("v62.91: a bedroom scene in the cut clears the same sentence",
+    setAbsent(pryor, rooms, [...cut, "bedroom"]).length === 0);
+  check("v62.91: asymmetry — a living claim IS satisfied by bedroom-only scenes",
+    setAbsent(
+      [{ text: "The living room glows with light.", photos: ["b1"] }],
+      new Map([["b1", "bedroom"]]), ["bedroom"]
+    ).length === 0);
+  check("v62.91: closeup benefit of the doubt — kitchen claim over detail-only photos is exempt",
+    setAbsent(
+      [{ text: "The kitchen shines with brass fixtures.", photos: ["d1"] }],
+      new Map([["d1", "detail"]]), ["detail", "living"]
+    ).length === 0);
+  check("v62.91: multi-room sentences are judged per claim (no single-name skip)",
+    (() => {
+      const o = setAbsent(
+        [{ text: "The kitchen flows into the bathroom beautifully.", photos: ["x1"] }],
+        new Map([["x1", "bathroom"]]), ["bathroom", "living"]
+      );
+      return o.length === 1 && o[0].claim === "kitchen";
+    })());
+  check("v62.91: offender shape matches the repair lane (index/claim/actual/linger) and lingers ride prior photos",
+    (() => {
+      const o = setAbsent(
+        [{ text: "A bright space.", photos: ["x1"] }, { text: "The kitchen gleams.", photos: [] }],
+        new Map([["x1", "bathroom"]]), ["bathroom"]
+      );
+      return o.length === 1 && o[0].index === 1 && o[0].claim === "kitchen" &&
+        Array.isArray(o[0].actual) && o[0].actual[0] === "bathroom" && o[0].linger === true;
+    })());
+  check("v62.91: NARRATION_SET_GUARD=0 kill switch disables the guard",
+    (() => {
+      process.env.NARRATION_SET_GUARD = "0";
+      const r = setAbsent(pryor, rooms, cut);
+      delete process.env.NARRATION_SET_GUARD;
+      return r.length === 0;
+    })());
+
+  // Wiring: enforcement carries the room-repair magic phrase; the repair
+  // lane concatenates + dedupes both offender kinds.
+  check("v62.91: set-guard error text feeds the existing room-repair lane",
+    plan91.includes("name a room the photo does not show anywhere in this cut") &&
+    /name a room the photo does not show/.test("1 sentence(s) name a room the photo does not show anywhere in this cut"));
+  check("v62.91: repair lane receives both offender kinds, deduped by sentence index",
+    plan91.includes("[...narrationRoomMismatches(origSents, roomById), ...setOffenders]") &&
+    plan91.includes("offenderSeen.has(o.index)"));
+
+  // QC contents inventory: in the SHARED inspection core (per-clip + sweep),
+  // with garments added to the temporal boil list.
+  check("v62.91: QC prompt carries the storage/staging CONTENTS INVENTORY",
+    vq91.includes("CONTENTS INVENTORY") &&
+    vq91.includes("EMPTIED ITSELF") &&
+    vq91.includes("same contents, not") &&
+    vq91.includes("compare the LAST frame against the") );
+  check("v62.91: garments join the temporal structure-rewrite list; sweep shares the core",
+    vq91.includes("racks of hanging clothes, folded garment") &&
+    vq91.includes('logTag: "sweep"'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

@@ -750,7 +750,16 @@ export default async function handler(request, response) {
             text: String(s?.text || ""),
             photos: (Array.isArray(s?.photos) ? s.photos : []).map(String)
           }));
-          const offenders = narrationRoomMismatches(origSents, roomById);
+          // v62.91: set-level absent-room offenders ride the SAME repair
+          // lane — the rewrite instruction ("describe its ACTUAL room type")
+          // is exactly right for a sentence praising a room the cut never
+          // shows. Dedupe by sentence index; per-photo offenders first.
+          const setOffenders = narrationSetAbsentRoomOffenses(
+            origSents, roomById, photoScenes0.map((s) => s.roomType)
+          );
+          const offenderSeen = new Set();
+          const offenders = [...narrationRoomMismatches(origSents, roomById), ...setOffenders]
+            .filter((o) => !offenderSeen.has(o.index) && offenderSeen.add(o.index));
           let adopted = false;
           const repairBudget = planOptionalBudgetMs();
           if (offenders.length && repairBudget < 12000) {
@@ -2296,6 +2305,79 @@ function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
   return out;
 }
 
+// ── v62.91: THE SET-LEVEL ABSENT-ROOM GUARD (1021 N 4345th Rd, Pryor OK) ──
+// Troy, on the Aug 11 lead render: "the voiceover text is completely off
+// track." The Director wrote "Bedrooms offer spacious layouts with ample
+// sunlight and the bathrooms showcase clean contemporary finishes" over a
+// six-scene cut containing ZERO bedroom scenes (living ×2, bathroom ×2,
+// staged-closet detail ×2). It slipped every existing check because
+// narrationRoomMismatches judges only sentences naming EXACTLY ONE room
+// (two-name sentences read as transitions) — a two-room sentence where one
+// room exists nowhere in the cut was invisible.
+//
+// This guard judges each named room against the WHOLE selected scene set:
+// a claim whose room class appears in no scene of the cut is an offense,
+// regardless of how many rooms the sentence names. Differences from the
+// per-photo check, each deliberate:
+//   - No single-name skip. Multi-room sentences are judged per claim —
+//     that skip is exactly how Pryor escaped.
+//   - ASYMMETRIC living↔bedroom: ROOM_EQUIV merges them because a photo
+//     of a sitting area off the primary can't be separated by the
+//     classifier. That per-photo ambiguity does not license a set-level
+//     "bedrooms" claim — if the Director wants to praise bedrooms it must
+//     SELECT a bedroom photo (Pryor had 24 to choose from). A bedroom
+//     claim therefore requires a bedroom-labeled scene; a living claim
+//     still accepts bedroom scenes (a bedroom photo genuinely shows
+//     living space).
+//   - "detail" scenes satisfy no claim (a closeup's true room is unknown),
+//     and a sentence MAPPED to detail/amenity-only photos is exempt — a
+//     faucet closeup legitimately pairs with a kitchen claim (v62.35).
+//   - Fires on ONE offense (the per-photo check demotes at two): a claim
+//     with zero matching scenes is not a classifier coin-flip — every
+//     scene label here survived the one-photo-per-call classifier and
+//     verify-repair. Enforcement reuses the room-repair lane: the offender
+//     feeds repairNarrationRooms, which rewrites just that sentence to the
+//     room actually on screen, and the Director's monologue still ships.
+// Kill switch: NARRATION_SET_GUARD=0.
+function narrationSetAbsentRoomOffenses(sentences, roomTypeByPhotoId, sceneRoomTypes) {
+  if (String(process.env.NARRATION_SET_GUARD || "1") === "0") return [];
+  const lookup = (id) => (roomTypeByPhotoId instanceof Map
+    ? roomTypeByPhotoId.get(String(id))
+    : roomTypeByPhotoId?.[String(id)]);
+  const VAGUE = new Set(["detail", "other", ""]);
+  const present = (sceneRoomTypes || [])
+    .map((rt) => String(rt || "").trim().toLowerCase())
+    .filter((rt) => rt && !VAGUE.has(rt));
+  const satisfies = (claim) => present.some((rt) =>
+    claim === "bedroom" ? rt === "bedroom" : sameRoomClass(rt, claim));
+  const out = [];
+  let ridingPhotos = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    const own = Array.isArray(s?.photos) ? s.photos : [];
+    if (own.length) ridingPhotos = own;
+    const photos = own.length ? own : ridingPhotos;
+    const named = roomTypesNamedIn(String(s?.text || ""));
+    if (!named.size) continue;
+    const actual = photos.map(lookup).filter(Boolean);
+    // Closeup benefit of the doubt: a sentence playing over detail/amenity
+    // photos may be describing exactly what that closeup shows.
+    if (!actual.length || actual.every((rt) => rt === "detail" || rt === "amenity")) continue;
+    const absent = [...named].filter((claim) => !satisfies(claim));
+    if (!absent.length) continue;
+    out.push({
+      index: i,
+      claim: absent[0],
+      actual,
+      linger: !own.length,
+      setAbsent: true,
+      detail: `s${i + 1} says "${absent.join('"+"')}" but no such scene is anywhere in this cut ` +
+        `(cut: ${present.join("+") || "unlabeled"}; plays over ${actual.join("+")}): "${String(s.text).slice(0, 70)}"`
+    });
+  }
+  return out;
+}
+
 function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMismatchPolicy = "demote", voiceId = "" } = {}) {
   const scenes = (plan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
   const sceneOrderById = new Map(scenes.map((s, i) => [String(s.photoId), i]));
@@ -2487,6 +2569,14 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
     const roomTypeByPhotoId = new Map(scenes.map((s) => [String(s.photoId), s.roomType]));
     const contradictions = narrationRoomMismatches(sentences, roomTypeByPhotoId);
     for (const c of contradictions) console.warn(`[plan] narration ROOM MISMATCH: ${c.detail}`);
+    // v62.91 set-level guard (Pryor OK): a named room that exists NOWHERE
+    // in the cut. One offense is enough — see narrationSetAbsentRoomOffenses.
+    // The error text deliberately carries the "name a room the photo does
+    // not show" phrase so the caller's room-repair lane picks it up.
+    const setOffenses = narrationSetAbsentRoomOffenses(
+      sentences, roomTypeByPhotoId, scenes.map((s) => s.roomType)
+    );
+    for (const c of setOffenses) console.warn(`[plan] narration ABSENT-ROOM: ${c.detail}`);
     // One is a coin-flip on a classifier edge case (an ensuite photo that
     // shows the bedroom); two or more is a Director narrating from memory.
     // The per-scene lines it also wrote ARE image-grounded and were
@@ -2516,6 +2606,14 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
       );
     } else if (contradictions.length === 1) {
       warnings.push("1 sentence names a room its photo may not show — shipping as written");
+    }
+    if (setOffenses.length >= 1 && haveLinesToDeriveFrom && roomMismatchPolicy !== "warn") {
+      errors.push(`${setOffenses.length} sentence(s) name a room the photo does not show anywhere in this cut`);
+    } else if (setOffenses.length >= 1) {
+      warnings.push(
+        `${setOffenses.length} sentence(s) name a room absent from the whole cut — shipping as written ` +
+        `(${roomMismatchPolicy === "warn" ? "room-repair fallback" : "no per-scene lines to derive from"})`
+      );
     }
 
     // Transcript integrity: sentence join == de-tagged monologue.
