@@ -68,6 +68,11 @@ interface AppState {
   narrationEnabled: boolean;
   // v38: word-synced captions burned over the narration (default on)
   captionsEnabled: boolean;
+  // v62.100: explicit brand-kit switch. Was implicit ("clear every field to
+  // turn it off"), which meant toggling off destroyed the saved kit. Now the
+  // kit is always saved; this flag alone decides whether it's applied to the
+  // render. Default on.
+  includeBranding: boolean;
   // v35.1: opt-in 1:1 square deliverable (adds ~2 min of render time —
   // most agents only want the 9:16). Default false.
   // v62.18: superseded by outputFormat for new renders — square is now a
@@ -159,6 +164,7 @@ interface AppState {
   setProjectTitle: (t: string) => void;
   setListing: (patch: Partial<ListingDetails>) => void;
   setBranding: (patch: Partial<AgentBranding>) => void;
+  setIncludeBranding: (enabled: boolean) => void;
   addPhotos: (photos: Photo[]) => void;
   removePhoto: (id: string) => void;
   reorderPhotos: (ids: string[]) => void;
@@ -358,6 +364,10 @@ function loadStoredPrefs(): Record<string, unknown> {
     if (p.outputFormat !== "vertical" && p.outputFormat !== "square") {
       delete p.outputFormat;
     }
+    // v62.100: only a real boolean overrides the default-on brand-kit switch.
+    if (typeof p.includeBranding !== "boolean") {
+      delete p.includeBranding;
+    }
     return p;
   } catch {
     return {};
@@ -390,6 +400,9 @@ const emptyProject = () => ({
   // unavailable, so this is safe.
   narrationEnabled: true,
   captionsEnabled: true,
+  // v62.100: brand kit applied by default; the saved kit is never wiped by
+  // toggling this off. Restored from prefs by the ...loadStoredPrefs() spread.
+  includeBranding: true,
   includeSquare: false,
   outputFormat: "vertical" as "vertical" | "square",
   blueHourCorrection: true,
@@ -605,6 +618,10 @@ export const useStore = create<AppState>((set, get) => ({
   setEngine: (e) => set({ renderEngine: e, editPlan: null }),
   setNarrationEnabled: (enabled) => (set({ narrationEnabled: enabled, editPlan: null }), persistPrefs({ narrationEnabled: enabled })),
   setCaptionsEnabled: (enabled) => (set({ captionsEnabled: enabled }), persistPrefs({ captionsEnabled: enabled })),
+  // v62.100: brand kit on/off. Invalidates the plan (the agent name rides
+  // scene 1 + the outro), persists across reloads, and — crucially — never
+  // touches the saved `branding`, so toggling off keeps the kit intact.
+  setIncludeBranding: (enabled) => (set({ includeBranding: enabled, editPlan: null }), persistPrefs({ includeBranding: enabled })),
   setIncludeSquare: (enabled) => (set({ includeSquare: enabled }), persistPrefs({ includeSquare: enabled })),
   // v62.18: changing the delivery aspect invalidates the plan — scene
   // durations, the title card and the outro are all composed for a

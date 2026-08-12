@@ -759,6 +759,8 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
 function BrandKitArea({ userId }: { userId: string }) {
   const branding = useStore((s) => s.branding);
   const setBranding = useStore((s) => s.setBranding);
+  const includeBranding = useStore((s) => s.includeBranding);
+  const setIncludeBranding = useStore((s) => s.setIncludeBranding);
   const setError = useStore((s) => s.setError);
   const setToast = useStore((s) => s.setToast);
 
@@ -819,7 +821,45 @@ function BrandKitArea({ userId }: { userId: string }) {
 
   return (
     <div className="bg-surface border border-edge rounded-xl overflow-hidden">
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_290px]">
+      {/* v62.100: explicit brand-kit switch. Off omits your branding from the
+          render but keeps every field saved — toggle back on any time. */}
+      <button
+        type="button"
+        onClick={() => setIncludeBranding(!includeBranding)}
+        className={cn(
+          "card-press w-full text-left p-4 flex items-center justify-between gap-3 border-b transition-colors",
+          includeBranding ? "border-edge bg-surface-raised" : "border-edge hover:border-edge-strong"
+        )}
+        aria-pressed={includeBranding}
+      >
+        <div className="min-w-0">
+          <div className="text-sm font-semibold tracking-tightish">Apply my brand kit to this video</div>
+          <div className="text-xs text-ink-muted mt-0.5">
+            {includeBranding
+              ? "Your name, brokerage, license, and logo appear on the outro."
+              : "Off — this video ships unbranded. Your kit stays saved below."}
+          </div>
+        </div>
+        <span
+          className={cn(
+            "relative shrink-0 w-11 h-6 rounded-full transition-colors",
+            includeBranding ? "bg-gold" : "bg-edge-strong"
+          )}
+        >
+          <span
+            className={cn(
+              "absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform",
+              includeBranding && "translate-x-5"
+            )}
+          />
+        </span>
+      </button>
+      <div
+        className={cn(
+          "grid grid-cols-1 lg:grid-cols-[1fr_290px] transition-opacity",
+          !includeBranding && "opacity-45"
+        )}
+      >
         {/* ==== Form column ==== */}
         <div className="p-5 sm:p-6 flex flex-col gap-6 min-w-0">
           <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-5 items-start">
@@ -2251,6 +2291,7 @@ function RenderControls() {
   const photos = useStore((s) => s.photos);
   const listing = useStore((s) => s.listing);
   const branding = useStore((s) => s.branding);
+  const includeBranding = useStore((s) => s.includeBranding);
   const organization = useStore((s) => s.organization);
   const selectedStyleId = useStore((s) => s.selectedStyleId);
   const selectedMusicTrackId = useStore((s) => s.selectedMusicTrackId);
@@ -2383,7 +2424,10 @@ function RenderControls() {
         // so the Veo render then failed validation ("missing prompt"). Always
         // request the plan as "veo" so veoPrompt is generated per scene.
         engine: "veo",
-        brandKit: branding,
+        // v62.100: honor the brand-kit switch. Off sends an empty kit — the
+        // exact shape "clear every field" produced before — so the saved
+        // `branding` is untouched and the render simply omits the outro brand.
+        brandKit: includeBranding ? branding : { fullName: "", brokerage: "", phone: "", email: "" },
         targetDurationSec,
         // v30 beat-sync: send the SAME track the manifest will use (below), so
         // the plan snaps scene cuts to this track's actual beat grid.
@@ -2505,7 +2549,10 @@ function RenderControls() {
           // blended frames.
           useCrossfades: crossfadesEnabled
         },
-        brandKit: branding,
+        // v62.100: honor the brand-kit switch. Off sends an empty kit — the
+        // exact shape "clear every field" produced before — so the saved
+        // `branding` is untouched and the render simply omits the outro brand.
+        brandKit: includeBranding ? branding : { fullName: "", brokerage: "", phone: "", email: "" },
         organizationId: organization?.id || null,
         // v24.2: narrationEnabled is now exposed in the Audio panel.
         // Worker still fail-soft to music-only if ElevenLabs is unavailable.

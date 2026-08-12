@@ -2002,6 +2002,51 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     idx.includes("tsReset()"));
 }
 
+/* ── v62.100: founder re-render helper + brand-kit on/off switch ── */
+{
+  const fl = fs.readFileSync(path.join(ROOT, "api/founder-lead.js"), "utf8");
+  const fh = fs.readFileSync(path.join(ROOT, "founder.html"), "utf8");
+  const st = fs.readFileSync(path.join(ROOT, "webapp/src/lib/store.ts"), "utf8");
+  const ps = fs.readFileSync(path.join(ROOT, "webapp/src/screens/ProjectScreen.tsx"), "utf8");
+
+  check("v62.100: founder-lead returns deduped source photos + context for a render",
+    fl.includes('request.query?.render_photos') &&
+    fl.includes("render_audit_log?select=job_id,listing_address,listing_city,listing_price,project_title,render_config,scenes") &&
+    fl.includes("s.photoUrl || s.photo_url") &&
+    fl.includes("seen.has(url)"));
+  check("v62.100: the photos endpoint needs no email and stays behind METRICS_TOKEN",
+    // the render_photos branch sits BEFORE the email-required 400
+    fl.indexOf("request.query?.render_photos") < fl.indexOf("A valid email is required") &&
+    fl.indexOf("Bearer ${token}") < fl.indexOf("request.query?.render_photos"));
+  check("v62.100: the portal exposes a Photos affordance on dossier rows and library cards",
+    fh.includes('class="lr-photos"') &&
+    fh.includes('class="rc-photos"') &&
+    fh.includes("openRenderPhotos("));
+  check("v62.100: openRenderPhotos fetches the render's photos with the stored bearer token",
+    fh.includes("'/api/founder-lead?render_photos='+encodeURIComponent(jobId)") &&
+    fh.includes("Authorization:'Bearer '+token()"));
+  check("v62.100: download-all zips client-side via JSZip and the Photos chip stops row playback",
+    fh.includes("jszip") &&
+    fh.includes("zip.generateAsync") &&
+    fh.includes("e.stopPropagation(); openRenderPhotos"));
+
+  check("v62.100: the store carries an explicit includeBranding switch, default on, persisted",
+    st.includes("includeBranding: boolean;") &&
+    st.includes("includeBranding: true,") &&
+    st.includes("persistPrefs({ includeBranding: enabled })") &&
+    st.includes('typeof p.includeBranding !== "boolean"'));
+  check("v62.100: setIncludeBranding never mutates the saved branding (kit survives toggling off)",
+    st.includes("setIncludeBranding: (enabled) => (set({ includeBranding: enabled, editPlan: null })") &&
+    // the setter touches includeBranding + editPlan only — no branding write
+    !/setIncludeBranding[^\n]*branding:/.test(st));
+  check("v62.100: the render portal shows the brand-kit toggle wired to setIncludeBranding",
+    ps.includes("setIncludeBranding(!includeBranding)") &&
+    ps.includes("Apply my brand kit to this video"));
+  check("v62.100: both render call sites honor the switch — off sends an empty kit, not the saved one",
+    (ps.match(/brandKit: includeBranding \? branding : \{ fullName: "", brokerage: "", phone: "", email: "" \}/g) || []).length === 2 &&
+    !ps.includes("brandKit: branding,"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

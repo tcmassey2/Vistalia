@@ -95,6 +95,22 @@
   #lead .lr-t{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #lead .lr-s{font-size:11px;color:var(--ink-dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #lead .lr-play{width:28px;height:28px;border-radius:50%;background:rgba(11,11,13,.6);border:1px solid rgba(230,206,142,.55);display:grid;place-items:center;color:var(--gold-light);font-size:11px;padding-left:2px;flex-shrink:0}
+  #lead .lr-photos{font-size:11px;padding:5px 9px;border-radius:16px;border:1px solid var(--edge);color:var(--ink-muted);flex-shrink:0;white-space:nowrap}
+  #lead .lr-photos:hover{border-color:var(--gold);color:var(--gold-light)}
+  /* v62.100: photos-used / re-render helper */
+  .rc-photos{display:inline-block;margin-top:8px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-muted);border:1px solid var(--edge);border-radius:14px;padding:4px 8px;background:rgba(11,11,13,.55);cursor:pointer}
+  .rc-photos:hover{border-color:var(--gold);color:var(--gold-light)}
+  #rphotos{position:fixed;inset:0;background:rgba(11,11,13,.94);z-index:22;overflow-y:auto;padding:28px 14px 60px}
+  #rphotos .rpbox{background:var(--surface);border:1px solid var(--edge);border-radius:16px;max-width:640px;margin:0 auto;padding:22px}
+  #rphotos .rphead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px}
+  #rphotos h3{font-size:16px;font-weight:650}
+  #rphotos .rpctx{font-size:12px;color:var(--ink-muted);line-height:1.6;margin:8px 0 14px;word-break:break-word}
+  #rphotos .rpbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  #rphotos .rpgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+  #rphotos .rpgrid a{display:block;aspect-ratio:4/3;border-radius:8px;overflow:hidden;border:1px solid var(--edge);background:#0B0B0D}
+  #rphotos .rpgrid img{width:100%;height:100%;object-fit:cover;display:block}
+  #rphotos .rpclose{background:none;border:1px solid var(--edge);color:var(--ink-muted);border-radius:8px;width:30px;height:30px;font-size:13px;cursor:pointer;flex-shrink:0}
+  #rphotos .rpclose:hover{border-color:var(--gold);color:var(--gold-light)}
   #player{position:fixed;inset:0;background:rgba(11,11,13,.95);display:grid;place-items:center;z-index:20;padding:16px}
   #player video{max-height:84vh;max-width:min(92vw,486px);border-radius:14px;border:1px solid var(--edge);background:#000;outline:none}
   #player .pmeta{position:fixed;bottom:12px;left:0;right:0;text-align:center;font-size:12px;color:var(--ink-muted);padding:0 20px}
@@ -229,6 +245,99 @@
     document.body.appendChild(ov);
   }
 
+  /* ── v62.100: photos-used / re-render helper ──────────────────────
+     Pull the exact source photos that went into a render + its listing
+     context, so a make-right redo is download → re-upload, not a Supabase
+     scavenger hunt. Zips client-side (public bucket sends CORS *). */
+  var _jszip=null;
+  function loadJSZip(){
+    if(_jszip) return Promise.resolve(_jszip);
+    if(window.JSZip){ _jszip=window.JSZip; return Promise.resolve(_jszip); }
+    return new Promise(function(res,rej){
+      var s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      s.onload=function(){ _jszip=window.JSZip; res(_jszip); };
+      s.onerror=function(){ rej(new Error('zip library failed to load')); };
+      document.head.appendChild(s);
+    });
+  }
+  function fnameFromUrl(u,i){
+    var base=String(u).split('?')[0].split('/').pop()||('photo-'+(i+1));
+    if(!/\.(jpe?g|png|webp|gif)$/i.test(base)) base+='.jpg';
+    return String(i+1).padStart(2,'0')+'-'+base;
+  }
+  function closeRPhotos(){ var ov=document.getElementById('rphotos'); if(ov){ ov.remove(); document.removeEventListener('keydown',onRPKey); } }
+  function onRPKey(e){ if(e.key==='Escape') closeRPhotos(); }
+  function openRenderPhotos(jobId,title){
+    if(!jobId) return;
+    closeRPhotos();
+    var ov=document.createElement('div'); ov.id='rphotos';
+    ov.innerHTML='<div class="rpbox"><div class="kv" style="color:var(--ink-dim)">Loading photos…</div></div>';
+    ov.addEventListener('click',function(e){ if(e.target===ov) closeRPhotos(); });
+    document.addEventListener('keydown',onRPKey);
+    document.body.appendChild(ov);
+    fetch('/api/founder-lead?render_photos='+encodeURIComponent(jobId),{headers:{Authorization:'Bearer '+token()}})
+      .then(function(r){ if(r.status===401){ closeRPhotos(); showGate(); throw new Error('unauthorized'); } if(!r.ok) throw new Error('http '+r.status); return r.json(); })
+      .then(function(j){ renderRPhotos(ov,j,title); })
+      .catch(function(e){ var b=ov.querySelector('.rpbox'); if(b) b.innerHTML='<div class="kv" style="color:var(--red)">Could not load photos — '+esc(String(e.message||e))+'</div>'; });
+  }
+  function renderRPhotos(ov,j,title){
+    var photos=(j&&j.photos)||[], ctx=(j&&j.context)||{};
+    var name=title||ctx.address||'Render';
+    var ctxbits=[];
+    if(ctx.address) ctxbits.push(esc(ctx.address));
+    if(ctx.city) ctxbits.push(esc(ctx.city));
+    if(ctx.price) ctxbits.push(esc(ctx.price));
+    if(ctx.style) ctxbits.push('style: '+esc(ctx.style));
+    if(ctx.music) ctxbits.push('music: '+esc(ctx.music));
+    var head='<div class="rphead"><div style="min-width:0"><h3>'+esc(name)+'</h3>'+
+      '<div class="rpctx">'+(ctxbits.length?ctxbits.join(' · '):'No listing context on this render')+'<br>'+
+      '<span style="color:var(--ink-dim)">'+photos.length+' photo'+(photos.length===1?'':'s')+' used — download, then re-upload in the webapp to rebuild.</span></div></div>'+
+      '<button class="rpclose" title="Close">✕</button></div>';
+    if(!photos.length){
+      ov.querySelector('.rpbox').innerHTML=head+'<div class="kv" style="color:var(--ink-dim)">No source photos recorded for this render (older renders predate per-scene logging).</div>';
+      ov.querySelector('.rpclose').onclick=closeRPhotos;
+      return;
+    }
+    var grid=photos.map(function(p){
+      var u=attr(p.url);
+      return '<a href="'+u+'" target="_blank" rel="noopener" title="'+attr(p.room||'')+'"><img src="'+u+'" alt="" loading="lazy"></a>';
+    }).join('');
+    ov.querySelector('.rpbox').innerHTML=head+
+      '<div class="rpbar"><button class="lbtn" id="rp-zip">Download all ('+photos.length+')</button>'+
+      '<button class="lbtn ghost" id="rp-copy" style="cursor:pointer">Copy URLs</button>'+
+      '<span id="rp-msg" class="kv" style="color:var(--ink-dim);align-self:center"></span></div>'+
+      '<div class="rpgrid">'+grid+'</div>';
+    ov.querySelector('.rpclose').onclick=closeRPhotos;
+    var msg=ov.querySelector('#rp-msg');
+    ov.querySelector('#rp-copy').onclick=function(){
+      var text=photos.map(function(p){ return p.url; }).join('\n');
+      (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(text):Promise.reject())
+        .then(function(){ msg.textContent='URLs copied'; msg.style.color='var(--green)'; })
+        .catch(function(){ msg.textContent='copy failed — long-press a photo instead'; msg.style.color='var(--red)'; });
+    };
+    ov.querySelector('#rp-zip').onclick=function(){
+      var btn=this; btn.disabled=true; msg.style.color='var(--ink-dim)'; msg.textContent='zipping 0/'+photos.length+'…';
+      loadJSZip().then(function(JSZip){
+        var zip=new JSZip(); var done=0, failed=0;
+        return Promise.all(photos.map(function(p,i){
+          return fetch(p.url).then(function(r){ if(!r.ok) throw new Error('http'); return r.blob(); })
+            .then(function(b){ zip.file(fnameFromUrl(p.url,i), b); done++; msg.textContent='zipping '+done+'/'+photos.length+'…'; })
+            .catch(function(){ failed++; });
+        })).then(function(){
+          if(done===0) throw new Error('every photo failed to fetch');
+          return zip.generateAsync({type:'blob'});
+        }).then(function(blob){
+          var a=document.createElement('a'); var slug=String(name).replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase()||'render';
+          a.href=URL.createObjectURL(blob); a.download=slug+'-photos.zip'; document.body.appendChild(a); a.click();
+          setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+          msg.textContent=done+' photo'+(done===1?'':'s')+' zipped'+(failed?' ('+failed+' skipped)':''); msg.style.color='var(--green)';
+        });
+      }).catch(function(e){ msg.textContent='download failed — '+String(e.message||e); msg.style.color='var(--red)'; })
+        .then(function(){ btn.disabled=false; });
+    };
+  }
+
   /* ── v62.97 baby CRM — click a lead, get the whole story ─────────── */
   function attr(t){ return esc(t).replace(/"/g,'&quot;'); }
   function fmtDate(iso){ if(!iso) return '—'; var d=new Date(iso); return d.toLocaleDateString([], {month:'short',day:'numeric'})+' '+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}); }
@@ -332,6 +441,7 @@
           return '<div class="lrow" data-r="'+i+'">'+
             '<div class="lr-main"><div class="lr-t">'+esc(r.title)+(r.internal?' <span class="badge internal">Internal</span>':'')+'</div>'+
             '<div class="lr-s">'+ago(r.created_at)+(r.city?' · '+esc(r.city):'')+(r.engine?' · '+esc(r.engine):'')+(r.narrated?' · narrated':' · music-only')+(failed?' · <span style="color:var(--red)">'+esc(r.status)+'</span>':'')+'</div></div>'+
+            (r.job_id?'<span class="lr-photos" data-job="'+esc(r.job_id)+'" data-title="'+esc(r.title)+'" title="Photos used — download to re-render">Photos</span>':'')+
             (r.mp4_url?'<span class="lr-play">▶</span>':'')+
           '</div>';
         }).join('')
@@ -353,6 +463,9 @@
     ov.querySelector('.lclose').onclick=closeLead;
     Array.prototype.forEach.call(ov.querySelectorAll('.lrow'),function(el2){
       el2.onclick=function(){ var r=j.renders[Number(el2.getAttribute('data-r'))]; if(r&&r.mp4_url) openPlayer(r.mp4_url, r.title, r.city||j.email); };
+    });
+    Array.prototype.forEach.call(ov.querySelectorAll('.lr-photos'),function(pb){
+      pb.onclick=function(e){ e.stopPropagation(); openRenderPhotos(pb.getAttribute('data-job'), pb.getAttribute('data-title')); };
     });
     var save=ov.querySelector('#crm-save');
     if(save) save.onclick=function(){
@@ -393,6 +506,7 @@
           '<div class="rtitle">'+esc(r.title)+'</div>'+
           '<div class="rsub">'+esc(r.email||'unknown')+(failed?' · '+ago(r.created_at):'')+'</div>'+
           lastLine+
+          (r.job_id?'<span class="rc-photos" data-job="'+esc(r.job_id)+'" data-title="'+esc(r.title)+'" title="Photos used — download to re-render">Photos used</span>':'')+
         '</div>'+
       '</div>';
     }).join('');
@@ -401,6 +515,10 @@
         var r=list[Number(card.getAttribute('data-i'))];
         if(r&&r.mp4_url) openPlayer(r.mp4_url, r.title, r.email);
       };
+    });
+    // v62.100: the "Photos used" chip pulls source photos without triggering playback.
+    Array.prototype.forEach.call(el.querySelectorAll('.rc-photos'),function(pb){
+      pb.onclick=function(e){ e.stopPropagation(); openRenderPhotos(pb.getAttribute('data-job'), pb.getAttribute('data-title')); };
     });
   }
 

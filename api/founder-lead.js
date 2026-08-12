@@ -35,6 +35,50 @@ export default async function handler(request, response) {
   if (!supabaseUrl || !serviceKey) return response.status(503).json({ error: "Supabase env missing" });
   const rest = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
 
+  /* ── v62.100: photos-used for a render (the re-render helper) ─────────────
+     GET ?render_photos=<jobId> → the deduped source photos that went into a
+     render, plus its listing context, so Troy can pull them from the founder
+     portal and rebuild a listing (e.g. a make-right redo) without hunting
+     through Supabase. No email needed — the job id is unique. Same
+     METRICS_TOKEN gate as everything else here. */
+  if (request.method === "GET" && request.query?.render_photos) {
+    const jobId = String(request.query.render_photos).slice(0, 200);
+    try {
+      const rows = await fetch(
+        `${supabaseUrl}/rest/v1/render_audit_log?select=job_id,listing_address,listing_city,listing_price,project_title,render_config,scenes&job_id=eq.${encodeURIComponent(jobId)}&limit=1`,
+        { headers: rest }
+      ).then((r) => (r.ok ? r.json() : []));
+      const row = Array.isArray(rows) && rows[0] ? rows[0] : null;
+      if (!row) return response.status(200).json({ status: "no_render", photos: [], context: null });
+      const scenes = Array.isArray(row.scenes) ? row.scenes : [];
+      const seen = new Set();
+      const photos = [];
+      for (const s of scenes) {
+        const url = s && (s.photoUrl || s.photo_url || s.url);
+        if (url && typeof url === "string" && !seen.has(url)) {
+          seen.add(url);
+          photos.push({ url, room: String(s.roomType || s.room_type || "").slice(0, 40) });
+        }
+      }
+      const rc = row.render_config || {};
+      return response.status(200).json({
+        status: "ok",
+        job_id: row.job_id,
+        photos,
+        context: {
+          address: row.listing_address || "",
+          city: row.listing_city || "",
+          price: row.listing_price || "",
+          title: row.project_title || "",
+          style: rc.selectedStyle || "",
+          music: rc.musicMood || rc.musicTrack || ""
+        }
+      });
+    } catch (err) {
+      return response.status(200).json({ status: "failed", error: String(err?.message || err).slice(0, 160), photos: [] });
+    }
+  }
+
   const email = String(
     (request.method === "POST" ? request.body?.email : request.query?.email) || ""
   ).trim().toLowerCase();
