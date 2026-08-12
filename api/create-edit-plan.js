@@ -767,7 +767,14 @@ export default async function handler(request, response) {
           }
           if (offenders.length && repairBudget >= 12000) {
             console.info(`[plan] t+${planElapsedSec().toFixed(0)}s — room-repair start (${offenders.length} sentence(s), budget ${(repairBudget / 1000).toFixed(0)}s).`);
-            const repaired = await repairNarrationRooms(parsed.narration, offenders, { roomById, listingDetails, selectedStyle, timeoutMs: repairBudget });
+            // v62.92: hand the repair the actual pixels — photoId → URL for
+            // every photo the plan knows, so each offender's mapped photo
+            // rides the rewrite call.
+            const photoUrlById = new Map((photos || []).map((p) => [
+              String(p.id),
+              String(p.durableUrl || p.durable_url || p.publicUrl || p.public_url || p.imageUrl || p.url || "")
+            ]));
+            const repaired = await repairNarrationRooms(parsed.narration, offenders, { roomById, photoUrlById, listingDetails, selectedStyle, timeoutMs: repairBudget });
             if (repaired) {
               const probe = { scenes: normalizedPlan.scenes };
               attachNarration(probe, repaired, { targetDurationSec, voiceId: planVoiceId });
@@ -1847,10 +1854,35 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
    not touch is the photo mapping; the one thing it must fix is the room
    language. Non-offender sentences are equality-checked in code — a model
    that "improved" a sentence it wasn't asked to touch gets rejected. */
-async function repairNarrationRooms(narration, offenders, { roomById, listingDetails, selectedStyle, timeoutMs = 30000 } = {}) {
+async function repairNarrationRooms(narration, offenders, { roomById, photoUrlById, listingDetails, selectedStyle, timeoutMs = 30000 } = {}) {
   if (!process.env.OPENAI_API_KEY) return null;
   const n = narration.sentences.length;
   const offenderIdx = new Set(offenders.map((o) => o.index));
+  // ── v62.92: THE REPAIR GETS EYES (Via Pasa, 3 rewrites shipped blind) ──
+  // This call was text-only: it renamed the room word and kept the old
+  // sentence's feature nouns, shipping Franken-sentences — "The living
+  // space impresses with sleek white cabinetry" (a kitchen line renamed),
+  // "The outdoor area showcases unique tile work and contemporary
+  // fixtures" (a bathroom line renamed onto a fire-pit patio) — and when
+  // three offenders all mapped to living-labeled photos it said "living
+  // area" three sentences running. Same lesson as v33.3's verify-repair:
+  // facts need pixels. Each offender's actual photo now rides the request
+  // (detail:"low", capped, deduped) and the instruction is features-first.
+  // Fail-open: no resolvable URL → that offender repairs text-only exactly
+  // as before.
+  const imageParts = [];
+  {
+    const seenUrl = new Set();
+    for (const o of offenders) {
+      const firstId = (o.photoIds || [])[0];
+      const url = firstId != null && photoUrlById ? String(photoUrlById.get(String(firstId)) || "") : "";
+      if (url && !seenUrl.has(url) && imageParts.length < 4) {
+        seenUrl.add(url);
+        imageParts.push({ idx: o.index, url });
+      }
+    }
+  }
+  const hasImageFor = (idx) => imageParts.some((p) => p.idx === idx);
   const fixes = offenders.map((o) => {
     // v62.50: "amenity" is a classifier bucket, not a room a narrator can
     // say — translate it so the rewrite has something usable to aim at.
@@ -1859,14 +1891,21 @@ async function repairNarrationRooms(narration, offenders, { roomById, listingDet
       : rt).join(" / ");
     // v62.69: a linger offender has no photos of its own — it plays over
     // the previous sentence's scene, and the rewrite instruction says so.
-    return `Sentence ${o.index + 1} says "${o.claim}" but the photo${o.linger ? " on screen while it plays" : ""} shows: ${actualRooms}.`;
+    return `Sentence ${o.index + 1} says "${o.claim}" but the photo${o.linger ? " on screen while it plays" : ""} shows: ${actualRooms}.` +
+      (hasImageFor(o.index) ? ` That photo is attached below, labeled "photo for sentence ${o.index + 1}" — it is the authority.` : "");
   }).join("\n");
   const prompt =
     `You wrote this spoken real-estate tour. ${offenders.length} sentence(s) name a room type their photo does not show — ` +
-    `the classifier's label for each photo is given below and it outranks your guess.\n\n${fixes}\n\n` +
-    `Rewrite ONLY ${offenders.length === 1 ? "that sentence" : "those sentences"} so each describes its ACTUAL room type ` +
-    `— or, if unsure what the space is, describes what is visible (light, materials, scale) WITHOUT naming any room type. ` +
-    `Keep the rewritten sentence about the same length and in the same conversational register.\n` +
+    `the classifier's label for each is given below, and where available the ACTUAL PHOTO that plays while the sentence speaks is attached.\n\n${fixes}\n\n` +
+    `Rewrite ONLY ${offenders.length === 1 ? "that sentence" : "those sentences"}, by these rules:\n` +
+    `1. PHOTO ATTACHED: describe what THAT photo actually shows — lead with visible features (materials, light, architecture, the view). ` +
+    `Name the room type only if the photo makes it unmistakable; otherwise describe the space without naming it.\n` +
+    `2. NO PHOTO: speak to the classifier's label in general terms — do NOT invent specific features (colors, materials, fixtures) you cannot see.\n` +
+    `3. NEVER carry feature claims over from the old sentence — its cabinetry, tile, counters, or fixtures were written for the WRONG room. ` +
+    `If the photo does not show it, it does not get said.\n` +
+    `4. VARIETY IS A HARD RULE: across the final ${n} sentences, no room-type word may appear in two rewritten sentences — ` +
+    `when two rewrites would share one (e.g. "living area" twice), make one of them feature-only with no room word at all.\n` +
+    `Keep each rewritten sentence about the same length and in the same conversational register.\n` +
     `Every OTHER sentence must be returned EXACTLY as written, word for word — do not improve, retag, or re-punctuate them.\n` +
     `Return EXACTLY ${n} sentences in the same order. "monologue" is the full text WITH bracketed audio tags; ` +
     `"sentences" is the same text split per sentence WITHOUT tags; the sentences joined by single spaces must equal ` +
@@ -1880,7 +1919,18 @@ async function repairNarrationRooms(narration, offenders, { roomById, listingDet
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: motionModel(),
-        input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
+        input: [{
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            // v62.92: each offender's photo, labeled so rule 1 can bind
+            // sentence to image unambiguously.
+            ...imageParts.flatMap((p) => [
+              { type: "input_text", text: `photo for sentence ${p.idx + 1}:` },
+              { type: "input_image", image_url: p.url, detail: "low" }
+            ])
+          ]
+        }],
         text: {
           format: {
             type: "json_schema",
@@ -2043,6 +2093,16 @@ const ROOM_WORDS = [
   // entry exists to catch. No bare "entrance" — "the entrance to the
   // kitchen" is a preposition, not a claim.
   ["entry", /\b(entryways?|entry hall|entrance hall|foyers?)\b/i],
+  // v62.92 (Havenwood "dining space" / Hudson "adjoining dining area"):
+  // dining was not a word this list knew, so dining claims were invisible
+  // to every check. CLAIM-ONLY type, same contract as "entry" (the
+  // classifier menu is unchanged): open-plan reality means dining areas
+  // photograph inside kitchen and living shots, so those labels satisfy
+  // it via ROOM_EQUIV — a dining claim is flagged only over
+  // bedroom/bathroom/exterior/outdoor, where it is indefensible. "dinner"
+  // stays out (a "dinner party on the patio" is lifestyle copy, not a
+  // room claim).
+  ["dining", /\b(dining (?:room|area|space|nook)|breakfast (?:nook|area))\b/i],
   // "pool table" (and "pool-table") is a game room, not a pool.
   ["outdoor", /\b(patio|pool(?:s|side)?\b(?![\s-]*table)|backyard|back yard|courtyard|terrace|deck|firepit|fire pit|outdoor (?:living|seating|kitchen|space|area))\b/i],
   // v62.50 (Cheney Dr): "The home gym offers natural light and equipment"
@@ -2067,7 +2127,10 @@ const ROOM_EQUIV = [
   // entry courtyards (outdoor), and interior foyers (living) — the
   // classifier has no entry bucket, so all three are legitimate homes.
   // Entry over bathroom/kitchen/bedroom stays a mismatch.
-  ["entry", "exterior"], ["entry", "outdoor"], ["entry", "living"]
+  ["entry", "exterior"], ["entry", "outdoor"], ["entry", "living"],
+  // v62.92: dining claims are honest over kitchen and living labels (the
+  // classifier has no dining bucket; open-plan shots carry the table).
+  ["dining", "kitchen"], ["dining", "living"]
 ];
 function sameRoomClass(a, b) {
   if (a === b) return true;
@@ -2299,6 +2362,9 @@ function narrationRoomMismatches(sentences, roomTypeByPhotoId) {
       claim,
       actual,
       linger: !own.length,
+      // v62.92: the repair pass attaches this photo to the rewrite call —
+      // the model describes what it SEES instead of renaming blind.
+      photoIds: photos.map(String),
       detail: `s${i + 1} says "${claim}"${own.length ? "" : " (linger — rides the previous scene's photos)"} over a ${actual.join("+")} scene: "${String(s.text).slice(0, 70)}"`
     });
   }
@@ -2370,6 +2436,7 @@ function narrationSetAbsentRoomOffenses(sentences, roomTypeByPhotoId, sceneRoomT
       claim: absent[0],
       actual,
       linger: !own.length,
+      photoIds: photos.map(String),
       setAbsent: true,
       detail: `s${i + 1} says "${absent.join('"+"')}" but no such scene is anywhere in this cut ` +
         `(cut: ${present.join("+") || "unlabeled"}; plays over ${actual.join("+")}): "${String(s.text).slice(0, 70)}"`

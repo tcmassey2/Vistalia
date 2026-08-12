@@ -1539,6 +1539,69 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     vq91.includes('logTag: "sweep"'));
 }
 
+/* ── v62.92: repair-with-eyes + dining claim word ──────────────────────── */
+{
+  const plan92 = fs.readFileSync(path.join(ROOT, "api/create-edit-plan.js"), "utf8");
+
+  // dining: claim-only room word, satisfied by kitchen/living, flagged over the rest.
+  check("v62.92: dining phrases register as claims; dinner-party copy does not",
+    [...roomTypesNamedIn("The dining area glows warmly.")].join() === "dining" &&
+    [...roomTypesNamedIn("A sunny breakfast nook off the kitchen.")].includes("dining") &&
+    roomTypesNamedIn("Perfect for dinner parties on the patio.").has("dining") === false);
+  check("v62.92: dining is satisfied by kitchen and living labels, not bathroom",
+    sameRoomClass("dining", "kitchen") && sameRoomClass("kitchen", "dining") &&
+    sameRoomClass("dining", "living") && !sameRoomClass("dining", "bathroom") &&
+    !sameRoomClass("dining", "exterior"));
+  check("v62.92: a dining claim over a bathroom photo is a per-photo mismatch; over a kitchen it is not",
+    roomMismatches(
+      [{ text: "The dining area glows warmly.", photos: ["x"] }], new Map([["x", "bathroom"]])
+    ).length === 1 &&
+    roomMismatches(
+      [{ text: "The dining area glows warmly.", photos: ["x"] }], new Map([["x", "kitchen"]])
+    ).length === 0);
+  check("v62.92: set-guard — dining claim with no kitchen/living/dining anywhere in the cut is an offense",
+    setAbsent(
+      [{ text: "The dining area glows warmly.", photos: ["x"] }],
+      new Map([["x", "bathroom"]]), ["bathroom", "bedroom"]
+    ).length === 1 &&
+    setAbsent(
+      [{ text: "The dining area glows warmly.", photos: ["x"] }],
+      new Map([["x", "bathroom"]]), ["kitchen", "bathroom"]
+    ).length === 0);
+
+  // Offenders now carry their mapped photo ids for the repair call.
+  check("v62.92: both offender kinds carry photoIds (the repair's eyes)",
+    (() => {
+      const m = roomMismatches(
+        [{ text: "The bathroom shines with marble.", photos: ["p9"] }], new Map([["p9", "kitchen"]])
+      );
+      const s = setAbsent(
+        [{ text: "The kitchen gleams brightly.", photos: ["p9"] }], new Map([["p9", "bathroom"]]), ["bathroom"]
+      );
+      return m.length === 1 && m[0].photoIds?.join() === "p9" &&
+             s.length === 1 && s[0].photoIds?.join() === "p9";
+    })());
+
+  // Repair-with-eyes wiring: images attached, features-first rules, variety
+  // rule, no-carryover rule, capped+deduped, text-only fail-open intact.
+  const repairSrc = grab(plan92, "repairNarrationRooms");
+  check("v62.92: repair call attaches offender photos as input_image at low detail",
+    repairSrc.includes('type: "input_image"') &&
+    repairSrc.includes('detail: "low"') &&
+    repairSrc.includes("photo for sentence") &&
+    repairSrc.includes("imageParts.length < 4"));
+  check("v62.92: rewrite rules — features-first, no carried-over claims, hard variety rule",
+    repairSrc.includes("PHOTO ATTACHED: describe what THAT photo actually shows") &&
+    repairSrc.includes("NEVER carry feature claims over") &&
+    repairSrc.includes("VARIETY IS A HARD RULE"));
+  check("v62.92: repair fails open to text-only when no photo URL resolves",
+    repairSrc.includes("photoUrlById") &&
+    /if \(url && !seenUrl\.has\(url\)/.test(repairSrc));
+  check("v62.92: call site hands the repair a photoId→URL map from the plan's photos",
+    plan92.includes("const photoUrlById = new Map((photos || []).map((p) => [") &&
+    plan92.includes("{ roomById, photoUrlById, listingDetails, selectedStyle, timeoutMs: repairBudget }"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);
