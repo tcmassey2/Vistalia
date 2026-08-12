@@ -886,6 +886,44 @@ export default async function handler(request, response) {
           }
         }
       }
+      /* ── v62.94 DERIVED SMOOTHING: the safety net learns to speak. ───────
+         Only runs when the monologue demoted (Pretoria: 42-word fragment
+         stack). One text-only rewrite to the word budget; smoothed texts
+         are re-judged by the room checks and rejected on ANY new offense —
+         stiff-but-true beats smooth-but-wrong. */
+      {
+        const narD = normalizedPlan.narration;
+        if (narD?.source && String(narD.source).startsWith("derived-from-lines") &&
+            Array.isArray(narD.sentences) && narD.sentences.length >= 3 &&
+            String(process.env.DERIVED_SMOOTHING || "1") === "1" &&
+            planOptionalBudgetMs() >= 12000) {
+          const photoScenesS = (normalizedPlan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
+          const roomByIdS = new Map(photoScenesS.map((s) => [String(s.photoId), s.roomType]));
+          const t0s = Date.now();
+          const smoothed = await smoothDerivedNarration(narD, {
+            roomById: roomByIdS, listingDetails, targetDurationSec, voiceId: planVoiceId,
+            timeoutMs: Math.min(planOptionalBudgetMs() - 4000, 25000)
+          });
+          if (smoothed) {
+            const candidateSents = narD.sentences.map((s, i) => ({ text: smoothed[i], photos: s.photos }));
+            const beforeMis = narrationRoomMismatches(narD.sentences, roomByIdS).length +
+              narrationSetAbsentRoomOffenses(narD.sentences, roomByIdS, photoScenesS.map((s) => s.roomType)).length;
+            const afterMis = narrationRoomMismatches(candidateSents, roomByIdS).length +
+              narrationSetAbsentRoomOffenses(candidateSents, roomByIdS, photoScenesS.map((s) => s.roomType)).length;
+            if (afterMis > beforeMis) {
+              console.warn(`[plan] derived smoothing REJECTED — introduced ${afterMis - beforeMis} room offense(s); shipping the fragments.`);
+            } else {
+              const beforeWords = narD.sentences.map((s) => s.text).join(" ").split(/\s+/).filter(Boolean).length;
+              narD.sentences = candidateSents;
+              narD.monologue = candidateSents.map((s) => s.text).join(" ").replace(/\s+/g, " ").trim();
+              narD.source = `${narD.source}+smoothed`;
+              normalizedPlan.narrationScript = narD.monologue;
+              const afterWords = narD.monologue.split(/\s+/).filter(Boolean).length;
+              console.info(`[plan] derived narration SMOOTHED: ${beforeWords}→${afterWords} words across ${candidateSents.length} sentences (${Date.now() - t0s}ms) — the safety net speaks in full sentences.`);
+            }
+          }
+        }
+      }
       /* v62.17: if the narration came in under its stated word band, ask once
          for a longer read. Under voice-first this is the difference between
          the 30s the customer picked and the ~20s they kept getting.
@@ -1109,6 +1147,13 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
           : /investor/i.test(selectedStyle || "")
           ? `NARRATION TONE — INVESTOR: direct and factual, like a walkthrough for a buyer who runs numbers. Features, spaces, materials, condition. FORBIDDEN: lifestyle and emotional language ("warm", "inviting", "ambiance", "impressive", "beautiful", "stunning", "charm"). Say "High ceilings and large windows" not "an impressive atmosphere". Plain CTA: "Schedule a walkthrough today."`
           : `NARRATION TONE: warm and confident, matched to the ${selectedStyle || "Cinematic Luxury"} style.`,
+        // v62.94 RELEVANCE (Teri Kelly: "doesn't highlight anything
+        // special about the home"): the numbers and the agent's own copy
+        // were sitting in listingDetails unread. Facts make the hook
+        // concrete; remarks carry the selling points no photo can show.
+        `USE THE LISTING FACTS: when listingDetails carries beds/baths/sqft, weave them naturally into the opening two sentences ("…a four-bedroom, three-bath home with just under 2,900 square feet"). Speak the price ONLY when the style is MLS or Investor — luxury tours leave price unspoken. When yearBuilt or lotSize is present and notable (new construction, acreage), one of them may earn a mention where it fits.`,
+        `MINE THE REMARKS: listingDetails.remarks, when present, is the AGENT'S OWN listing copy — the definitive source for what makes this home special. Pull the 2-3 most concrete selling points (upgrades, materials, water/view/lot, renovations with years) and voice each one in the sentence whose photo best matches it. Remarks-sourced facts may be spoken even when the photo cannot show them (a new roof, a half-acre lot) — but never say anything the remarks and photos both fail to support, and never copy whole remark sentences verbatim; rewrite them in the tour's voice.`,
+        `FAIR HOUSING — ABSOLUTE: never mention schools, school districts, school ratings, neighborhood demographics, crime, safety, "family-friendly", religious facilities, or who lives nearby. Not even when the remarks do. Location facts anchored to the PROPERTY are fine (waterfront, golf-course lot, corner lot, cul-de-sac).`,
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
         `The agent's name is "${brandKit.fullName || "the listing agent"}", brokerage "${brandKit.brokerage || "their brokerage"}". Refer to them only on scene 1 and the outro CTA — don't repeat the name throughout.`,
         `Narration MUST stay grounded in the listing facts provided (price, beds, baths, sq ft, address) and what is visible in the photo. Never invent features, views, schools, or neighborhoods.`,
@@ -1937,6 +1982,85 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
    not touch is the photo mapping; the one thing it must fix is the room
    language. Non-offender sentences are equality-checked in code — a model
    that "improved" a sentence it wasn't asked to touch gets rejected. */
+// ── v62.94 DERIVED SMOOTHING (4327 Pretoria Run: "A tray ceiling.") ─────
+// When the Director's monologue demotes, the per-scene lines join into
+// the derived script — and per-scene lines are budgeted by their WINDOWS,
+// so the join is a stack of fragments: Pretoria shipped 42 words over 8
+// sentences, one of them three words long, and the TTS drawled at
+// 0.433s/word (vs 0.247 on a healthy script) to fill the order — which is
+// why the duration check couldn't see the thinness. This pass rewrites
+// the joined fragments into ONE flowing narration at the real word
+// budget, one text-only call, under hard rails:
+//   - EXACT same sentence count (the voice grid maps sentence i → its
+//     photos; count drift breaks the spine)
+//   - each sentence stays about its own photo's space (room label given)
+//   - no new features beyond the fragments + listing facts (the same
+//     contract the v34.3 polish runs under — text-only passes may not
+//     invent)
+//   - smoothed texts re-judged by the room checks; ANY new offense
+//     rejects the smoothing (fail-open to the stiff-but-true fragments)
+// Kill switch: DERIVED_SMOOTHING=0.
+async function smoothDerivedNarration(narration, { roomById, listingDetails, targetDurationSec, voiceId, timeoutMs = 25000 } = {}) {
+  if (!process.env.OPENAI_API_KEY) return null;
+  const sentences = Array.isArray(narration?.sentences) ? narration.sentences : [];
+  if (sentences.length < 3) return null;
+  const n = sentences.length;
+  const budget = narrationWordBudget(targetDurationSec, voiceId);
+  const currentWords = sentences.map((s) => String(s.text || "").trim()).join(" ").split(/\s+/).filter(Boolean).length;
+  const roomFor = (s) => {
+    const first = (Array.isArray(s.photos) ? s.photos : [])[0];
+    return String((roomById instanceof Map ? roomById.get(String(first)) : "") || "").trim();
+  };
+  const listing = sentences.map((s, i) =>
+    `${i + 1}. [${roomFor(s) || (i === 0 ? "opening" : i === n - 1 ? "close/CTA" : "linger")}] ${String(s.text || "").trim()}`).join("\n");
+  const prompt =
+    `These ${n} narration fragments were auto-joined for a ${targetDurationSec}-second spoken real-estate tour. ` +
+    `They total ${currentWords} words against a ~${budget}-word target and read as choppy fragments.\n\n${listing}\n\n` +
+    `Rewrite them into ONE flowing, warm, conversational tour a human guide would speak, by these rules:\n` +
+    `1. Return EXACTLY ${n} sentences in the same order — sentence i must stay about the same space as fragment i (its room label is given in brackets).\n` +
+    `2. Expand naturally toward ~${budget} words total — connective transitions, complete sentences, no fragment may survive ("A tray ceiling." becomes a full sentence about that ceiling).\n` +
+    `3. NO NEW FACTS: you may not add any feature, material, view, or room the fragments and the property details below do not already contain. Enriching phrasing is the job; inventing content is forbidden.\n` +
+    `4. Sentence 1 keeps the address exactly as given; the final sentence stays a short CTA (≤8 words).\n` +
+    `5. Never mention schools, districts, demographics, or neighborhood safety.\n\n` +
+    `Property: ${JSON.stringify(listingDetails || {}).slice(0, 600)}`;
+  try {
+    const res = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: motionModel(),
+        input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "derived_narration_smoothing",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              required: ["sentences"],
+              properties: {
+                sentences: { type: "array", minItems: n, maxItems: n, items: { type: "string", maxLength: 320 } }
+              }
+            }
+          }
+        },
+        temperature: 0.4,
+        max_output_tokens: 1200
+      })
+    }, timeoutMs);
+    if (!res.ok) return null;
+    const payload = await res.json().catch(() => ({}));
+    const verdict = parseOpenAIJson(payload);
+    const texts = Array.isArray(verdict?.sentences) ? verdict.sentences.map((t) => cleanText(String(t || ""), 320)) : [];
+    if (texts.length !== n || texts.some((t) => !t)) return null;
+    return texts;
+  } catch (err) {
+    console.warn(`[plan] derived smoothing failed (${err.message}) — shipping the fragments.`);
+    return null;
+  }
+}
+
 // ── v62.93 FEATURE-VERIFY (Teri Kelly, 4320 Floramar Terrace) ───────────
 // "Enjoy meals in the sunlit dining area with panoramic water views"
 // shipped over a kitchen shot with a washer/dryer in frame — and NOTHING
@@ -1991,7 +2115,8 @@ async function verifyNarrationFeatures(sentences, { roomById, photoUrlById, time
                   `Judge ONLY the sentence's CONCRETE VISUAL claims — views (water, mountains, golf, skyline), named features ` +
                   `(fireplace, island, pool, vaulted ceiling), materials and finishes, fixtures. IGNORE subjective praise ` +
                   `(beautiful, peaceful, sunlit, inviting), lifestyle phrasing (enjoy meals, entertain guests), room-type naming, ` +
-                  `and whole-property facts (bedrooms, price, address).\n` +
+                  `whole-property facts (bedrooms, price, address), and listing-attributed facts a photo could never show ` +
+                  `(roof or system ages, lot size, year built, renovations, HOA).\n` +
                   `supported=false ONLY if the photo clearly CANNOT support a concrete claim — e.g. "panoramic water views" over a ` +
                   `room whose windows show no water, "stone fireplace" where none exists. When uncertain, or when the claim could ` +
                   `plausibly be just out of frame, supported=true. If false, "unsupported" = the exact claim phrase (under 15 words).`
@@ -2429,6 +2554,40 @@ function roomTypesNamedIn(text) {
 //  2. dedupeConsecutiveNarrationSentences — when the derived join DOES run,
 //     near-duplicate consecutive sentences collapse: the later text drops,
 //     its photos ride the prior sentence as a linger (a dwell, not a rerun).
+// ── v62.94: THE DOUBLE-BACK REPAIR (4327 Pretoria Run) ──────────────────
+// v62.88 repairs ADJACENT re-mentions; a NON-adjacent double-back stayed
+// fatal on the theory that "a repeat is unfixable without dropping
+// content — still a demotion." Pretoria measured the actual trade: the
+// demotion shipped a 42-word fragment stack ("A tray ceiling.") read at a
+// 0.433s/word drawl, while the repair would have cost ONE photo mention.
+// Dropping content beats detonating the monologue. The later re-mention's
+// photo is removed from its sentence (already-covered scenes keep their
+// first mention); a sentence emptied this way becomes a linger and rides
+// the previous scene — exactly the contract the voice grid already
+// honors. Capped: 3+ double-backs mean the mapping is chaos and the
+// derived demotion really is safer. Runs AFTER the adjacent repair, so
+// everything it sees is a genuine double-back.
+function repairDoubleBackPhotoRepeats(sentences, sceneOrderById) {
+  const seenOrds = new Set();
+  const dropped = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    const photos = Array.isArray(s.photos) ? s.photos : [];
+    const kept = [];
+    for (const id of photos) {
+      const ord = sceneOrderById.get(String(id));
+      if (ord != null && seenOrds.has(ord)) {
+        dropped.push({ sentence: i, id: String(id), text: String(s.text || "").slice(0, 60) });
+      } else {
+        kept.push(id);
+        if (ord != null) seenOrds.add(ord);
+      }
+    }
+    s.photos = kept;
+  }
+  return dropped;
+}
+
 function repairAdjacentPhotoRepeats(sentences, sceneOrderById) {
   let repaired = 0;
   const firstMention = new Map(); // scene ordinal -> index of first mentioning sentence
@@ -2741,6 +2900,22 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
       warnings.push(`${repairedLingers} adjacent re-mention(s) became lingers`);
       console.warn(`[plan] narration mapping repaired: ${repairedLingers} adjacent re-mention(s) converted to lingers — the Director's read survives.`);
     }
+    // v62.94: non-adjacent double-backs — drop the later mention rather
+    // than demote the whole monologue (see repairDoubleBackPhotoRepeats).
+    // Snapshot first: past the cap we restore and let the fatal scan fire.
+    {
+      const dbSnapshot = sentences.map((s) => (Array.isArray(s.photos) ? [...s.photos] : []));
+      const doubleBacks = repairDoubleBackPhotoRepeats(sentences, sceneOrderById);
+      if (doubleBacks.length > 2) {
+        sentences.forEach((s, i) => { s.photos = dbSnapshot[i]; });
+        console.warn(`[plan] ${doubleBacks.length} non-adjacent re-mention(s) — beyond the repair cap; the mapping is chaos, demotion stands.`);
+      } else if (doubleBacks.length) {
+        warnings.push(`${doubleBacks.length} double-back re-mention(s) dropped — sentences linger on the prior scene`);
+        for (const d of doubleBacks) {
+          console.warn(`[plan] narration mapping repaired: s${d.sentence + 1} re-mentioned an earlier scene — later mention dropped, the sentence lingers ("${d.text}"). The Director's read survives.`);
+        }
+      }
+    }
 
     // Mapping: every scene exactly once, ascending in scene order.
     // v62.67 (Pegasus, "the ceiling fan line was a little odd"): REPEATS
@@ -2898,7 +3073,9 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
         monologue: candidate.monologue.trim(),
         direction: cleanText(String(candidate.direction || "warm, unhurried tour guide"), 200),
         sentences,
-        source: "director"
+        // v62.94: say in the worker log when a double-back repair saved
+        // this monologue from the fragment lane.
+        source: warnings.some((w) => String(w).includes("double-back")) ? "director+doubleback-repaired" : "director"
       };
       // v62.7 THIN-DIRECTOR UPGRADE (40th St: 44-word monologue → 20.6s
       // video on a 30s ask — the voice-first grid honestly builds short

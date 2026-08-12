@@ -1659,6 +1659,79 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     plan93.includes('replace(/^director/, "director+feature-repaired")'));
 }
 
+/* ── v62.94: double-back repair + derived smoothing + relevance harvest ── */
+{
+  const plan94 = fs.readFileSync(path.join(ROOT, "api/create-edit-plan.js"), "utf8");
+  const imp94 = fs.readFileSync(path.join(ROOT, "api/import-listing.js"), "utf8");
+  eval(`globalThis.dbRepair = ${grab(plan94, "repairDoubleBackPhotoRepeats").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.factsFrom = ${grab(imp94, "factsFromHtml").replace(/^function \w+/, "function")}`);
+
+  // Double-back repair: the later mention drops, the sentence lingers.
+  const ordsDb = new Map([["a", 0], ["b", 1], ["c", 2]]);
+  const db1 = [
+    { text: "s1", photos: ["a"] },
+    { text: "s2", photos: ["b"] },
+    { text: "s3", photos: ["a", "c"] }
+  ];
+  const dropped1 = dbRepair(db1, ordsDb);
+  check("v62.94: non-adjacent re-mention dropped, first mentions and fresh photos survive",
+    dropped1.length === 1 && dropped1[0].sentence === 2 && dropped1[0].id === "a" &&
+    db1[2].photos.join(",") === "c" && db1[0].photos.join(",") === "a");
+  const db2 = [
+    { text: "s1", photos: ["a"] },
+    { text: "s2", photos: ["b"] },
+    { text: "s3", photos: ["a"] }
+  ];
+  dbRepair(db2, ordsDb);
+  check("v62.94: a sentence emptied by the repair becomes a linger (Pretoria's fix)",
+    db2[2].photos.length === 0);
+  const db3 = [{ text: "s1", photos: ["a"] }, { text: "s2", photos: ["b"] }, { text: "s3", photos: ["c"] }];
+  check("v62.94: a clean mapping is untouched",
+    dbRepair(db3, ordsDb).length === 0 && db3[2].photos.join(",") === "c");
+  check("v62.94: wiring — snapshot cap leaves chaos fatal, source stamps doubleback-repaired",
+    plan94.includes("beyond the repair cap") &&
+    plan94.includes('"director+doubleback-repaired"') &&
+    plan94.lastIndexOf("repairAdjacentPhotoRepeats(sentences") < plan94.lastIndexOf("repairDoubleBackPhotoRepeats(sentences"));
+
+  // Remarks harvest: agent copy in, synthetic meta line out.
+  const agentCopy = "Welcome to this beautifully maintained waterfront retreat with a new roof in 2024, deep-water dock with lift, chef's kitchen with quartz island, and a screened lanai overlooking the canal. Minutes to the Gulf by boat.";
+  const html94 =
+    '<meta name="description" content="Zillow has 73 photos of this $450,000 3 beds, 2 baths, 1,800 sqft home">' +
+    '<script>{"x":{"description":"{\\"nested\\":true}"},"description":"' + agentCopy + '","other":1}</script>';
+  const facts94 = factsFrom(html94);
+  check("v62.94: remarks harvested from embedded page JSON, synthetic Zillow meta line rejected",
+    typeof facts94?.remarks === "string" &&
+    facts94.remarks.includes("deep-water dock") &&
+    !/^zillow has/i.test(facts94.remarks));
+  check("v62.94: pages without agent copy yield no remarks key",
+    !("remarks" in (factsFrom('<meta name="description" content="Zillow has 5 photos of this home">') || {})));
+  check("v62.94: RentCast yearBuilt/lotSize/propertyType ride the facts",
+    imp94.includes("yearBuilt: rec.yearBuilt") &&
+    imp94.includes("lotSize: rec.lotSize") &&
+    imp94.includes("propertyType: rec.propertyType"));
+
+  // Derived smoothing: exact-count contract, offense gate, kill switch.
+  const smSrc = grab(plan94, "smoothDerivedNarration");
+  check("v62.94: smoothing holds sentence count, targets the word budget, bans fair-housing topics",
+    smSrc.includes("minItems: n, maxItems: n") &&
+    smSrc.includes("narrationWordBudget(targetDurationSec, voiceId)") &&
+    smSrc.includes("Never mention schools"));
+  check("v62.94: smoothing wired on derived source only, rejected on any new room offense, stamped +smoothed",
+    plan94.includes('String(narD.source).startsWith("derived-from-lines")') &&
+    plan94.includes("derived smoothing REJECTED") &&
+    plan94.includes("${narD.source}+smoothed") &&
+    plan94.includes("DERIVED_SMOOTHING"));
+
+  // Relevance guidance + fair-housing fence + feature-verify carve-out.
+  check("v62.94: Director guidance carries facts-in-hook, remarks mining, and the fair-housing fence",
+    plan94.includes("USE THE LISTING FACTS") &&
+    plan94.includes("MINE THE REMARKS") &&
+    plan94.includes("FAIR HOUSING — ABSOLUTE") &&
+    plan94.includes("Speak the price ONLY when the style is MLS or Investor"));
+  check("v62.94: feature-verify ignores listing-attributed facts a photo could never show",
+    plan94.includes("listing-attributed facts a photo could never show"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

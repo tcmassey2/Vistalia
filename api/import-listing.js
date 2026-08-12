@@ -508,6 +508,44 @@ export function factsFromHtml(html) {
   if (out.baths != null && (out.baths > 30 || out.baths < 1)) delete out.baths;
   if (out.sqft != null && (out.sqft < 150 || out.sqft > 60000)) delete out.sqft;
   if (out.price != null && (out.price < 10000 || out.price > 500000000)) delete out.price;
+  // ── v62.94 REMARKS HARVEST ────────────────────────────────────────────
+  // The agent's own listing copy — the selling points the four numbers
+  // can't carry ("new roof 2024", "deep-water dock", "chef's kitchen").
+  // Portals embed it as a long "description" string in their page JSON
+  // (Zillow gdpClientCache, Redfin/Realtor JSON-LD). Heuristic: the
+  // LONGEST embedded description between 160 and 4000 escaped chars that
+  // is not Zillow's synthetic meta line ("Zillow has 73 photos of…").
+  // Downstream, the Director mines it for 2-3 concrete selling points;
+  // claims sourced here are agent-authored and attributable. Fail-open:
+  // no match → no remarks key, nothing changes.
+  {
+    const unescape = (s) => s
+      .replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
+      .replace(/\\[nrt]/g, " ")
+      .replace(/\\"/g, '"')
+      .replace(/\\\//g, "/")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&(?:amp|#38);/g, "&").replace(/&(?:quot|#34);/g, '"').replace(/&(?:apos|#39);/g, "'")
+      .replace(/&(?:lt|gt|nbsp|#\d+);/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    let best = "";
+    const reDesc = /"description"\s*:\s*"((?:[^"\\]|\\.){160,4000}?)"/g;
+    let m2;
+    let scans = 0;
+    while ((m2 = reDesc.exec(text)) && scans < 40) {
+      scans += 1;
+      const cand = unescape(m2[1]);
+      if (/^zillow has \d/i.test(cand)) continue; // the synthetic meta line
+      // Nested JSON, not prose. Char codes (123 = open brace, 91 = open
+      // bracket) instead of a regex literal or brace characters: the test
+      // harness's grab() counts braces naively, and an unpaired one in a
+      // regex or comment would break its extraction.
+      if (cand.charCodeAt(0) === 123 || cand.charCodeAt(0) === 91) continue;
+      if (cand.length >= 160 && cand.length > best.length) best = cand;
+    }
+    if (best) out.remarks = best.slice(0, 1800);
+  }
   return Object.keys(out).length ? out : null;
 }
 
