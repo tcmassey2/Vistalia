@@ -500,6 +500,7 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
       <input type="text" id="vd-website" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">
     </div>
     <div class="vdemo-stage">
+      <div id="vd-turnstile" style="margin-bottom:12px"></div>
       <button class="btn btn-primary" id="vd-btn" disabled>Record my voice</button>
       <div class="vdemo-status" id="vd-status">Check the consent box to enable the mic.</div>
       <audio id="vd-player" controls style="display:none;width:100%;margin-top:14px"></audio>
@@ -645,6 +646,9 @@ src="https://www.facebook.com/tr?id=984226387946970&ev=PageView&noscript=1"/></n
 </script>
 
 <script src="/api/env" onerror="window.ESTATEMOTION_API_ENV_UNAVAILABLE=true"></script>
+<!-- v62.99: Cloudflare Turnstile — the voice demo's bot check. Explicit render
+     (see the voice-demo script), so load order doesn't matter. -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 <script type="module">
   // Auth-aware nav: swap CTAs to "dashboard" when a session exists. Fails silent.
   (async () => {
@@ -777,6 +781,31 @@ function setLandingBill(mode) {
       consent = document.getElementById('vd-consent'), player = document.getElementById('vd-player'),
       cta = document.getElementById('vd-cta'), hp = document.getElementById('vd-website');
   if (!btn) return;
+
+  // v62.99: Turnstile bot check. Renders when a site key is configured; if it
+  // isn't, or the script is blocked, the demo still works and the server's
+  // global daily ceiling stays the backstop. Tokens are single-use, so we
+  // reset after every attempt.
+  var TS_KEY = (window.ESTATEMOTION_ENV && window.ESTATEMOTION_ENV.TURNSTILE_SITE_KEY) || '';
+  var tsToken = '', tsWidgetId = null, tsRendered = false;
+  function tsRender() {
+    if (tsRendered || !TS_KEY) return;
+    if (!window.turnstile) { setTimeout(tsRender, 400); return; }
+    try {
+      tsWidgetId = window.turnstile.render('#vd-turnstile', {
+        sitekey: TS_KEY,
+        callback: function (t) { tsToken = t || ''; },
+        'expired-callback': function () { tsToken = ''; },
+        'error-callback': function () { tsToken = ''; }
+      });
+      tsRendered = true;
+    } catch (e) { /* leave unrendered — server ceiling still applies */ }
+  }
+  function tsReset() {
+    tsToken = '';
+    if (tsRendered && window.turnstile && tsWidgetId !== null) { try { window.turnstile.reset(tsWidgetId); } catch (e) {} }
+  }
+
   if (!navigator.mediaDevices || !window.MediaRecorder) {
     status.textContent = 'Your browser doesn’t support in-page recording — try Chrome or Safari.';
     return;
@@ -784,12 +813,14 @@ function setLandingBill(mode) {
   var rec = null, chunks = [], timer = null, busy = false, locked = false;
   consent.addEventListener('change', function () {
     if (locked) return;
+    if (consent.checked) tsRender(); // warm up the bot check while they get ready
     btn.disabled = !consent.checked || busy;
     status.textContent = consent.checked ? 'Ready — about ten seconds of natural speech works best.' : 'Check the consent box to enable the mic.';
   });
   btn.addEventListener('click', function () {
     if (rec && rec.state === 'recording') { rec.stop(); return; }
     if (busy) return;
+    if (TS_KEY && tsRendered && !tsToken) { status.textContent = 'Complete the quick verification above, then record.'; return; }
     navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
       chunks = [];
       var mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
@@ -808,23 +839,28 @@ function setLandingBill(mode) {
           var b64 = String(fr.result).split(',')[1] || '';
           fetch('/api/voice-demo', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audioBase64: b64, contentType: blob.type, consent: true, website: hp ? hp.value : '' })
+            body: JSON.stringify({ audioBase64: b64, contentType: blob.type, consent: true, website: hp ? hp.value : '', turnstileToken: tsToken })
           }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, code: r.status, j: j }; }); })
             .then(function (res) {
               busy = false;
+              tsReset(); // token is single-use — force a fresh one for the next try
               if (res.code === 429) {
                 locked = true; btn.disabled = true;
                 status.textContent = (res.j && res.j.error) || 'You’ve used today’s demos — come back tomorrow.';
                 return;
               }
               btn.disabled = !consent.checked;
+              if (res.code === 403 && res.j && res.j.verifyRequired) {
+                status.textContent = (res.j && res.j.error) || 'Please complete the verification and try again.';
+                return;
+              }
               if (!res.ok || !res.j.audioBase64) { status.textContent = (res.j && res.j.error) || 'That hiccuped — try once more.'; return; }
               player.src = 'data:' + (res.j.mime || 'audio/mpeg') + ';base64,' + res.j.audioBase64;
               player.style.display = 'block'; cta.style.display = 'inline-flex';
               status.textContent = 'That’s you. Press play.';
               var p = player.play(); if (p && p.catch) p.catch(function () {});
             })
-            .catch(function () { busy = false; btn.disabled = !consent.checked; status.textContent = 'Network hiccup — try once more.'; });
+            .catch(function () { busy = false; tsReset(); btn.disabled = !consent.checked; status.textContent = 'Network hiccup — try once more.'; });
         };
         fr.readAsDataURL(blob);
       };

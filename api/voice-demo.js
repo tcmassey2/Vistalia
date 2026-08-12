@@ -19,11 +19,19 @@
 //     write ourselves
 
 import { rateLimit, refundRateLimit } from "./_lib/rate-limit.js";
+import { verifyTurnstile, clientIp } from "./_lib/turnstile.js";
+import { reserveDaily, releaseDaily } from "./_lib/daily-counter.js";
 
 // Env-tunable while testing (Troy burned the 3/day cap in minutes on launch
 // eve); default stays tight for the public.
 const DEMO_MAX = Number(process.env.VOICE_DEMO_MAX) || 3;
 const DEMO_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// v62.99: the absolute daily bill cap across ALL callers. Turnstile stops the
+// bots; this bounds spend even in the worst case. Generous for real traffic at
+// current scale (~$0.03/demo → 300 ≈ $9/day ceiling); tune via env.
+const DEMO_GLOBAL_MAX = Number(process.env.VOICE_DEMO_GLOBAL_MAX) || 300;
+const DEMO_GLOBAL_KEY = "voice-demo:global";
 
 const ELEVENLABS_BASE = "https://api.elevenlabs.io/v1";
 const MAX_SAMPLE_BYTES = 4 * 1024 * 1024;
@@ -81,12 +89,36 @@ export default async function handler(request, response) {
     return response.status(413).json({ error: "That recording is too large — keep it under fifteen seconds." });
   }
 
+  // v62.99: human check BEFORE any spend. This is the control that actually
+  // stops a bot/proxy-pool — the per-IP bucket below can't (rotating IPs,
+  // per-instance reset). Fails open only while TURNSTILE_SECRET_KEY is unset.
+  const turnstile = await verifyTurnstile(body.turnstileToken, clientIp(request));
+  if (!turnstile.ok) {
+    return response.status(403).json({
+      error: "Please complete the quick verification and try again.",
+      verifyRequired: true
+    });
+  }
+
   const limited = await rateLimit(request, response, {
     bucket: "voice-demo",
     max: DEMO_MAX,
     windowMs: DEMO_WINDOW_MS
   });
   if (limited) return;
+
+  // v62.99: global daily ceiling — the hard bill cap. Reserve a slot; refund
+  // it below if the spend fails on our side. Fails open on a backend blip.
+  const ceiling = await reserveDaily(DEMO_GLOBAL_KEY, DEMO_GLOBAL_MAX);
+  if (ceiling.exceeded) {
+    await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX }); // don't burn their personal token
+    await releaseDaily(DEMO_GLOBAL_KEY); // pin the counter at the cap rather than letting it climb
+    response.setHeader("Retry-After", "3600");
+    return response.status(429).json({
+      error: "The live demo has hit today's limit — sign up and your first video is free.",
+      retryAfterSec: 3600
+    });
+  }
 
   const headers = { "xi-api-key": process.env.ELEVENLABS_API_KEY };
   let voiceId = "";
@@ -109,6 +141,7 @@ export default async function handler(request, response) {
       const detail = await cloneRes.text().catch(() => "");
       console.warn("[voice-demo] clone failed", cloneRes.status, detail.slice(0, 300));
       await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
+      await releaseDaily(DEMO_GLOBAL_KEY); // spend failed on our side — give the ceiling slot back
       // Customer copy stays generic; the ops signal is in the status.
       const tierProblem = cloneRes.status === 401 || cloneRes.status === 403;
       return response.status(502).json({
@@ -120,6 +153,7 @@ export default async function handler(request, response) {
     voiceId = String((await cloneRes.json())?.voice_id || "");
     if (!voiceId) {
       await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
+      await releaseDaily(DEMO_GLOBAL_KEY); // spend failed on our side — give the ceiling slot back
       return response.status(502).json({ error: "Cloning hiccuped — give it one more try. (That attempt didn't count.)" });
     }
 
@@ -141,6 +175,7 @@ export default async function handler(request, response) {
       const detail = await ttsRes.text().catch(() => "");
       console.warn("[voice-demo] tts failed", ttsRes.status, detail.slice(0, 200));
       await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
+      await releaseDaily(DEMO_GLOBAL_KEY); // spend failed on our side — give the ceiling slot back
       return response.status(502).json({ error: "The narration step hiccuped — try once more. (That attempt didn't count.)" });
     }
     const mp3 = Buffer.from(await ttsRes.arrayBuffer());
@@ -148,6 +183,7 @@ export default async function handler(request, response) {
   } catch (err) {
     console.warn("[voice-demo] error", err?.message || err);
     await refundRateLimit(request, { bucket: "voice-demo", max: DEMO_MAX });
+    await releaseDaily(DEMO_GLOBAL_KEY); // spend failed on our side — give the ceiling slot back
     return response.status(502).json({ error: "Something hiccuped — give it one more try. (That attempt didn't count.)" });
   } finally {
     // 3. The clone never survives the request.

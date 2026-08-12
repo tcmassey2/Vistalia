@@ -1957,6 +1957,51 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     regSrc.includes("if (!res.ok) return { allow: true }"));
 }
 
+/* ── v62.99: voice-demo lockdown — Turnstile + global spend ceiling ── */
+{
+  const vd = fs.readFileSync(path.join(ROOT, "api/voice-demo.js"), "utf8");
+  const ts = fs.readFileSync(path.join(ROOT, "api/_lib/turnstile.js"), "utf8");
+  const dc = fs.readFileSync(path.join(ROOT, "api/_lib/daily-counter.js"), "utf8");
+  const idx = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+
+  check("v62.99: Turnstile verify fails open ONLY when unconfigured, closed on missing/bad token",
+    ts.includes("if (!secret)") &&
+    ts.includes("return { ok: true, skipped: true }") &&
+    ts.includes('reason: "missing-token"') &&
+    ts.includes("challenges.cloudflare.com/turnstile/v0/siteverify") &&
+    ts.includes('reason: "verify-unreachable"')); // fail closed on CF outage
+  check("v62.99: the daily ceiling uses Upstash when configured, else in-memory, and resets per UTC day",
+    dc.includes("UPSTASH_REDIS_REST_URL") &&
+    dc.includes('["incr", key]') &&
+    dc.includes("getUTCFullYear()") &&
+    dc.includes("export async function reserveDaily") &&
+    dc.includes("export async function releaseDaily"));
+  check("v62.99: the ceiling fails OPEN on a backend blip (backstop, not primary control)",
+    dc.includes('return { count: 0, exceeded: false, backend: "upstash-error" }'));
+
+  check("v62.99: voice-demo runs the human check BEFORE any ElevenLabs spend",
+    vd.includes('import { verifyTurnstile, clientIp } from "./_lib/turnstile.js"') &&
+    // the verify call precedes the first ElevenLabs /voices/add call in source order
+    vd.indexOf("verifyTurnstile(body.turnstileToken") < vd.indexOf("/voices/add") &&
+    vd.includes("if (!turnstile.ok)") &&
+    vd.includes("response.status(403)"));
+  check("v62.99: voice-demo reserves the global ceiling before spend and refunds it on our-side failure",
+    vd.includes("reserveDaily(DEMO_GLOBAL_KEY, DEMO_GLOBAL_MAX)") &&
+    vd.indexOf("reserveDaily(DEMO_GLOBAL_KEY") < vd.indexOf("/voices/add") &&
+    vd.includes("if (ceiling.exceeded)") &&
+    // every refundRateLimit on a failure path is paired with a releaseDaily
+    (vd.match(/releaseDaily\(DEMO_GLOBAL_KEY\)/g) || []).length >= 4);
+  check("v62.99: the global ceiling default is finite and env-tunable",
+    vd.includes("Number(process.env.VOICE_DEMO_GLOBAL_MAX) || 300"));
+
+  check("v62.99: the landing page loads Turnstile, renders the widget, sends the token, resets after each try",
+    idx.includes("challenges.cloudflare.com/turnstile/v0/api.js") &&
+    idx.includes('id="vd-turnstile"') &&
+    idx.includes("window.turnstile.render('#vd-turnstile'") &&
+    idx.includes("turnstileToken: tsToken") &&
+    idx.includes("tsReset()"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);
