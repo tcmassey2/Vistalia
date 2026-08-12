@@ -707,6 +707,31 @@ export default async function handler(request, response) {
     // against the actual pixels. Fail-open at every level: a dead repair
     // call keeps the original scene untouched.
     await verifyAndRepairScenes(normalizedPlan, photos, { listingDetails, selectedStyle, musicTrack, exportFormat, engine, includeNarration, targetDurationSec });
+    // v62.93 selection telemetry — judged on the RECONCILED labels (the
+    // most trustworthy we hold). The Director prompt now carries hard
+    // diversity rules; this line measures whether it follows them, so
+    // Friday's tuning runs on data. Loud on violation, quiet mix line
+    // otherwise.
+    {
+      const photoScenesD = (normalizedPlan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
+      const mix = {};
+      for (const s of photoScenesD) {
+        const rt = String(s.roomType || "unknown").toLowerCase();
+        mix[rt] = (mix[rt] || 0) + 1;
+      }
+      const mixStr = Object.entries(mix).map(([k, v]) => `${k}×${v}`).join(", ");
+      const flags = [];
+      if ((mix.exterior || 0) > 2) flags.push(`${mix.exterior} exterior scenes`);
+      for (const [rt, n] of Object.entries(mix)) {
+        if (n >= 3 && rt !== "exterior") flags.push(`${n} ${rt} scenes`);
+      }
+      if ((mix.detail || 0) + (mix.amenity || 0) > 2) flags.push(`${(mix.detail || 0) + (mix.amenity || 0)} detail/amenity scenes`);
+      if (flags.length) {
+        console.warn(`[plan] SELECTION DIVERSITY violated despite v62.93 prompt rules — ${flags.join("; ")} of ${photoScenesD.length} (mix: ${mixStr}).`);
+      } else {
+        console.info(`[plan] selection mix: ${mixStr} (${photoScenesD.length} scenes).`);
+      }
+    }
     // v34.3 GLOBAL POLISH (test-12): verify-and-repair fixed the FACTS but
     // cost the script its voice — 18 isolated single-photo calls share no
     // context, so they converge on identical captions ("bright living room
@@ -807,6 +832,57 @@ export default async function handler(request, response) {
             // If even the warn-policy probe demoted, the monologue has
             // STRUCTURAL problems beyond room naming — the derived result
             // already on normalizedPlan stands, exactly as pre-v62.43.
+          }
+        }
+      }
+      /* ── v62.93 FEATURE-VERIFY: the monologue meets the pixels. ──────────
+         Runs on whatever narration survived attach + room-repair — Teri's
+         render had NO room mismatch (source director+trimmed) and still
+         promised water views over a washer/dryer kitchen. Offenders ride
+         the same rewrite lane as room repairs (with eyes since v62.92).
+         Budget-gated and fail-open at every step. */
+      {
+        const narF = normalizedPlan.narration;
+        const featureBudget = planOptionalBudgetMs();
+        if (narF?.source && String(narF.source).startsWith("director") &&
+            Array.isArray(narF.sentences) && narF.sentences.length >= 3 &&
+            featureBudget >= 18000) {
+          const photoScenesF = (normalizedPlan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
+          const roomByIdF = new Map(photoScenesF.map((s) => [String(s.photoId), s.roomType]));
+          const urlByIdF = new Map((photos || []).map((p) => [
+            String(p.id),
+            String(p.durableUrl || p.durable_url || p.publicUrl || p.public_url || p.imageUrl || p.url || "")
+          ]));
+          const t0f = Date.now();
+          const featureOffenders = await verifyNarrationFeatures(narF.sentences, {
+            roomById: roomByIdF, photoUrlById: urlByIdF,
+            timeoutMs: Math.min(Math.max(featureBudget - 10000, 8000), 25000)
+          });
+          if (!featureOffenders.length) {
+            console.info(`[plan] feature-verify: all narration claims supported by their photos (${Date.now() - t0f}ms).`);
+          } else {
+            for (const o of featureOffenders) console.warn(`[plan] narration FEATURE INVENTION: ${o.detail}`);
+            const repairedF = await repairNarrationRooms(narF, featureOffenders, {
+              roomById: roomByIdF, photoUrlById: urlByIdF, listingDetails, selectedStyle,
+              timeoutMs: planOptionalBudgetMs()
+            });
+            let adoptedF = false;
+            if (repairedF) {
+              const probeF = { scenes: normalizedPlan.scenes };
+              attachNarration(probeF, repairedF, { targetDurationSec, roomMismatchPolicy: "warn", voiceId: planVoiceId });
+              if (probeF.narration && String(probeF.narration.source || "").startsWith("director")) {
+                probeF.narration.source = String(probeF.narration.source).replace(/^director/, "director+feature-repaired");
+                probeF.narration.sourceReason =
+                  `${featureOffenders.length} sentence(s) claimed features their photo does not show; rewritten plan-side from the actual photos`;
+                normalizedPlan.narration = probeF.narration;
+                normalizedPlan.narrationScript = probeF.narrationScript;
+                adoptedF = true;
+                console.info(`[plan] narration FEATURE-REPAIRED: ${featureOffenders.length} sentence(s) rewritten from their actual photos — the Director's monologue ships.`);
+              }
+            }
+            if (!adoptedF) {
+              console.warn(`[plan] feature-repair unavailable or rejected — shipping with ${featureOffenders.length} feature warning(s) (fail-open; a flat rewrite is not obviously better than the original here).`);
+            }
           }
         }
       }
@@ -1063,6 +1139,13 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
               // floors (Cheney invention, Via Del Arbor dusk-foliage boil)
               // started with this selection.
               "AI MOTION RISK — every selected photo becomes an AI-animated video scene, and some photo classes reliably produce visible artifacts: twilight/dusk shots where foliage fills much of the frame (leaves boil and redraw), dense tree canopies or hedges, dark or grainy low-light shots, large mirror walls or big glass reflections, busy repeating textures. Risk NEVER outranks marketability — it breaks ties. Between comparably strong photos of the same space, select the one that animates cleanly (daylight, clean geometry, even lighting). This matters MOST for scene 1: the opening scene is the most visible in the video, so between comparable openers choose the lower-risk one — a crisp daylight exterior beats a twilight exterior that will boil on the very first thing the viewer sees.",
+              // v62.93 SELECTION DIVERSITY (three renders, one night: Pryor
+              // gave two scenes to staged closets, Via Pasa three to living
+              // rooms, Floramar three of five to exteriors on a WATERFRONT
+              // listing whose water never got a scene). The tour is a
+              // buyer's first walkthrough — every scene must earn its slot
+              // by showing something NEW.
+              "SCENE DIVERSITY — HARD RULES: (1) At most TWO scenes may show the home's exterior/facade, and only one of those opens the video — a second exterior must reveal a genuinely different side (backyard, water frontage, pool). (2) Never give two scenes to the SAME room unless the gallery offers fewer distinct spaces than the scene count. (3) Utility spaces — laundry areas, garages, mechanical rooms, empty closets — are last-resort filler only; skip any photo where a washer/dryer, water heater, or storage racking is prominent unless nothing better exists. (4) THE HEADLINE ASSET RULE: identify the listing's single most marketable asset from the photos and facts — waterfront, pool, view, acreage, chef's kitchen, outdoor living — and give it a scene, always. A waterfront home whose video never shows the water has failed regardless of what else is in it. (5) Prefer the sharpest, highest-resolution version when near-duplicate shots exist.",
               "Order the scenes as a professional property tour: exterior hero → entry → kitchen → living/great room → dining → primary bedroom → other bedrooms → bathrooms → outdoor/pool → neighborhood/amenities → detail/outro.",
               "Never invent property features, views, amenities, upgrades, materials, or room names.",
               "Only describe details visible in the image or user-provided listing facts.",
@@ -1854,6 +1937,110 @@ async function expandNarrationToBudget(narration, { targetDurationSec, listingDe
    not touch is the photo mapping; the one thing it must fix is the room
    language. Non-offender sentences are equality-checked in code — a model
    that "improved" a sentence it wasn't asked to touch gets rejected. */
+// ── v62.93 FEATURE-VERIFY (Teri Kelly, 4320 Floramar Terrace) ───────────
+// "Enjoy meals in the sunlit dining area with panoramic water views"
+// shipped over a kitchen shot with a washer/dryer in frame — and NOTHING
+// judged it: "dining" over a kitchen label passes the open-plan
+// equivalence, and "water views" is a VIEW clause that roomTypesNamedIn
+// deliberately strips before room matching. Room checks can never see
+// invented FEATURES. The per-scene narrationLines have had pixel
+// verification since v33.3; this gives the monologue's sentences the same
+// treatment: one cheap vision ask per middle sentence against the photo
+// it plays over, judging only CONCRETE visual claims. Offenders feed the
+// existing repair lane (which has eyes since v62.92).
+//
+// FAIL-OPEN by design, per sentence and overall: this is the opposite
+// asymmetry from the swap gate. A missed invention ships one wrong line
+// (bad); a false positive rewrites a TRUE line into something flatter
+// (also bad, and at scale worse). The prompt says "when uncertain,
+// supported=true", judges only concrete claims, and skips the hook, the
+// CTA, and short sentences. Kill switch: NARRATION_FEATURE_VERIFY=0.
+async function verifyNarrationFeatures(sentences, { roomById, photoUrlById, timeoutMs = 20000 } = {}) {
+  if (!process.env.OPENAI_API_KEY) return [];
+  if (String(process.env.NARRATION_FEATURE_VERIFY || "1") === "0") return [];
+  const jobs = [];
+  let riding = [];
+  for (let i = 0; i < (sentences || []).length; i++) {
+    const s = sentences[i];
+    const own = Array.isArray(s?.photos) ? s.photos : [];
+    if (own.length) riding = own;
+    const mapped = own.length ? own : riding;
+    if (i === 0 || i === sentences.length - 1) continue; // hook + CTA carry address/agent facts, not photo claims
+    const text = String(s?.text || "").trim();
+    if (!text || text.split(/\s+/).length < 5) continue;
+    const url = photoUrlById ? String(photoUrlById.get(String(mapped[0])) || "") : "";
+    if (!url) continue;
+    jobs.push({ index: i, text, url, linger: !own.length, photoId: String(mapped[0]), room: String((roomById instanceof Map ? roomById.get(String(mapped[0])) : "") || "") });
+  }
+  const capped = jobs.slice(0, 6);
+  const verdicts = await Promise.all(capped.map(async (j) => {
+    try {
+      const res = await fetchWithTimeout(OPENAI_RESPONSES_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: motionModel(),
+          input: [{
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text:
+                  `One photo from a real-estate listing video, and the narration sentence that plays while it is on screen.\n` +
+                  `Sentence: "${j.text}"\n\n` +
+                  `Judge ONLY the sentence's CONCRETE VISUAL claims — views (water, mountains, golf, skyline), named features ` +
+                  `(fireplace, island, pool, vaulted ceiling), materials and finishes, fixtures. IGNORE subjective praise ` +
+                  `(beautiful, peaceful, sunlit, inviting), lifestyle phrasing (enjoy meals, entertain guests), room-type naming, ` +
+                  `and whole-property facts (bedrooms, price, address).\n` +
+                  `supported=false ONLY if the photo clearly CANNOT support a concrete claim — e.g. "panoramic water views" over a ` +
+                  `room whose windows show no water, "stone fireplace" where none exists. When uncertain, or when the claim could ` +
+                  `plausibly be just out of frame, supported=true. If false, "unsupported" = the exact claim phrase (under 15 words).`
+              },
+              { type: "input_image", image_url: j.url, detail: "low" }
+            ]
+          }],
+          text: {
+            format: {
+              type: "json_schema",
+              name: "narration_feature_verify",
+              strict: true,
+              schema: {
+                type: "object",
+                additionalProperties: false,
+                required: ["supported", "unsupported"],
+                properties: {
+                  supported: { type: "boolean" },
+                  unsupported: { type: "string", maxLength: 120 }
+                }
+              }
+            }
+          },
+          temperature: 0,
+          max_output_tokens: 160
+        })
+      }, timeoutMs);
+      if (!res.ok) return null;
+      const payload = await res.json().catch(() => ({}));
+      const verdict = parseOpenAIJson(payload);
+      if (verdict?.supported === false && String(verdict.unsupported || "").trim()) {
+        return {
+          index: j.index,
+          claim: String(verdict.unsupported).trim().slice(0, 120),
+          actual: [j.room || "the photo on screen"],
+          linger: j.linger,
+          photoIds: [j.photoId],
+          featureClaim: true,
+          detail: `s${j.index + 1} claims "${String(verdict.unsupported).trim().slice(0, 80)}" — its photo (${j.room || "unlabeled"}) does not support it: "${j.text.slice(0, 70)}"`
+        };
+      }
+      return null;
+    } catch {
+      return null; // fail-open per sentence
+    }
+  }));
+  return verdicts.filter(Boolean);
+}
+
 async function repairNarrationRooms(narration, offenders, { roomById, photoUrlById, listingDetails, selectedStyle, timeoutMs = 30000 } = {}) {
   if (!process.env.OPENAI_API_KEY) return null;
   const n = narration.sentences.length;

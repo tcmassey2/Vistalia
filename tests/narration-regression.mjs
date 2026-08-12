@@ -1239,10 +1239,12 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
      address — mandated as the monologue's opening sentence — was never
      spoken, and the voice read as clipped fragments. Silent for five
      delivered customer videos before Troy caught it by ear. */
-  check("v62.80: lead manifest carries plan narration (voice-first spine)",
-    /narration: editPlan\.narration \|\| null/.test(leadSrc));
-  check("v62.80: the legacy narration fields ride alongside, not instead",
-    /narrationScript: editPlan\.narrationScript \|\| ""/.test(leadSrc) &&
+  // v62.93 gated the spine behind LEAD_RENDERS_VOICELESS (music-only trial
+  // default) — the spine must still ride whenever the flag is OFF.
+  check("v62.80/v62.93: lead manifest carries plan narration behind the voiceless gate",
+    /narration: LEAD_RENDERS_VOICELESS \? null : \(editPlan\.narration \|\| null\)/.test(leadSrc));
+  check("v62.80/v62.93: the legacy narration fields ride alongside, gated the same way",
+    /narrationScript: LEAD_RENDERS_VOICELESS \? "" : \(editPlan\.narrationScript \|\| ""\)/.test(leadSrc) &&
     /narrationLine: scene\.narrationLine \|\| ""/.test(leadSrc));
   check("v62.80: the plan prompt still mandates the spoken address",
     /the spoken address is the one sentence every listing video must carry/.test(planSrc));
@@ -1600,6 +1602,61 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.92: call site hands the repair a photoId→URL map from the plan's photos",
     plan92.includes("const photoUrlById = new Map((photos || []).map((p) => [") &&
     plan92.includes("{ roomById, photoUrlById, listingDetails, selectedStyle, timeoutMs: repairBudget }"));
+}
+
+/* ── v62.93: voiceless trial default + selection guard + feature-verify ── */
+{
+  const plan93 = fs.readFileSync(path.join(ROOT, "api/create-edit-plan.js"), "utf8");
+  const lead93 = fs.readFileSync(path.join(ROOT, "render-worker/src/lead-auto-render.mjs"), "utf8");
+
+  // #3 — trial URL renders default to music-only, flippable without deploy.
+  check("v62.93: voiceless default ON, env-flippable (LEAD_RENDERS_VOICELESS)",
+    lead93.includes('process.env.LEAD_RENDERS_VOICELESS || "1"') &&
+    lead93.includes("skipNarration: LEAD_RENDERS_VOICELESS") &&
+    lead93.includes("captionsEnabled: !LEAD_RENDERS_VOICELESS") &&
+    lead93.includes("includeNarration: !LEAD_RENDERS_VOICELESS"));
+  check("v62.93: the worker log names voiceless mode on every lead job",
+    lead93.includes('VOICELESS — music-only'));
+
+  // #1a — thumbnail-class photos dropped, fail-open.
+  check("v62.93: thumbnail filter drops <40KB photos only when ≥6 full-res remain, fail-open on missing sizes",
+    lead93.includes("LEAD_PHOTO_MIN_BYTES") &&
+    lead93.includes("large.length >= 6") &&
+    lead93.includes("sized.length === photos.length"));
+
+  // #1b — the Director carries hard diversity rules + the headline asset rule.
+  check("v62.93: Director prompt carries SCENE DIVERSITY hard rules",
+    plan93.includes("SCENE DIVERSITY — HARD RULES") &&
+    plan93.includes("At most TWO scenes may show the home's exterior") &&
+    plan93.includes("washer/dryer, water heater, or storage racking"));
+  check("v62.93: THE HEADLINE ASSET RULE names the Floramar failure class",
+    plan93.includes("THE HEADLINE ASSET RULE") &&
+    plan93.includes("waterfront home whose video never shows the water has failed"));
+  check("v62.93: diversity telemetry runs on reconciled labels after verify-repair",
+    plan93.includes("SELECTION DIVERSITY violated despite v62.93 prompt rules") &&
+    plan93.includes("selection mix:") &&
+    plan93.indexOf("await verifyAndRepairScenes(normalizedPlan") < plan93.indexOf("SELECTION DIVERSITY violated"));
+
+  // #2 — feature-verify: fail-open, scoped, capped, feeding the eyes-on repair lane.
+  const fvSrc = grab(plan93, "verifyNarrationFeatures");
+  check("v62.93: feature-verify judges only concrete claims and fails OPEN when uncertain",
+    fvSrc.includes("CONCRETE VISUAL claims") &&
+    fvSrc.includes("When uncertain, or when the claim could") &&
+    fvSrc.includes("supported=true"));
+  check("v62.93: hook and CTA exempt, short sentences skipped, capped at 6 calls",
+    fvSrc.includes("i === 0 || i === sentences.length - 1") &&
+    fvSrc.includes(".split(/\\s+/).length < 5") &&
+    fvSrc.includes("jobs.slice(0, 6)") &&
+    fvSrc.includes("NARRATION_FEATURE_VERIFY"));
+  check("v62.93: feature offenders carry the repair lane's full shape",
+    fvSrc.includes("featureClaim: true") &&
+    fvSrc.includes("photoIds: [j.photoId]") &&
+    fvSrc.includes("claim: String(verdict.unsupported)"));
+  check("v62.93: feature-verify wired after room-repair, before the lengthen pass, stamping its own source",
+    plan93.indexOf("FEATURE-VERIFY: the monologue meets the pixels") !== -1 &&
+    plan93.indexOf("room-repair unavailable") < plan93.indexOf("FEATURE-VERIFY: the monologue meets the pixels") &&
+    plan93.indexOf("FEATURE-VERIFY: the monologue meets the pixels") < plan93.indexOf("v62.17: if the narration came in under") &&
+    plan93.includes('replace(/^director/, "director+feature-repaired")'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

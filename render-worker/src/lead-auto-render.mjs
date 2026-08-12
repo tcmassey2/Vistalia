@@ -44,6 +44,13 @@ const PLAN_TIMEOUT_MS = 75_000;
 // full incident.
 const RETRY_BACKOFF_MIN = [15, 60, 240];
 const MAX_RETRIES = RETRY_BACKOFF_MIN.length;
+// v62.93 (Teri Kelly / 4320 Floramar): trial URL renders ship MUSIC-ONLY
+// by default — the visual pipeline is verified scene-by-scene, but the
+// narration engine still invents features ("panoramic water views" over a
+// washer/dryer kitchen), and one wrong sentence costs more agent trust
+// than no voice at all. Default ON; set LEAD_RENDERS_VOICELESS=0 on the
+// worker to restore narration the moment the quality bar is met.
+const LEAD_RENDERS_VOICELESS = String(process.env.LEAD_RENDERS_VOICELESS || "1") === "1";
 let retryColumnsMissing = false; // set on first PGRST error naming them
 
 function rest() {
@@ -182,8 +189,12 @@ function buildManifest({ userId, projectId, address, facts, photos, editPlan }) 
     // [pause] delivery tags, so it reads as clipped and robotic.
     // The plan endpoint was building the monologue correctly the whole
     // time; the manifest just dropped it on the floor.
-    narration: editPlan.narration || null,
-    narrationScript: editPlan.narrationScript || "",
+    // v62.93 voiceless default: null narration + skipNarration keep the
+    // worker on the music-only master; captions derive from narration so
+    // they go dark together. The v62.80 spine still carries the monologue
+    // whenever LEAD_RENDERS_VOICELESS=0 flips voice back on.
+    narration: LEAD_RENDERS_VOICELESS ? null : (editPlan.narration || null),
+    narrationScript: LEAD_RENDERS_VOICELESS ? "" : (editPlan.narrationScript || ""),
     musicMood: editPlan.musicMood,
     musicTrack: "",
     skipMusic: false,
@@ -192,10 +203,10 @@ function buildManifest({ userId, projectId, address, facts, photos, editPlan }) 
     runwayConfig: { ...(editPlan.runwayConfig || {}), useCrossfades: true },
     brandKit: null,
     organizationId: null,
-    skipNarration: false,
+    skipNarration: LEAD_RENDERS_VOICELESS,
     hallucinationGuard: "balanced",
     includeSquare: false,
-    captionsEnabled: true,
+    captionsEnabled: !LEAD_RENDERS_VOICELESS,
     finishOptions: { blueHourCorrection: true }
   };
 }
@@ -302,7 +313,7 @@ async function processOne() {
     // orderedPhotos … 24 more issues". Mirror the webapp shape; dims use
     // the webapp's own probe-failure fallback (1024×1365) since the
     // worker has no cheap way to probe 20 remote images.
-    const photos = (Array.isArray(imp.json?.photos) ? imp.json.photos : []).map((p, i) => ({
+    let photos = (Array.isArray(imp.json?.photos) ? imp.json.photos : []).map((p, i) => ({
       id: `imported-${projectId}-${i}`,
       fileName: p.fileName,
       publicUrl: p.publicUrl,
@@ -315,6 +326,21 @@ async function processOne() {
       order: i,
       uploadedAt: new Date().toISOString()
     }));
+    // v62.93 THUMBNAIL FILTER (Pryor: three of six scenes generated from
+    // 576×432 thumbnails — every one of them burned QC retries and shipped
+    // soft). Some scrapes return a mix of full-res photos and tiny
+    // thumbnails; a <40KB JPEG is thumbnail-class and makes a mushy scene.
+    // Drop small files ONLY when enough real photos remain — fail-open on
+    // missing sizes and thin galleries.
+    {
+      const MIN_BYTES = Number(process.env.LEAD_PHOTO_MIN_BYTES || 40000);
+      const sized = photos.filter((p) => Number(p.size) > 0);
+      const large = photos.filter((p) => Number(p.size) >= MIN_BYTES);
+      if (sized.length === photos.length && large.length >= 6 && large.length < photos.length) {
+        console.info(`[auto-render] ${lead.lead_id} photo filter: dropped ${photos.length - large.length} thumbnail-class photo(s) (<${Math.round(MIN_BYTES / 1000)}KB) — ${large.length} full-res remain.`);
+        photos = large.map((p, i) => ({ ...p, order: i }));
+      }
+    }
     if (!imp.ok || imp.json?.status !== "ok" || photos.length < 4) {
       // v62.63: the canonical transient — a proxy outage, a bot-wall loss,
       // a thin page. The Jul 27 evening was ALL this class.
@@ -341,7 +367,13 @@ async function processOne() {
         selectedStyle: "Cinematic Luxury",
         exportFormat: "vertical",
         engine: "veo",
-        targetDurationSec: 30
+        targetDurationSec: 30,
+        // v62.93 (Troy, after the Floramar/Teri Kelly feedback): trial URL
+        // renders default to MUSIC-ONLY until the narration quality bar is
+        // met — an invented "panoramic water views" line costs more trust
+        // than no voice at all. Flip LEAD_RENDERS_VOICELESS=0 on the worker
+        // to restore narration with no deploy.
+        includeNarration: !LEAD_RENDERS_VOICELESS
       })
     }, PLAN_TIMEOUT_MS);
     if (!plan.ok || !plan.json?.editPlan?.scenes?.length) {
@@ -393,7 +425,7 @@ async function processOne() {
       auto_render_status: "submitted",
       auto_render_job_id: String(sub.json.jobId)
     });
-    console.info(`[auto-render] lead ${lead.lead_id} → job ${sub.json.jobId} (${photos.length} photos, ${plan.json.editPlan.scenes.length} scenes). Render-complete email will deliver it.`);
+    console.info(`[auto-render] lead ${lead.lead_id} → job ${sub.json.jobId} (${photos.length} photos, ${plan.json.editPlan.scenes.length} scenes${LEAD_RENDERS_VOICELESS ? ", VOICELESS — music-only" : ""}). Render-complete email will deliver it.`);
   } catch (err) {
     // Exceptions here are aborts and network deaths — transient by nature.
     await failOrRetry(supabaseUrl, lead, `exception(${String(err.message).slice(0, 40)})`, { retryable: true });
