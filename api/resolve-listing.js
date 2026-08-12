@@ -21,6 +21,8 @@
 // contract as the on-behalf import. No secret configured → no access.
 
 import { samePropertyAddress, extractAddressFromHtml } from "./import-listing.js";
+import { requireUser } from "./_lib/auth.js";
+import { rateLimit } from "./_lib/rate-limit.js";
 
 const FETCH_TIMEOUT_MS = 45000;
 
@@ -93,10 +95,20 @@ export default async function handler(request, response) {
     response.setHeader("Allow", "POST");
     return response.status(405).json({ status: "failed", error: "Use POST." });
   }
-  // Worker-only: same shared-secret contract as the on-behalf import.
+  // v62.96: two callers — the worker (shared-secret, lead auto-render) and
+  // signed-in webapp users (the dump area's typed-address path). Same
+  // contract as import-listing's dual auth.
   const internalSecret = String(request.headers["x-internal-secret"] || "");
-  if (!process.env.CRON_SECRET || internalSecret !== process.env.CRON_SECRET) {
-    return response.status(403).json({ status: "failed", error: "Forbidden." });
+  const isWorker = !!process.env.CRON_SECRET && internalSecret === process.env.CRON_SECRET;
+  if (!isWorker) {
+    const auth = await requireUser(request, response);
+    if (!auth.ok) return;
+    const limited = await rateLimit(request, response, {
+      bucket: "resolve-listing",
+      max: 12,
+      windowMs: 60 * 60 * 1000
+    });
+    if (limited) return;
   }
 
   const query = String(request.body?.query || "").trim().replace(/\s+/g, " ");

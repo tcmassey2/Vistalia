@@ -327,6 +327,8 @@ export interface ImportListingResponse {
   facts?: {
     beds?: number | null; baths?: number | null; sqft?: number | null;
     yearBuilt?: number | null; price?: number | null; propertyType?: string | null;
+    // v62.94/96: the agent's own listing remarks, harvested from the page.
+    remarks?: string | null;
   } | null;
   photoSource?: string;
   // v62.56: which source produced the four listing facts ("page",
@@ -367,6 +369,69 @@ export async function importListing(url: string, projectId: string): Promise<Imp
     } as ImportListingResponse;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/* ── v62.96: the dump-area helpers ─────────────────────────────────────── */
+
+// Free-text → listing URL, via the fail-closed server resolver (Zillow
+// search + address verification). Same endpoint the lead auto-render uses.
+export async function resolveListing(query: string): Promise<{ status: string; url?: string }> {
+  try {
+    const headers = await authHeaders();
+    const res = await fetch("/api/resolve-listing", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ query })
+    });
+    const payload = (await res.json().catch(() => ({}))) as { status?: string; url?: string };
+    return { status: payload.status || (res.ok ? "not_found" : "failed"), url: payload.url };
+  } catch {
+    return { status: "failed" };
+  }
+}
+
+// Radar address autocomplete + reverse geocoding — free tier covers our
+// volume by orders of magnitude. Both fail open to null/[] when the
+// publishable key isn't configured, so every UI that uses them degrades
+// to a plain text field. Key: VITE_RADAR_PUBLISHABLE_KEY (frontend-safe
+// by design — Radar publishable keys are meant for the browser).
+const RADAR_KEY: string = (import.meta.env?.VITE_RADAR_PUBLISHABLE_KEY as string | undefined) || "";
+
+export function radarConfigured(): boolean {
+  return RADAR_KEY.length > 0;
+}
+
+export async function radarAutocomplete(query: string): Promise<string[]> {
+  if (!RADAR_KEY || query.trim().length < 4) return [];
+  try {
+    const res = await fetch(
+      `https://api.radar.io/v1/search/autocomplete?query=${encodeURIComponent(query.trim())}&limit=5&countryCode=US`,
+      { headers: { Authorization: RADAR_KEY } }
+    );
+    if (!res.ok) return [];
+    const data = (await res.json().catch(() => ({}))) as { addresses?: Array<{ formattedAddress?: string }> };
+    return (data.addresses || [])
+      .map((a) => String(a.formattedAddress || "").trim())
+      .filter(Boolean)
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+export async function radarReverseGeocode(lat: number, lng: number): Promise<string> {
+  if (!RADAR_KEY) return "";
+  try {
+    const res = await fetch(
+      `https://api.radar.io/v1/geocode/reverse?coordinates=${lat.toFixed(6)},${lng.toFixed(6)}`,
+      { headers: { Authorization: RADAR_KEY } }
+    );
+    if (!res.ok) return "";
+    const data = (await res.json().catch(() => ({}))) as { addresses?: Array<{ formattedAddress?: string }> };
+    return String(data.addresses?.[0]?.formattedAddress || "").trim();
+  } catch {
+    return "";
   }
 }
 

@@ -14,8 +14,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
-import { importListing, curatePhotos } from "../lib/api";
+import { importListing, curatePhotos, resolveListing, radarAutocomplete, radarConfigured } from "../lib/api";
 import type { Photo } from "../lib/types";
+
+// v62.96: the band accepts free text now, not just URLs. URL-ish input
+// (scheme, or a bare known-portal domain) imports directly; anything else
+// goes through the fail-closed server resolver (Zillow search + address
+// verification) first. Mirrors the server's own promotion rules.
+const isUrlish = (v: string) =>
+  /^https?:\/\/\S+$/i.test(v) || /^(www\.)?(zillow|redfin|realtor|homes|trulia|compass|kw|exp)\S*\.\S+/i.test(v);
 
 export default function ListingLinkImport({ intoProject = false }: { intoProject?: boolean }) {
   const storeProjectId = useStore((s) => s.projectId);
@@ -27,6 +34,34 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // v62.96 address typeahead (Radar, free tier). Only engages on non-URL
+  // input when the publishable key is configured; without it the band is
+  // the same plain field as before.
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const suggestTimer = useRef<number | null>(null);
+  const suppressSuggest = useRef(false);
+  useEffect(() => {
+    if (suggestTimer.current !== null) window.clearTimeout(suggestTimer.current);
+    const q = url.trim();
+    if (suppressSuggest.current) {
+      suppressSuggest.current = false; // one-shot: set when a suggestion was just picked
+      setSuggestions([]);
+      return;
+    }
+    if (busy || !radarConfigured() || q.length < 5 || isUrlish(q)) {
+      setSuggestions([]);
+      return;
+    }
+    let stale = false;
+    suggestTimer.current = window.setTimeout(async () => {
+      const list = await radarAutocomplete(q);
+      if (!stale) setSuggestions(list);
+    }, 280);
+    return () => {
+      stale = true;
+      if (suggestTimer.current !== null) window.clearTimeout(suggestTimer.current);
+    };
+  }, [url, busy]);
   // v62.4 progress: the import now runs three real client-side phases
   // (server import → dimension probe → AI curation), each up to tens of
   // seconds — a silent spinner read as "hung". The bar eases toward each
@@ -101,11 +136,39 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
     if (!trimmed || busy) return;
     setBusy(true);
     setError("");
+    setSuggestions([]);
     setPct(3);
     // v62.52: gate the render button while the import is mid-flight — a
     // "Generate video" click during the import would render whatever subset
     // of the tray existed before the imported photos landed.
     useStore.getState().adjustMediaBusy(+1);
+    // v62.96: typed-address path. Resolve free text to the listing URL
+    // before the importer sees it — same fail-closed server resolver the
+    // lead auto-render uses. A miss is a clear message, never a guess.
+    let importInput = trimmed;
+    if (!isUrlish(trimmed)) {
+      startPhase("Finding the listing…", 18);
+      const resv = await resolveListing(trimmed);
+      if (resv.status === "ok" && resv.url) {
+        importInput = resv.url;
+      } else {
+        stopTicker();
+        setError(
+          resv.status === "not_a_query"
+            ? "Add a bit more — the full address with city and state (or paste the listing URL)."
+            : resv.status === "not_found"
+              ? "We couldn't find that listing — double-check the address, or paste the listing page URL."
+              : "The listing search is having a moment — try again, or paste the listing URL."
+        );
+        useStore.getState().adjustMediaBusy(-1);
+        setBusy(false);
+        setPct(0);
+        setPhaseLabel("");
+        return;
+      }
+    } else if (!/^https?:\/\//i.test(importInput)) {
+      importInput = `https://${importInput}`;
+    }
     // v62.24: the ceilings used to be weighted for a flow whose last step
     // was a 50-90s Vision call — reading the page got 3-52 and curation got
     // 66-93, so the bar crawled through the 80s for a minute and read as
@@ -118,7 +181,7 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
       const projectId = intoProject
         ? storeProjectId
         : `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const result = await importListing(trimmed, projectId);
+      const result = await importListing(importInput, projectId);
       if (result.status === "failed") {
         setError(result.error || "Import failed — try again or start manually.");
         return;
@@ -218,7 +281,10 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
           price: listingNow.price || (facts.price ? String(facts.price) : ""),
           beds: listingNow.beds || (facts.beds != null ? String(facts.beds) : ""),
           baths: listingNow.baths || (facts.baths != null ? String(facts.baths) : ""),
-          squareFeet: listingNow.squareFeet || (facts.sqft != null ? String(facts.sqft) : "")
+          squareFeet: listingNow.squareFeet || (facts.sqft != null ? String(facts.sqft) : ""),
+          // v62.96: the page's agent remarks feed the voiceover's selling
+          // points (v62.94 MINE THE REMARKS). Same never-clobber rule.
+          remarks: listingNow.remarks || (facts.remarks ? String(facts.remarks) : "")
         });
         addPhotos(finalPhotos);
       } else {
@@ -231,7 +297,8 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
             price: facts.price ? String(facts.price) : "",
             beds: facts.beds != null ? String(facts.beds) : "",
             baths: facts.baths != null ? String(facts.baths) : "",
-            squareFeet: facts.sqft != null ? String(facts.sqft) : ""
+            squareFeet: facts.sqft != null ? String(facts.sqft) : "",
+            remarks: facts.remarks ? String(facts.remarks) : ""
           },
           photos: finalPhotos
         });
@@ -351,18 +418,43 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
     <div className="border border-edge rounded-xl bg-surface px-4 py-3.5 mb-6">
       <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
         <div className="flex-none sm:pr-1">
-          <span className="block text-sm font-semibold tracking-tightish">Have the listing link?</span>
-          <span className="block text-xs text-ink-muted">{intoProject ? "Zillow, Redfin, or Realtor.com — photos and details land in this project" : "Zillow, Redfin, or Realtor.com — we\u2019ll pull the details"}</span>
+          <span className="block text-sm font-semibold tracking-tightish">Listing link — or just the address?</span>
+          <span className="block text-xs text-ink-muted">{intoProject ? "Paste a Zillow/Redfin/Realtor link or type the address — everything lands in this project" : "Paste a Zillow/Redfin/Realtor link or type the address — we\u2019ll find the listing"}</span>
         </div>
-        <input
-          value={url}
-          onChange={(e) => { setUrl(e.target.value); setError(""); }}
-          onKeyDown={(e) => { if (e.key === "Enter") handleImport(); }}
-          placeholder="https://www.zillow.com/homedetails/…"
-          inputMode="url"
-          autoComplete="off"
-          className="flex-1 h-11 rounded-lg bg-surface-input border border-edge px-3 text-sm placeholder:text-ink-dim focus:border-gold outline-none min-w-0"
-        />
+        <div className="relative flex-1 min-w-0">
+          <input
+            value={url}
+            onChange={(e) => { setUrl(e.target.value); setError(""); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { setSuggestions([]); handleImport(); } }}
+            placeholder="Listing link — or 4320 Floramar Terrace, New Port Richey FL"
+            inputMode="text"
+            autoComplete="off"
+            className="w-full h-11 rounded-lg bg-surface-input border border-edge px-3 text-sm placeholder:text-ink-dim focus:border-gold outline-none"
+          />
+          {/* v62.96: address typeahead (Radar free tier). Renders only when
+              results exist; picking one fills the field and closes the list.
+              No key configured: this never renders and the band stays a
+              plain field. */}
+          {suggestions.length > 0 && (
+            <div className="absolute left-0 right-0 top-[46px] z-20 rounded-lg border border-edge bg-surface shadow-xl overflow-hidden">
+              {suggestions.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    suppressSuggest.current = true;
+                    setUrl(s);
+                    setSuggestions([]);
+                  }}
+                  className="block w-full text-left px-3 py-2 text-sm hover:bg-surface-input text-ink-soft"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
           onClick={handleImport}
           disabled={busy || !url.trim()}

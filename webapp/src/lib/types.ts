@@ -72,6 +72,12 @@ export interface ListingDetails {
   baths: string;
   squareFeet: string;
   hook: string;            // Marketing hook line
+  // v62.96: the agent's own selling points ("new roof 2024, deep-water
+  // dock…"). Flows to the plan as listingDetails.remarks, where the
+  // v62.94 MINE THE REMARKS guidance voices the concrete ones at their
+  // matching photos. Also auto-filled by the listing import when the
+  // page carries agent remarks.
+  remarks: string;
 }
 
 export interface AgentBranding {

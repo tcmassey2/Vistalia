@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefOb
 import { useStore } from "../lib/store";
 import ListingLinkImport from "../components/ListingLinkImport";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot, uploadBrokerageLogo } from "../lib/supabase";
-import { createEditPlan, submitRender, pollRender, fetchLibrary, fetchUsage, authHeaders, RenderJobMissingError, type RenderManifest } from "../lib/api";
+import { createEditPlan, submitRender, pollRender, fetchLibrary, fetchUsage, authHeaders, radarReverseGeocode, RenderJobMissingError, type RenderManifest } from "../lib/api";
+import { firstGpsInFiles } from "../lib/exif-gps";
 import VoiceSection from "../components/VoiceSection";
 import { events, track } from "../lib/analytics";
 import { trackStartTrial } from "../lib/pixel";
@@ -270,6 +271,24 @@ function ListingDetailsCard() {
           placeholder="A modern desert retreat built for evenings outside."
         />
       </div>
+      {/* v62.96: voiceover notes — the agent's own selling points, and the
+          photos-only path's answer to "the narrator has nothing to work
+          with." Flows to the plan as listingDetails.remarks, where the
+          v62.94 MINE THE REMARKS guidance voices the concrete points at
+          their matching photos. Auto-filled by the listing import when
+          the page carries agent remarks. */}
+      <div>
+        <label className="block text-xs text-ink-muted mb-1.5">Voiceover notes (optional)</label>
+        <textarea
+          value={listing.remarks}
+          onChange={(e) => setListing({ remarks: e.target.value })}
+          rows={3}
+          maxLength={1800}
+          placeholder="New roof 2024, deep-water dock with lift, chef's kitchen — anything the voiceover should work in."
+          className="w-full rounded-lg bg-surface-input border border-edge px-3 py-2.5 text-sm placeholder:text-ink-dim focus:border-gold outline-none resize-y"
+        />
+        <p className="text-[11px] text-ink-dim mt-1">The narrator weaves these in where the matching photo appears. Imports fill this automatically when the listing page has agent remarks.</p>
+      </div>
     </div>
   );
 }
@@ -288,6 +307,11 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
+  // v62.96 EXIF rescue: photographer-direct uploads often still carry GPS
+  // (MLS processing strips it). When the project has no address, the first
+  // fix reverse-geocodes into a SUGGESTION the agent confirms — never an
+  // assumption; the coordinates could be the photographer's office.
+  const [addrSuggest, setAddrSuggest] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   // v23.2: drag-and-drop reorder. Tracks which photo is being dragged
   // and which position it's hovering over for the drop indicator.
@@ -353,6 +377,16 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
     if (uploaded.length) {
       addPhotos(uploaded);
       setToast(`${uploaded.length} photo${uploaded.length === 1 ? "" : "s"} added`);
+      // v62.96 EXIF rescue — fire-and-forget, fail-open at every step.
+      if (!useStore.getState().listing.address.trim()) {
+        firstGpsInFiles(accepted)
+          .then(async (fix) => {
+            if (!fix) return;
+            const addr = await radarReverseGeocode(fix.lat, fix.lng);
+            if (addr && !useStore.getState().listing.address.trim()) setAddrSuggest(addr);
+          })
+          .catch(() => { /* the rescue is a bonus, never a blocker */ });
+      }
     }
     setUploading(false);
     setUploadProgress({ done: 0, total: 0 });
@@ -439,6 +473,30 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
 
   return (
     <div className="flex flex-col gap-4">
+      {/* v62.96: EXIF address suggestion — confirm-only, never auto-applied. */}
+      {addrSuggest && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-lg border border-gold/30 bg-gold/10 px-3.5 py-3">
+          <p className="text-xs text-ink-soft leading-relaxed">
+            Your photos say this is <span className="text-gold-light font-medium">{addrSuggest}</span> — use it for the address and voiceover?
+          </p>
+          <div className="flex items-center gap-2 flex-none">
+            <button
+              type="button"
+              onClick={() => { useStore.getState().setListing({ address: addrSuggest }); setAddrSuggest(""); }}
+              className="btn-secondary-em h-8 px-3 rounded-md text-xs"
+            >
+              Use this address
+            </button>
+            <button
+              type="button"
+              onClick={() => setAddrSuggest("")}
+              className="text-xs text-ink-muted hover:text-ink-soft px-1"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       {/* Drop zone — now genuinely drag-and-drop */}
       <label
         onDragOver={onDragOver}
@@ -1831,6 +1889,9 @@ function EngineToggle({ engine, onChange }: { engine: RenderEngine; onChange: (e
 */
 function AudioControls() {
   const narrationEnabled = useStore((s) => s.narrationEnabled);
+  // v62.96: the photos-only policy, stated where the choice is made — a
+  // voiceover with no address and no notes can only describe what it sees.
+  const hasVoiceContext = useStore((s) => Boolean(s.listing.address.trim() || s.listing.remarks.trim()));
   const setNarrationEnabled = useStore((s) => s.setNarrationEnabled);
   const captionsEnabled = useStore((s) => s.captionsEnabled);
   const setCaptionsEnabled = useStore((s) => s.setCaptionsEnabled);
@@ -1890,6 +1951,11 @@ function AudioControls() {
             </span>
           </div>
           <div className="text-xs text-ink-muted">AI voice reads listing details over each scene</div>
+          {narrationEnabled && !hasVoiceContext && (
+            <div className="text-[11px] text-amber-300/90 mt-1.5 leading-relaxed">
+              No address or voiceover notes yet — the narrator can only describe what it sees. Add either under Listing details for a sharper script.
+            </div>
+          )}
         </button>
 
         <button
@@ -1914,21 +1980,6 @@ function AudioControls() {
           <div className="text-xs text-ink-muted">Plays your selected track throughout the video</div>
         </button>
       </div>
-
-      {/* v62.83: both audio toggles off = a completely silent video. These
-          prefs PERSIST per-browser (vistalia.render-prefs.v1), so a toggle
-          from weeks ago silently carries into today's render — an Aug 5
-          trial shipped fully silent with no warning anywhere. Say it here,
-          and again next to Generate (where users who never open this panel
-          will actually see it). */}
-      {!narrationEnabled && !musicEnabled && (
-        <div className="p-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.06]">
-          <p className="text-[11px] text-amber-300/90 leading-relaxed">
-            Voice and music are both off — this video will render <span className="font-semibold">completely silent</span>.
-            Perfect if you&apos;re adding your own audio in another app; otherwise switch one back on.
-          </p>
-        </div>
-      )}
 
       {/* v26.9: "use your own voice" surfaced HERE, under the narration toggle,
           where agents look for it — instead of buried in the brand-kit panel.
@@ -2892,17 +2943,6 @@ function RenderControls() {
           Photos still uploading — the button unlocks when they're all in.
         </span>
       ) : null}
-
-      {/* v62.83: the Audio panel carries the same warning, but these prefs
-          persist per-browser — a user who toggled voice+music off weeks ago
-          may never open that panel again. This is the last stop before a
-          completely silent render, so it must be visible at the button. */}
-      {!narrationEnabled && !musicEnabled && !isRendering && (
-        <span className="basis-full text-[11px] text-amber-300/90 leading-relaxed">
-          Voice and music are both off — this video will render completely silent.
-          Intentional for some workflows; switch one back on in the Audio panel if not.
-        </span>
-      )}
 
       <PaywallModal
         open={showPaywall}

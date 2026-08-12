@@ -1768,16 +1768,67 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     urlLead.listingUrl === "https://www.zillow.com/homedetails/x/1_zpid/");
 
   // Wiring: fail-closed verification, worker-only secret, retry taxonomy.
-  check("v62.95: resolver verifies the page address fail-closed and is worker-only",
+  // v62.96 widened auth from worker-only to worker + signed-in users
+  // (the dump area's typed-address path) — the fail-closed verification
+  // contract is unchanged.
+  check("v62.95/96: resolver verifies the page address fail-closed, worker secret or signed-in user",
     res95.includes("samePropertyAddress({ line: query }, pageAddress)") &&
     res95.includes("Fail closed") &&
-    res95.includes("internalSecret !== process.env.CRON_SECRET"));
+    res95.includes("internalSecret === process.env.CRON_SECRET"));
   check("v62.95: worker resolves scheme-less listing_url before import — transient retries, not_found terminal",
     lead95.includes('!/^https?:\\/\\//i.test(listingUrl)') &&
     lead95.includes("/api/resolve-listing") &&
     lead95.includes('"resolve(fetch_failed)", { retryable: true }') &&
     lead95.includes("retryable: false") &&
     lead95.includes("url: listingUrl, projectId"));
+}
+
+/* ── v62.96: the dump area — typed addresses, EXIF rescue, voice context ── */
+{
+  const lli96 = fs.readFileSync(path.join(ROOT, "webapp/src/components/ListingLinkImport.tsx"), "utf8");
+  const ps96 = fs.readFileSync(path.join(ROOT, "webapp/src/screens/ProjectScreen.tsx"), "utf8");
+  const api96 = fs.readFileSync(path.join(ROOT, "webapp/src/lib/api.ts"), "utf8");
+  const ty96 = fs.readFileSync(path.join(ROOT, "webapp/src/lib/types.ts"), "utf8");
+  const st96 = fs.readFileSync(path.join(ROOT, "webapp/src/lib/store.ts"), "utf8");
+  const ex96 = fs.readFileSync(path.join(ROOT, "webapp/src/lib/exif-gps.ts"), "utf8");
+  const res96 = fs.readFileSync(path.join(ROOT, "api/resolve-listing.js"), "utf8");
+
+  check("v62.96: the import band accepts free text — resolver wired ahead of the importer",
+    lli96.includes("const isUrlish = (v: string)") &&
+    lli96.includes("await resolveListing(trimmed)") &&
+    lli96.includes("importListing(importInput, projectId)") &&
+    lli96.indexOf("await resolveListing(trimmed)") < lli96.indexOf("importListing(importInput, projectId)"));
+  check("v62.96: address typeahead is key-gated and degrades to a plain field",
+    lli96.includes("radarConfigured()") &&
+    lli96.includes("radarAutocomplete(q)") &&
+    api96.includes("VITE_RADAR_PUBLISHABLE_KEY") &&
+    api96.includes("if (!RADAR_KEY || query.trim().length < 4) return [];"));
+  check("v62.96: imported agent remarks fill the listing without clobbering typed notes",
+    lli96.includes("remarks: listingNow.remarks || (facts.remarks ? String(facts.remarks) : \"\")") &&
+    lli96.includes("remarks: facts.remarks ? String(facts.remarks) : \"\"") &&
+    api96.includes("remarks?: string | null;"));
+  check("v62.96: ListingDetails carries remarks end to end (type + empty default)",
+    ty96.includes("remarks: string;") &&
+    st96.includes('hook: "",\n  remarks: ""'));
+  check("v62.96: voiceover notes textarea writes listing.remarks",
+    ps96.includes("Voiceover notes (optional)") &&
+    ps96.includes("setListing({ remarks: e.target.value })"));
+  check("v62.96: EXIF rescue is suggest-only — reverse geocode, confirm chip, never auto-applied",
+    ps96.includes("firstGpsInFiles(accepted)") &&
+    ps96.includes("radarReverseGeocode(fix.lat, fix.lng)") &&
+    ps96.includes("Use this address") &&
+    ps96.includes('!useStore.getState().listing.address.trim()'));
+  check("v62.96: the GPS parser walks APP1→GPS IFD, caps its read, and rejects the (0,0) garbage fix",
+    ex96.includes("0x8825") &&
+    ex96.includes("256 * 1024") &&
+    ex96.includes("lat === 0 && lng === 0"));
+  check("v62.96: narration hint appears exactly when voice has no context to work with",
+    ps96.includes("hasVoiceContext") &&
+    ps96.includes("narrationEnabled && !hasVoiceContext") &&
+    ps96.includes("can only describe what it sees"));
+  check("v62.96: the resolver accepts signed-in users (rate-limited) alongside the worker secret",
+    res96.includes("requireUser(request, response)") &&
+    res96.includes('bucket: "resolve-listing"'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

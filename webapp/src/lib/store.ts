@@ -207,7 +207,8 @@ const emptyListing: ListingDetails = {
   beds: "",
   baths: "",
   squareFeet: "",
-  hook: ""
+  hook: "",
+  remarks: ""
 };
 
 // Brand kit persistence — TWO layers, in order of preference:
