@@ -105,16 +105,44 @@ const KLING_NEGATIVE_PROMPT =
 // rung 3 barely breathes — but ALL THREE are real moving shots, so a QC
 // failure de-escalates instead of dying into a floor. The Veo constrained
 // templates are no longer used on Kling (runway-job v61.2).
-const KLING_MOTION_SUFFIX =
+// v62.90 (638 Eddie Robinson scene 1: Troy — "it has a KB style motion
+// almost … I want to make these constrained prompts more aggressive to
+// avoid the KB style look"): the shipped clip was the 2nd-attempt QC
+// regen carrying the old museum-static STRICT suffix — a real generated
+// clip (homography-residual 8.99, true parallax) prompted into near-
+// stillness. Root problem: "only a small fraction of travel … the scene
+// otherwise perfectly still" asks Kling for a photograph, and a QC
+// failure for TEXT or OBJECT invention is not remedied by killing the
+// camera anyway (the no-text/no-object defense rides the negative prompt
+// and the fidelity suffix). Both calm rungs now demand a REAL moving
+// shot — travel that never stops, visible parallax — and differ only in
+// energy. Old strings preserved below; KLING_CALM_LEGACY=1 restores both
+// with no deploy (the escape hatch IS the lesson of v62.11).
+const KLING_MOTION_SUFFIX_LEGACY =
   " Controlled cinematic camera: one slow, smooth, perfectly stabilized " +
   "dolly push straight toward the scene's focal point, modest travel, no " +
   "arcing, no lateral drift, gentle natural perspective parallax only, " +
   "tripod-grade steadiness, calm luxury real-estate cinematography.";
-const KLING_MOTION_STRICT =
+const KLING_MOTION_STRICT_LEGACY =
   " Minimal cinematic camera: a single very slow, short, perfectly straight " +
   "and level push-in, only a small fraction of travel, absolutely " +
   "stabilized, no rotation, no arc, no drift, no lateral movement, the " +
   "scene otherwise perfectly still, museum-grade calm.";
+const KLING_CALM_LEGACY = String(process.env.KLING_CALM_LEGACY || "0") === "1";
+const KLING_MOTION_SUFFIX = KLING_CALM_LEGACY ? KLING_MOTION_SUFFIX_LEGACY :
+  " Controlled cinematic camera: one smooth, confident, constant-speed " +
+  "dolly push straight toward the scene's focal point, clearly visible " +
+  "continuous forward travel with pronounced natural perspective parallax, " +
+  "no arcing, no lateral drift, perfectly level and stabilized as if on a " +
+  "motorized slider, calm luxury real-estate cinematography — a real " +
+  "moving shot from first frame to last, never a static hold.";
+const KLING_MOTION_STRICT = KLING_CALM_LEGACY ? KLING_MOTION_STRICT_LEGACY :
+  " Restrained cinematic camera: one slow, steady, perfectly straight and " +
+  "level push-in that never stops moving — unhurried but clearly " +
+  "perceptible forward travel through the entire clip, gentle natural " +
+  "perspective parallax, absolutely stabilized, no rotation, no arc, no " +
+  "drift, no lateral movement, every object locked rigidly in its place, " +
+  "calm and deliberate — a slow moving shot, not a still photograph.";
 // v61 (Troy: "Make the prompts more aggressive... the whole point of the
 // 2nd render attempt is to then use the constrained prompt. The first one
 // can be more lively"): the conservative stack was Veo damage control.

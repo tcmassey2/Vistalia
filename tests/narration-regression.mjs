@@ -648,8 +648,12 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     /gentleGeneric:/.test(rjSrc) && /gentlePool:/.test(rjSrc) && /gentleExterior:/.test(rjSrc));
   check("v62.41: gentle prose is strictly forward — the v46 invariant survives",
     /never backward/.test(rjSrc) && /no reveal of new area at the frame edges/.test(rjSrc));
-  check("v62.41: gentle maps to the steady Kling suffix (constrained without strict)",
-    /strictConstrained \? "strict" : constrained \? "steady" : "bold"/.test(rjSrc));
+  // v62.90 superseded the v62.41 mapping: rung 2 (QC regen) now rides
+  // steady and rung 3 (gentle re-roll) rides the rewritten strict, so the
+  // Kling ladder de-escalates monotonically instead of putting the most
+  // static ask at rung 2 (the Eddie Robinson scene-1 "KB style" clip).
+  check("v62.41/v62.90: Kling motion mapping is the monotonic ladder",
+    /gentleReroll \? "strict" : constrained \? "steady" : "bold"/.test(rjSrc));
 
   /* ── v62.42: narration provenance is logged at prepareVoiceFirst ENTRY,
      before any bail can swallow it — the Jul 27 square render's preflight
@@ -1416,6 +1420,42 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     /match: false, checked: false/.test(vqSrc89) &&
     /floor plans, site maps/.test(vqSrc89) &&
     rjSrc89.includes('qcSwapCandidatePhoto } from "./veo-qc.mjs"'));
+}
+
+/* ── v62.90: constrained Kling rungs stay real moving shots (Eddie s1) ── */
+{
+  const vj90 = fs.readFileSync(path.join(ROOT, "render-worker/src/veo-job.mjs"), "utf8");
+  const rj90 = fs.readFileSync(path.join(ROOT, "render-worker/src/runway-job.mjs"), "utf8");
+  const between = (src, start) => {
+    const i = src.indexOf(start);
+    if (i === -1) return "";
+    return src.slice(i, src.indexOf(";", i));
+  };
+  const steadyActive = between(vj90, "const KLING_MOTION_SUFFIX = KLING_CALM_LEGACY ? KLING_MOTION_SUFFIX_LEGACY :");
+  const strictActive = between(vj90, "const KLING_MOTION_STRICT = KLING_CALM_LEGACY ? KLING_MOTION_STRICT_LEGACY :");
+  const strictLegacy = between(vj90, "const KLING_MOTION_STRICT_LEGACY =");
+
+  check("v62.90: active STRICT demands continuous real motion, drops the museum-static asks",
+    strictActive.includes("never stops moving") &&
+    strictActive.includes("not a still photograph") &&
+    !strictActive.includes("small fraction of travel") &&
+    !strictActive.includes("otherwise perfectly still"));
+  check("v62.90: active STEADY asks for visible constant-speed travel with pronounced parallax",
+    steadyActive.includes("constant-speed") &&
+    steadyActive.includes("pronounced natural perspective parallax") &&
+    steadyActive.includes("never a static hold"));
+  check("v62.90: legacy strings preserved behind the KLING_CALM_LEGACY escape hatch",
+    strictLegacy.includes("small fraction of travel") &&
+    strictLegacy.includes("museum-grade calm") &&
+    vj90.includes("KLING_CALM_LEGACY ? KLING_MOTION_SUFFIX_LEGACY") &&
+    vj90.includes("KLING_CALM_LEGACY ? KLING_MOTION_STRICT_LEGACY") &&
+    vj90.includes('process.env.KLING_CALM_LEGACY || "0"'));
+  check("v62.90: the sacred v62.45 gimbal BOLD string is untouched",
+    vj90.includes("motorized slider on") && vj90.includes("invisible rails"));
+  check("v62.90: Kling ladder de-escalates monotonically — QC regen rides steady, gentle re-roll rides strict",
+    rj90.includes('motionStyle: gentleReroll ? "strict" : constrained ? "steady" : "bold"') &&
+    !rj90.includes('motionStyle: strictConstrained ? "strict"') &&
+    rj90.includes("INVERTED-LADDER FIX"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

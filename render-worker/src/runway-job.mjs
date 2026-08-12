@@ -2276,7 +2276,15 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
       // v61: attempt 1 runs the lively bold camera language; constrained
       // retries (the ladder's 2nd attempt) drop to the steady suffix so
       // de-escalation is real. Troy: "the first one can be more lively."
-      motionStyle: strictConstrained ? "strict" : constrained ? "steady" : "bold",
+      // v62.90 INVERTED-LADDER FIX (638 Eddie Robinson scene 1): the QC
+      // regen (strictConstrained, attempt 2) mapped to "strict" while the
+      // gentle re-roll (attempt 3) mapped to "steady" — so rung 2 was MORE
+      // static than rung 3, and the museum-static rung 2 is exactly the
+      // "KB style look" Troy flagged. On Kling the ladder now de-escalates
+      // monotonically: bold → steady (QC regen) → strict (gentle re-roll,
+      // rewritten in veo-job to stay a real moving shot). Veo is untouched
+      // — its prompt TEMPLATES (not motionStyle) carry its ladder.
+      motionStyle: gentleReroll ? "strict" : constrained ? "steady" : "bold",
       onSlotAcquired
     }),
     new Promise((_, reject) => {
