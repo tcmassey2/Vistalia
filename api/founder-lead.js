@@ -41,7 +41,11 @@ export default async function handler(request, response) {
   if (!email || !/^\S+@\S+\.\S+$/.test(email) || email.length > 200) {
     return response.status(400).json({ error: "A valid email is required." });
   }
-  const emailFilter = encodeURIComponent(`"${email}"`);
+  // v62.97.2: PostgREST treats double quotes in SCALAR filters as literal
+  // characters (verified against a live PostgREST 13 — eq."x@y.com" matches
+  // nothing, and eq."uuid" 400s on uuid columns). Quotes belong only inside
+  // in.(...) lists, which is what metrics.js correctly does. Plain encode.
+  const emailFilter = encodeURIComponent(email);
 
   /* ── POST: founder contact tracking ─────────────────────────────────── */
   if (request.method === "POST") {
@@ -96,7 +100,9 @@ export default async function handler(request, response) {
   let lead = null;
   try {
     const rows = await fetch(
-      `${supabaseUrl}/rest/v1/meta_leads?select=*&email=eq.${emailFilter}&order=created_time.desc&limit=1`,
+      // nullslast: the sync writes created_time null when Meta omits it, and
+      // plain desc puts NULLs FIRST — a null row would shadow the real latest.
+      `${supabaseUrl}/rest/v1/meta_leads?select=*&email=eq.${emailFilter}&order=created_time.desc.nullslast&limit=1`,
       { headers: rest }
     ).then((r) => (r.ok ? r.json() : []));
     lead = Array.isArray(rows) && rows[0] ? rows[0] : null;
@@ -164,7 +170,7 @@ export default async function handler(request, response) {
     let profile = null;
     try {
       const profRows = await fetch(
-        `${supabaseUrl}/rest/v1/profiles?select=tier,render_credits,created_at&user_id=eq.${encodeURIComponent(`"${userId}"`)}&limit=1`,
+        `${supabaseUrl}/rest/v1/profiles?select=tier,render_credits,created_at&user_id=eq.${encodeURIComponent(userId)}&limit=1`,
         { headers: rest }
       ).then((r) => (r.ok ? r.json() : []));
       profile = Array.isArray(profRows) && profRows[0] ? profRows[0] : null;
@@ -180,7 +186,7 @@ export default async function handler(request, response) {
 
   // 3. Renders + early-death jobs.
   if (userId) {
-    const idFilter = encodeURIComponent(`"${userId}"`);
+    const idFilter = encodeURIComponent(userId);
     try {
       const rows = await fetch(
         `${supabaseUrl}/rest/v1/render_audit_log?select=job_id,listing_address,listing_city,project_title,engine,status,narration_applied,master_mp4_url,thumbnail_url,created_at,internal&agent_user_id=eq.${idFilter}&order=created_at.desc&limit=12`,

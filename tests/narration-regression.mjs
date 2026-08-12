@@ -1843,7 +1843,7 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     fl97.includes('response.status(401)'));
   check("v62.97: dossier reads the lead with select=* so pre-migration schemas still answer",
     fl97.includes("meta_leads?select=*&email=eq.") &&
-    fl97.includes("order=created_time.desc&limit=1"));
+    fl97.includes("order=created_time.desc.nullslast&limit=1"));
   check("v62.97: crm.ready is detected off the row, and provenance + answers come from raw",
     fl97.includes('"contacted_at" in lead') &&
     fl97.includes("raw.field_data") &&
@@ -1880,6 +1880,20 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.97: the dossier plays renders through the existing player and offers mailto",
     fh97.includes("openPlayer(r.mp4_url, r.title, r.city||j.email)") &&
     fh97.includes('href="mailto:'));
+
+  // v62.97.2 — every lead showed "Direct": PostgREST scalar filters treat
+  // double quotes as LITERAL characters (eq."x@y.com" matches nothing;
+  // eq."uuid" 400s), so the quoted lookups returned empty for everyone.
+  // Verified against a live PostgREST 13. Quoting is only for in.(...)
+  // lists. Pin the unquoted style + null-safe ordering.
+  const backtickQuote = String.fromCharCode(96) + '"';
+  check("v62.97.2: founder-lead uses plain-encoded scalar filters — no quoted eq values anywhere",
+    fl97.includes("const emailFilter = encodeURIComponent(email)") &&
+    fl97.includes("const idFilter = encodeURIComponent(userId)") &&
+    fl97.includes("user_id=eq.${encodeURIComponent(userId)}") &&
+    !fl97.includes(backtickQuote));
+  check("v62.97.2: lead ordering is nullslast so a null created_time row can't shadow the latest",
+    fl97.includes("created_time.desc.nullslast"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
