@@ -49,6 +49,17 @@ export default function SettingsScreen() {
     return () => { alive = false; };
   }, []);
 
+  // v62.109: the dashboard's set-password nudge sends people here with
+  // intent — open the form for them instead of making them find the row.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("vistalia.pw-nudge.open") === "1") {
+        localStorage.removeItem("vistalia.pw-nudge.open");
+        setPwOpen(true);
+      }
+    } catch { /* noop */ }
+  }, []);
+
   const handleManageBilling = async () => {
     setPortalLoading(true);
     setError("");
@@ -89,6 +100,8 @@ export default function SettingsScreen() {
       setPw2("");
       setPwOpen(false);
       setToast("Password set — you can sign in with it from now on.");
+      // v62.109: a set password retires the dashboard nudge for good.
+      try { localStorage.setItem("vistalia.pw-nudge.v1", "done"); } catch { /* noop */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Couldn't set the password.";
       // Supabase rejects re-using the current password; say so plainly.

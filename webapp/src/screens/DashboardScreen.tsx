@@ -14,6 +14,19 @@ export default function DashboardScreen() {
   const setListing = useStore((s) => s.setListing);
   const addPhotos = useStore((s) => s.addPhotos);
   const setProjectTitle = useStore((s) => s.setProjectTitle);
+  const goToScreen = useStore((s) => s.goToScreen);
+
+  // v62.109: the set-password nudge. main.tsx stamps the flag when the
+  // session arrived via a one-tap email link (lead accounts have no
+  // password); shown once, dismiss persists, and setting a password in
+  // Settings retires it for good.
+  const [pwNudge, setPwNudge] = useState<boolean>(() => {
+    try { return localStorage.getItem("vistalia.pw-nudge.v1") === "show"; } catch { return false; }
+  });
+  const dismissPwNudge = () => {
+    setPwNudge(false);
+    try { localStorage.setItem("vistalia.pw-nudge.v1", "done"); } catch { /* noop */ }
+  };
 
   // Library — past renders, fetched from the audit log on mount.
   const [library, setLibrary] = useState<LibraryEntry[] | null>(null);
@@ -114,6 +127,36 @@ export default function DashboardScreen() {
       {/* Plan / trial status — surfaces tier, quota, and trial countdown.
           On expired trial, this becomes the primary upgrade prompt. */}
       <PlanStatusBanner />
+
+      {/* v62.109: one-time set-password offer after a one-tap-link arrival.
+          Lead accounts have no password — this is the moment to fix that. */}
+      {pwNudge && (
+        <div className="mb-4 px-4 py-3 rounded-xl border border-gold/40 bg-gold/10 flex flex-wrap items-center gap-3">
+          <p className="text-sm text-gold-light flex-1 min-w-[240px]">
+            You're in via a one-tap email link. Set a password and next time you can sign in directly.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                dismissPwNudge();
+                try { localStorage.setItem("vistalia.pw-nudge.open", "1"); } catch { /* noop */ }
+                goToScreen("settings");
+              }}
+              className="card-press h-8 px-3 rounded-md text-xs font-semibold bg-gold text-paper hover:bg-gold-light transition-colors whitespace-nowrap"
+            >
+              Set a password
+            </button>
+            <button
+              type="button"
+              onClick={dismissPwNudge}
+              className="h-8 px-2 rounded-md text-xs text-ink-muted hover:text-ink transition-colors whitespace-nowrap"
+            >
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* v52: listing-URL import — the phone-first path. Leads arrive from
           Instagram on phones where their MLS photos aren't; a listing link

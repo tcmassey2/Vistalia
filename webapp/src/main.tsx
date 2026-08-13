@@ -61,6 +61,21 @@ async function loadSentryIfConfigured() {
 }
 
 async function bootstrap() {
+  // v62.109: remember a one-tap-link arrival BEFORE supabase-js consumes
+  // the hash — the dashboard uses it to offer "set a password" exactly
+  // once. Lead accounts are provisioned passwordless (Victor Vasu spent
+  // two days typing passwords that don't exist); the moment they land via
+  // an email link is the one moment the offer is obviously relevant.
+  try {
+    const h = window.location.hash || "";
+    if (h.includes("access_token") && /type=(magiclink|invite|signup)/.test(h)) {
+      if (!localStorage.getItem("vistalia.pw-nudge.v1")) {
+        localStorage.setItem("vistalia.pw-nudge.v1", "show");
+      }
+    }
+  } catch {
+    // Storage blocked (private mode) — the nudge is a bonus, not a need.
+  }
   try {
     const res = await fetch("/api/env", { cache: "no-store" });
     if (res.ok) {

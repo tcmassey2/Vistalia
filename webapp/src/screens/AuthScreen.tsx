@@ -214,7 +214,8 @@ export default function AuthScreen() {
         }
         resetCaptcha();
         setInfo(
-          "If an account exists for " + email + ", a fresh sign-in link is on its way. It works for one tap — use it soon."
+          "If an account exists for " + email + ", a fresh sign-in link is on its way. It works for one tap — use it soon. " +
+          "Once you're in, Settings lets you set a password for next time."
         );
       } else if (mode === "forgot") {
         const token = captchaRequired ? await ensureFreshCaptcha() : undefined;
