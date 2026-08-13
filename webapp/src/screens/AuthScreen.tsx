@@ -85,6 +85,13 @@ export default function AuthScreen() {
   // verify call.
   const [totpCode, setTotpCode] = useState("");
   const [totpFactorId, setTotpFactorId] = useState("");
+  // v62.108 (Victor Vasu, Aug 13: "attempting to sign into my account for
+  // 2 days with zero success"): lead-provisioned accounts have NO password,
+  // and a failed password attempt gave no hint — the tiny "No password?"
+  // footer link wasn't enough on a phone. After an invalid-credentials
+  // miss, a loud steer to the sign-in-link tab renders under the error.
+  // Copy says "may" — this reveals nothing about whether the email exists.
+  const [passwordMiss, setPasswordMiss] = useState(false);
   const setToast = useStore((s) => s.setToast);
 
   // Detect Supabase recovery tokens in the URL hash. When the user clicks the
@@ -134,6 +141,7 @@ export default function AuthScreen() {
     if (busy) return;
     setError("");
     setInfo("");
+    setPasswordMiss(false); // v62.108: re-lit only by a fresh miss
     setBusy(true);
     try {
       if (mode === "signup") {
@@ -226,6 +234,10 @@ export default function AuthScreen() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Authentication failed.";
       setError(humanizeAuthError(message));
+      // v62.108: a wrong-password miss on the sign-in tab lights the
+      // sign-in-link steer — lead-provisioned accounts have no password,
+      // and this is the moment they need to hear it.
+      if (mode === "signin" && /invalid login/i.test(message)) setPasswordMiss(true);
       // CRITICAL: reset captcha on failure too. Supabase consumed the
       // token whether or not auth succeeded — keeping it in state means
       // the next attempt sends the burned token and gets the misleading
@@ -441,6 +453,21 @@ export default function AuthScreen() {
                   {error}
                 </div>
               )}
+              {/* v62.108: the loud passwordless steer. Lead accounts have no
+                  password; after a wrong-password miss this is the answer,
+                  not a footer whisper. "may" keeps it enumeration-safe. */}
+              {passwordMiss && mode === "signin" && (
+                <div className="px-3 py-2.5 rounded-lg border border-gold/40 bg-gold/10 text-sm text-gold-light text-center">
+                  Signed up through a listing or a video link? Your account may use one-tap email links — no password to remember.
+                  <button
+                    type="button"
+                    onClick={() => { setMode("magic"); setError(""); setInfo(""); setPassword(""); setPasswordMiss(false); }}
+                    className="block w-full mt-2 font-semibold text-gold hover:underline"
+                  >
+                    Email me a sign-in link →
+                  </button>
+                </div>
+              )}
               {info && (
                 <div className="px-3 py-2.5 rounded-lg border border-gold/30 bg-gold/10 text-sm text-gold-light">
                   {info}
@@ -564,7 +591,9 @@ export default function AuthScreen() {
 }
 
 function humanizeAuthError(msg: string): string {
-  if (/invalid login/i.test(msg)) return "Invalid email or password.";
+  // v62.108: the bare "Invalid email or password." was a dead end for
+  // lead-provisioned accounts (they have none) — point at the way in.
+  if (/invalid login/i.test(msg)) return "Invalid email or password. If you signed up through a listing link, your account signs in with email links instead.";
   if (/email not confirmed/i.test(msg)) return "Confirm your email first — check your inbox.";
   if (/already registered|already exists/i.test(msg)) return "That email is already registered. Try signing in.";
   if (/password.{0,30}(short|weak|6 character)/i.test(msg)) return "Password must be at least 8 characters.";
