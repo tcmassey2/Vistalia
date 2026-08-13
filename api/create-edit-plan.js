@@ -768,10 +768,27 @@ export default async function handler(request, response) {
         const nar0 = normalizedPlan.narration;
         const roomDemoted = nar0 && nar0.source !== "director" &&
           /name a room the photo does not show/.test(nar0.sourceReason || "");
-        if (roomDemoted && parsed?.narration?.monologue) {
+        /* v62.106 (Floramar redo #3: "The primary bedroom is cozy and
+           inviting" spoken over the BATHROOM): a SINGLE room contradiction
+           used to ship as a warning — "one is a coin-flip on a classifier
+           edge case". The coin landed wrong on a make-right render. A
+           single mismatch now rides this SAME repair lane: the rewrite
+           call sees the actual photo (v62.92 eyes), so a true classifier
+           edge case (the ensuite shot that really shows the bedroom) gets
+           a sentence written from the pixels either way — strictly better
+           than shipping the claim. Demotion thresholds are unchanged; if
+           the repair is unavailable the adopted narration ships exactly
+           as before. */
+        const singleRepair = !roomDemoted && nar0 &&
+          String(nar0.source || "").startsWith("director") &&
+          Array.isArray(nar0.sentences) && nar0.sentences.length >= 2;
+        const repairSource = roomDemoted && parsed?.narration?.monologue
+          ? parsed.narration
+          : (singleRepair ? nar0 : null);
+        if (repairSource) {
           const photoScenes0 = (normalizedPlan.scenes || []).filter((s) => String(s.type || "photo").toLowerCase() === "photo");
           const roomById = new Map(photoScenes0.map((s) => [String(s.photoId), s.roomType]));
-          const origSents = (parsed.narration.sentences || []).map((s) => ({
+          const origSents = (repairSource.sentences || []).map((s) => ({
             text: String(s?.text || ""),
             photos: (Array.isArray(s?.photos) ? s.photos : []).map(String)
           }));
@@ -779,6 +796,8 @@ export default async function handler(request, response) {
           // lane — the rewrite instruction ("describe its ACTUAL room type")
           // is exactly right for a sentence praising a room the cut never
           // shows. Dedupe by sentence index; per-photo offenders first.
+          // (An ADOPTED director narration has already passed the set
+          // checks, so on the single-repair path this contributes nothing.)
           const setOffenders = narrationSetAbsentRoomOffenses(
             origSents, roomById, photoScenes0.map((s) => s.roomType)
           );
@@ -799,7 +818,7 @@ export default async function handler(request, response) {
               String(p.id),
               String(p.durableUrl || p.durable_url || p.publicUrl || p.public_url || p.imageUrl || p.url || "")
             ]));
-            const repaired = await repairNarrationRooms(parsed.narration, offenders, { roomById, photoUrlById, listingDetails, selectedStyle, timeoutMs: repairBudget });
+            const repaired = await repairNarrationRooms(repairSource, offenders, { roomById, photoUrlById, listingDetails, selectedStyle, timeoutMs: repairBudget });
             if (repaired) {
               const probe = { scenes: normalizedPlan.scenes };
               attachNarration(probe, repaired, { targetDurationSec, voiceId: planVoiceId });
@@ -807,18 +826,25 @@ export default async function handler(request, response) {
                 probe.narration.source = "director+room-repaired";
                 // v62.48: the probe re-validated clean so it carries no reason —
                 // stamp WHY this pass ran, so the worker log tells the story.
-                probe.narration.sourceReason =
-                  `${offenders.length} sentence(s) named a room the photo does not show; rewritten plan-side to their actual rooms`;
+                probe.narration.sourceReason = singleRepair
+                  ? `${offenders.length} sentence(s) named a room its photo does not show; rewritten plan-side from the actual photo (single-mismatch repair)`
+                  : `${offenders.length} sentence(s) named a room the photo does not show; rewritten plan-side to their actual rooms`;
                 normalizedPlan.narration = probe.narration;
                 normalizedPlan.narrationScript = probe.narrationScript;
                 adopted = true;
-                console.info(`[plan] narration ROOM-REPAIRED: ${offenders.length} sentence(s) rewritten to their actual rooms — the Director's monologue ships.`);
+                console.info(`[plan] narration ROOM-REPAIRED${singleRepair ? " (single mismatch)" : ""}: ${offenders.length} sentence(s) rewritten to their actual rooms — the Director's monologue ships.`);
               } else {
                 console.warn("[plan] narration room-repair rejected by re-validation — trying the ship-original fallback.");
               }
             }
           }
-          if (!adopted) {
+          // v62.106: the single-repair path already HAS an adopted director
+          // narration on the plan — when the repair can't run or is
+          // rejected, that narration simply ships as it would have before.
+          if (!adopted && singleRepair && offenders.length) {
+            console.warn(`[plan] single room contradiction ships as written — repair unavailable or rejected (${offenders.length} offender).`);
+          }
+          if (!adopted && roomDemoted) {
             const probe = { scenes: normalizedPlan.scenes };
             attachNarration(probe, parsed.narration, { targetDurationSec, roomMismatchPolicy: "warn", voiceId: planVoiceId });
             if (probe.narration && probe.narration.source === "director") {
@@ -3271,7 +3297,9 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
         `lines exist to derive from — shipping the Director's monologue rather than nothing`
       );
     } else if (contradictions.length === 1) {
-      warnings.push("1 sentence names a room its photo may not show — shipping as written");
+      // v62.106: no longer "shipping as written" — the handler routes a
+      // single contradiction through the room-repair lane after adoption.
+      warnings.push("1 sentence names a room its photo may not show — flagged for the single-mismatch repair lane");
     }
     if (setOffenses.length >= 1 && haveLinesToDeriveFrom && roomMismatchPolicy !== "warn") {
       errors.push(`${setOffenses.length} sentence(s) name a room the photo does not show anywhere in this cut`);

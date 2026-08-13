@@ -244,6 +244,20 @@ export async function qcSwapCandidatePhoto({ imageUrl, roomType, narrationText, 
   }
 }
 
+/* v62.107: the verdict/notes contradiction detector. Returns the first
+   note-sentence that DESCRIBES a textual element changing while every
+   artifact flag came back false, or null. Judged per sentence with a
+   negation guard so ordinary clean notes ("the house number appears
+   clearly", "text remains consistent") never trip it. */
+function qcNotesContradiction(notes) {
+  const TEXTUAL_RE = /\b(?:house\s+)?numbers?\b|\btext\b|\bdigits?\b|\blettering\b|\bsign(?:age)?\b|\baddress\b/i;
+  const CHANGE_RE = /\bchang(?:es?|ed|ing)\b|\bbecomes?\b|\bturn(?:s|ed)?\s+into\b|\bmorph\w*\b|\bwarp\w*\b|\bis\s+added\b|\bappears?\s+(?:in|on|across)\b/i;
+  const NEGATION_RE = /\b(?:no|not|none|never|without)\b|\bun-?changed\b|\bremains?\b|\bconsistent\b|\bstable\b|\bclearly\b/i;
+  return String(notes || "")
+    .split(/[.;]+/)
+    .find((s) => TEXTUAL_RE.test(s) && CHANGE_RE.test(s) && !NEGATION_RE.test(s)) || null;
+}
+
 /** Shared inspection core — used by the per-clip pass ("qc") and the
  *  final master sweep ("sweep"). v43. */
 async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, logTag = "qc", extraContext = "" }) {
@@ -487,6 +501,30 @@ async function runQcInspection({ frames, sourceImageUrl, sceneIndex, roomType, l
         console.info(`[${logTag}] scene ${sceneIndex + 1}: temporal flag on a legitimately-moving element ("${notes.slice(0, 70)}") — carve-out enforced, not an artifact.`);
       } else {
         reasons.push("temporal instability (texture boil between frames)");
+      }
+    }
+    // v62.107 (1212 Windrose, Aug 12): the model answered every artifact
+    // flag FALSE while its own notes read "The house number on the wall
+    // changes from 1312 to 1212" — a verdict/notes contradiction that
+    // sailed through as PASS. (In that delivered master the digits were
+    // frame-stable at 15fps sampling — likely a misread of the tiny
+    // vertical plaque — but the CLASS is real: had the note been accurate,
+    // morphing digits ship.) When the notes DESCRIBE a textual element
+    // changing, the booleans don't get the benefit of the doubt. Judged
+    // per note-sentence with a negation guard — same enforcement
+    // philosophy as the v50.7 flame carve-out: the model applies its own
+    // rules inconsistently, so code enforces them. The reason string
+    // contains "text" on purpose: the v60.7 scene-1 title-card override
+    // filters /text/i reasons, so an intentional address card can never
+    // be floored by this guard.
+    if (reasons.length === 0) {
+      const contradiction = qcNotesContradiction(verdict.notes);
+      if (contradiction) {
+        reasons.push("text artifacts (notes contradict the verdict)");
+        console.warn(
+          `[${logTag}] scene ${sceneIndex + 1}: verdict/notes CONTRADICTION — every flag false but the notes say ` +
+          `"${contradiction.trim().slice(0, 90)}" — treating as FAIL.`
+        );
       }
     }
     const pass = reasons.length === 0;

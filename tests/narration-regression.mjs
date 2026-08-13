@@ -672,7 +672,10 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
      fragments, a third fewer words, 21.8s on a 30s order. */
   check("v62.43: repairNarrationRooms exists and is called on room demotions",
     /async function repairNarrationRooms\(/.test(planSrc) &&
-    /await repairNarrationRooms\(parsed\.narration, offenders/.test(planSrc));
+    // v62.106 widened the lane: repairSource is parsed.narration on the
+    // demoted path and the adopted narration on the single-mismatch path.
+    /await repairNarrationRooms\(repairSource, offenders/.test(planSrc) &&
+    /repairSource = roomDemoted && parsed\?\.narration\?\.monologue/.test(planSrc));
   check("v62.43: repair failure ships the Director's ORIGINAL (warn policy), not derived",
     /roomMismatchPolicy: "warn"/.test(planSrc) &&
     /roomMismatchPolicy !== "warn"/.test(planSrc));
@@ -2284,6 +2287,68 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     planSrc.indexOf("filterDetailPhotoPool(allPhotos, visionPhotos, desiredScenes)") !== -1 &&
     planSrc.indexOf("filterDetailPhotoPool(allPhotos, visionPhotos, desiredScenes)") <
     planSrc.indexOf("const targetSceneCount = Math.min(allPhotos.length"));
+}
+
+/* ── v62.106: a SINGLE room contradiction rides the repair lane ──────────
+   Floramar redo #3 shipped "The primary bedroom is cozy and inviting"
+   over the BATHROOM: one contradiction was tolerated by design ("a
+   coin-flip on a classifier edge case") and shipped with a warning. The
+   deterministic mismatch data had already flagged it — the handler now
+   routes count==1 through repairNarrationRooms (with eyes) instead of
+   shipping the claim. */
+{
+  // The Floramar fixture: the mismatch detector MUST flag the shipped
+  // sentence over a bathroom-labeled photo. (roomMismatches was extracted
+  // by the v62.35 section above.)
+  const sents = [
+    { text: "Welcome to 4320 Floramar Terrace, a charming two-bedroom, one-bath home.", photos: ["p1"] },
+    { text: "The primary bedroom is cozy and inviting, with ample natural light.", photos: ["p2"] },
+    { text: "Schedule your private tour today.", photos: ["p5"] }
+  ];
+  const rooms = new Map([["p1", "exterior"], ["p2", "bathroom"], ["p5", "exterior"]]);
+  const hits = roomMismatches(sents, rooms);
+  check("v62.106 fixture: bedroom-over-bathroom is a detectable mismatch",
+    hits.length === 1 && hits[0].index === 1, JSON.stringify(hits));
+
+  check("wiring: single mismatches enter the repair lane",
+    planSrc.includes("const singleRepair = !roomDemoted && nar0") &&
+    planSrc.includes("repairNarrationRooms(repairSource, offenders"));
+  check("wiring: demoted-path fallback stays demoted-only",
+    planSrc.includes("if (!adopted && roomDemoted) {"));
+  check("wiring: single-repair failure ships the adopted narration with a warning",
+    planSrc.includes("single room contradiction ships as written"));
+  check("attach warning no longer claims shipping-as-written for singles",
+    !planSrc.includes("may not show — shipping as written") &&
+    planSrc.includes("flagged for the single-mismatch repair lane"));
+}
+
+/* ── v62.107: QC verdict/notes contradiction guard (1212 Windrose) ───────
+   Scene 8 PASSED with every flag false while the notes read "The house
+   number on the wall changes from 1312 to 1212". When the notes describe
+   a textual element changing, the booleans lose the benefit of the
+   doubt. */
+{
+  const qcSrc = fs.readFileSync(path.join(ROOT, "render-worker/src/veo-qc.mjs"), "utf8");
+  eval(`globalThis.qcNotesContradiction = ${grab(qcSrc, "qcNotesContradiction").replace(/^function \w+/, "function")}`);
+
+  check("qc guard: the shipped Windrose note trips it",
+    qcNotesContradiction("The house number on the wall changes from 1312 to 1212.") !== null);
+  check("qc guard: text-added phrasing trips it",
+    qcNotesContradiction("Text appears on the AC unit in frames 3 and 4.") !== null);
+  check("qc guard: clean consistency note is safe",
+    qcNotesContradiction("The video is consistent with the original photo.") === null);
+  check("qc guard: negated note is safe",
+    qcNotesContradiction("No text artifacts detected; the house number remains unchanged.") === null);
+  check("qc guard: 'appears clearly' is safe",
+    qcNotesContradiction("The house number appears clearly throughout the sequence.") === null);
+  check("qc guard: mixed note still trips on its bad sentence",
+    qcNotesContradiction("The scene is consistent overall. The address digits morph between frames.") !== null);
+  check("qc guard: non-textual change is not this guard's business",
+    qcNotesContradiction("The tree canopy changes shape slightly between frames.") === null);
+  check("qc wiring: guard runs only when every flag was false, reason carries 'text' for the title-card override",
+    qcSrc.includes("if (reasons.length === 0) {") &&
+    qcSrc.includes("qcNotesContradiction(verdict.notes)") &&
+    qcSrc.includes('reasons.push("text artifacts (notes contradict the verdict)")'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
