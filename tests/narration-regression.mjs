@@ -2248,6 +2248,44 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     planSrc.includes("context.includeNarration === false && baseScenes.length >= 4"));
 }
 
+/* ── v62.105: close-up photos stop becoming scenes (Troy, Aug 12) ────────
+   The Catherine render pushed into a stove-wall partial ("nothing to see
+   in frame"); vvasu gave a scene to a feature-wall shot. Two layers:
+   detail-classified photos are pool-filtered before the Director sees
+   them (deterministic, fail-open on scarce galleries), and the SCENE
+   DIVERSITY rules gain a NO CLOSE-UPS rule for the tight partials the
+   classifier labels as rooms. */
+{
+  eval(`globalThis.filterDetailPhotoPool = ${grab(planSrc, "filterDetailPhotoPool").replace(/^function \w+/, "function")}`);
+  const mk = (n, cat) => ({ id: `p${n}`, category: cat, fileName: `${n}.jpg` });
+
+  // Surplus gallery: details held back, vision list filtered consistently.
+  const all = [mk(1, "exterior"), mk(2, "kitchen"), mk(3, "detail"), mk(4, "living"), mk(5, "bedroom"), mk(6, "detail shot"), mk(7, "bathroom"), mk(8, "outdoor"), mk(9, "exterior"), mk(10, "kitchen")];
+  const vis = all.slice(0, 6);
+  const out = filterDetailPhotoPool(all, vis, 6);
+  check("pool filter: detail photos held back on a surplus gallery", out.dropped === 2 && out.allPhotos.length === 8);
+  check("pool filter: vision list filtered to the same pool",
+    out.visionPhotos.every((p) => !String(p.category).includes("detail")) && out.visionPhotos.length === 4);
+
+  // Scarce gallery: fail-open, details kept (7 non-detail < desired 8 + 1).
+  const scarce = filterDetailPhotoPool(all, vis, 8);
+  check("pool filter: scarce gallery keeps its detail shots", scarce.dropped === 0 && scarce.allPhotos.length === 10);
+
+  // No categories at all (older projects / some leads): untouched.
+  const uncat = filterDetailPhotoPool([mk(1, ""), mk(2, undefined), mk(3, "")], [], 4);
+  check("pool filter: uncategorized photos never treated as detail", uncat.dropped === 0 && uncat.allPhotos.length === 3);
+
+  check("prompt lint: NO CLOSE-UPS rule present in scene diversity",
+    planSrc.includes("NO CLOSE-UPS OR TIGHT PARTIALS"));
+  check("prompt lint: detail scenes no longer legitimized in narration guidance",
+    !planSrc.includes("For detail or repeat-room shots") &&
+    planSrc.includes("For repeat-room shots, narrate the small thing"));
+  check("wiring: pool filter runs before targetSceneCount",
+    planSrc.indexOf("filterDetailPhotoPool(allPhotos, visionPhotos, desiredScenes)") !== -1 &&
+    planSrc.indexOf("filterDetailPhotoPool(allPhotos, visionPhotos, desiredScenes)") <
+    planSrc.indexOf("const targetSceneCount = Math.min(allPhotos.length"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

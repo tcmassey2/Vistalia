@@ -1120,6 +1120,31 @@ export default async function handler(request, response) {
   }
 }
 
+/* ── v62.105: CLOSE-UP POOL FILTER ───────────────────────────────────────
+   Detail-classified photos are held back from the Director's candidate
+   list whenever the gallery keeps a full-room surplus (enough for the
+   plan plus one spare). Fail-open by design: a scarce gallery keeps its
+   detail shots — a thin tour beats a missing one — and photos without a
+   category (older projects, some lead imports) are never treated as
+   detail. The deterministic layer for what the classifier caught; the
+   NO CLOSE-UPS prompt rule handles tight partials it labeled as rooms. */
+function filterDetailPhotoPool(allPhotos, visionPhotos, desiredScenes) {
+  const all = Array.isArray(allPhotos) ? allPhotos : [];
+  const vision = Array.isArray(visionPhotos) ? visionPhotos : [];
+  const isDetail = (p) => String(p?.category || "").toLowerCase().includes("detail");
+  const nonDetail = all.filter((p) => !isDetail(p));
+  const dropped = all.length - nonDetail.length;
+  if (dropped === 0 || nonDetail.length < Math.max(4, Number(desiredScenes) || 4) + 1) {
+    return { allPhotos: all, visionPhotos: vision, dropped: 0 };
+  }
+  const keptIds = new Set(nonDetail.map((p) => p.id));
+  return {
+    allPhotos: nonDetail,
+    visionPhotos: vision.filter((p) => keptIds.has(p.id)),
+    dropped
+  };
+}
+
 function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedStyle, exportFormat, engine = "remotion", brandKit = {}, includeNarration = false, targetDurationSec = DEFAULT_TARGET_DURATION_SEC }) {
   // v24: target scene count is now duration-driven, not photo-count-driven.
   // 30s default = 6 Cinematic AI scenes (5s each) or 10-12 Quick Reel scenes
@@ -1134,6 +1159,24 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
   // blended 4.0s average.
   const secPerScene = avgSecPerScene({ engine });
   const desiredScenes = Math.round(clampedDuration / secPerScene);
+  // v62.105 (Troy, Aug 12: "stop the selection of close up photos… there is
+  // nothing to see in frame"): detail-classified photos never even reach
+  // the Director while the gallery holds enough full-room photos to fill
+  // the plan with slack. The per-photo classifier is the one layer that
+  // actually LOOKED at each image; the SCENE DIVERSITY prompt rule covers
+  // the tight partials it labels as rooms (the Catherine stove wall was
+  // classified "kitchen" — no category filter can catch those).
+  {
+    const pool = filterDetailPhotoPool(allPhotos, visionPhotos, desiredScenes);
+    if (pool.dropped > 0) {
+      allPhotos = pool.allPhotos;
+      visionPhotos = pool.visionPhotos;
+      console.info(
+        `[plan] close-up pool filter: ${pool.dropped} detail-classified photo(s) held back — ` +
+        `${allPhotos.length} full-room photo(s) cover the ${Math.max(4, desiredScenes)}-scene plan.`
+      );
+    }
+  }
   const targetSceneCount = Math.min(allPhotos.length, MAX_PLAN_SCENES, Math.max(4, desiredScenes));
 
   // Narration guidance: real estate listing videos sound more professional
@@ -1183,7 +1226,9 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
         `The agent's name is "${brandKit.fullName || "the listing agent"}", brokerage "${brandKit.brokerage || "their brokerage"}". Refer to them only on scene 1 and the outro CTA — don't repeat the name throughout.`,
         `Narration MUST stay grounded in the listing facts provided (price, beds, baths, sq ft, address) and what is visible in the photo. Never invent features, views, schools, or neighborhoods.`,
-        `For detail or repeat-room shots, narrate the small thing the viewer sees — finishes, fixtures, light quality. Short observations work great here.`
+        // v62.105: "detail or" dropped — that clause legitimized close-up
+        // scenes the selection rules now exclude. Repeat-room shots keep it.
+        `For repeat-room shots, narrate the small thing the viewer sees — finishes, fixtures, light quality. Short observations work great here.`
       ].join(" ")
     : "Do NOT include narrationLine on any scene.";
 
@@ -1216,7 +1261,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
               // listing whose water never got a scene). The tour is a
               // buyer's first walkthrough — every scene must earn its slot
               // by showing something NEW.
-              "SCENE DIVERSITY — HARD RULES: (1) At most TWO scenes may show the home's exterior/facade, and only one of those opens the video — a second exterior must reveal a genuinely different side (backyard, water frontage, pool). (2) Never give two scenes to the SAME room unless the gallery offers fewer distinct spaces than the scene count. (3) Utility spaces — laundry areas, garages, mechanical rooms, empty closets — are last-resort filler only; skip any photo where a washer/dryer, water heater, or storage racking is prominent unless nothing better exists. (4) THE HEADLINE ASSET RULE: identify the listing's single most marketable asset from the photos and facts — waterfront, pool, view, acreage, chef's kitchen, outdoor living — and give it a scene, always. A waterfront home whose video never shows the water has failed regardless of what else is in it. (5) Prefer the sharpest, highest-resolution version when near-duplicate shots exist.",
+              "SCENE DIVERSITY — HARD RULES: (1) At most TWO scenes may show the home's exterior/facade, and only one of those opens the video — a second exterior must reveal a genuinely different side (backyard, water frontage, pool). (2) Never give two scenes to the SAME room unless the gallery offers fewer distinct spaces than the scene count. (3) Utility spaces — laundry areas, garages, mechanical rooms, empty closets — are last-resort filler only; skip any photo where a washer/dryer, water heater, or storage racking is prominent unless nothing better exists. (4) THE HEADLINE ASSET RULE: identify the listing's single most marketable asset from the photos and facts — waterfront, pool, view, acreage, chef's kitchen, outdoor living — and give it a scene, always. A waterfront home whose video never shows the water has failed regardless of what else is in it. (5) Prefer the sharpest, highest-resolution version when near-duplicate shots exist. (6) NO CLOSE-UPS OR TIGHT PARTIALS: a photo dominated by a single appliance, fixture, counter section, or wall/decor detail — a stove wall, a backsplash, a shower panel, a feature wall, anything showing less than roughly half a room — is last-resort filler exactly like utility spaces: never select one while ANY unused full-room view remains, of any space. Camera motion makes tight framing tighter, so a partial shot ends the scene as a full close-up with nothing left for the voice to describe.",
               "Order the scenes as a professional property tour: exterior hero → entry → kitchen → living/great room → dining → primary bedroom → other bedrooms → bathrooms → outdoor/pool → neighborhood/amenities → detail/outro.",
               "Never invent property features, views, amenities, upgrades, materials, or room names.",
               "Only describe details visible in the image or user-provided listing facts.",
