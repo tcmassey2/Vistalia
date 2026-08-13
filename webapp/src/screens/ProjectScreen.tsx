@@ -284,10 +284,10 @@ function ListingDetailsCard() {
           onChange={(e) => setListing({ remarks: e.target.value })}
           rows={3}
           maxLength={1800}
-          placeholder="New roof 2024, deep-water dock with lift, chef's kitchen — anything the voiceover should work in."
+          placeholder="e.g. New roof 2024, deep-water dock with lift, chef's kitchen — the details you want the voiceover to work in."
           className="w-full rounded-lg bg-surface-input border border-edge px-3 py-2.5 text-sm placeholder:text-ink-dim focus:border-gold outline-none resize-y"
         />
-        <p className="text-[11px] text-ink-dim mt-1">The narrator weaves these in where the matching photo appears. Imports fill this automatically when the listing page has agent remarks.</p>
+        <p className="text-[11px] text-ink-dim mt-1">The narrator weaves these in where the matching photo appears. An import fills this from the listing’s agent remarks when the page has them — and tells you when it did, so anything here is yours to keep or edit.</p>
       </div>
     </div>
   );

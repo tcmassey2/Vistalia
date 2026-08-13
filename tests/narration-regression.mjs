@@ -1804,7 +1804,9 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     api96.includes("VITE_RADAR_PUBLISHABLE_KEY") &&
     api96.includes("if (!RADAR_KEY || query.trim().length < 4) return [];"));
   check("v62.96: imported agent remarks fill the listing without clobbering typed notes",
-    lli96.includes("remarks: listingNow.remarks || (facts.remarks ? String(facts.remarks) : \"\")") &&
+    // v62.101 refactor: same fill-if-empty contract, now via the hoisted
+    // importedRemarks const (identity fields moved to import-wins alongside).
+    lli96.includes("remarks: listingNow.remarks || importedRemarks") &&
     lli96.includes("remarks: facts.remarks ? String(facts.remarks) : \"\"") &&
     api96.includes("remarks?: string | null;"));
   check("v62.96: ListingDetails carries remarks end to end (type + empty default)",
@@ -2045,6 +2047,34 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.100: both render call sites honor the switch — off sends an empty kit, not the saved one",
     (ps.match(/brandKit: includeBranding \? branding : \{ fullName: "", brokerage: "", phone: "", email: "" \}/g) || []).length === 2 &&
     !ps.includes("brandKit: branding,"));
+}
+
+/* ── v62.101: import corrects the address + announces captured context ── */
+{
+  const ll = fs.readFileSync(path.join(ROOT, "webapp/src/components/ListingLinkImport.tsx"), "utf8");
+  const ps = fs.readFileSync(path.join(ROOT, "webapp/src/screens/ProjectScreen.tsx"), "utf8");
+
+  check("v62.101: import prefers the resolved canonical address/city over the typed search text",
+    ll.includes("address: importedAddr || listingNow.address") &&
+    ll.includes("city: importedCity || listingNow.city") &&
+    // the old keep-typed-address bug is gone
+    !ll.includes("address: listingNow.address || addr?.line"));
+  check("v62.101: soft facts still fill-if-empty and typed remarks are never clobbered",
+    ll.includes("price: listingNow.price || (facts.price") &&
+    ll.includes("remarks: listingNow.remarks || importedRemarks"));
+  check("v62.101: 'address corrected' ignores punctuation/case but catches real word changes",
+    ll.includes("const normAddr = (v: string) =>") &&
+    ll.includes("normAddr(importedAddr) !== normAddr(listingNow.address)") &&
+    !/\bter\b.*terrace/i.test(ll.split("normAddr = (v: string)")[1].split("\n").slice(0, 3).join(" ")));
+  check("v62.101: the completion toast reports the address set and whether remarks landed",
+    ll.includes("Address set to") &&
+    ll.includes("Listing selling points added to Voiceover notes") &&
+    ll.includes("No agent remarks found — add any selling points"));
+  check("v62.101: the remarks-added note only fires when the field was empty (no false 'added')",
+    ll.includes("const remarksAdded = Boolean(importedRemarks) && !listingNow.remarks.trim()"));
+  check("v62.101: the Voiceover-notes placeholder reads as an example, and the hint promises a heads-up",
+    ps.includes('placeholder="e.g. New roof 2024') &&
+    ps.includes("tells you when it did"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

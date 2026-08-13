@@ -24,6 +24,15 @@ import type { Photo } from "../lib/types";
 const isUrlish = (v: string) =>
   /^https?:\/\/\S+$/i.test(v) || /^(www\.)?(zillow|redfin|realtor|homes|trulia|compass|kw|exp)\S*\.\S+/i.test(v);
 
+// v62.101: address key used ONLY to decide whether the import actually
+// CHANGED the address (for the confirmation toast), never to gate the write.
+// Strips case, punctuation, and whitespace so a trailing period or casing
+// doesn't read as a "correction" — but a real word change ("Ter" → the
+// canonical "Terrace", or a different street/number) does, which is exactly
+// what Troy wants confirmed.
+const normAddr = (v: string) =>
+  String(v || "").toLowerCase().replace(/[.,#]/g, " ").replace(/\s+/g, " ").trim();
+
 export default function ListingLinkImport({ intoProject = false }: { intoProject?: boolean }) {
   const storeProjectId = useStore((s) => s.projectId);
   const listingNow = useStore((s) => s.listing);
@@ -272,19 +281,28 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
       setPhaseLabel("Opening your project…");
       const addr = result.address;
       const facts = result.facts || {};
+      const importedAddr = addr?.line || "";
+      const importedCity = [addr?.city, addr?.state].filter(Boolean).join(" ");
+      const importedRemarks = facts.remarks ? String(facts.remarks) : "";
+      // v62.101 (Troy, Floramar rerun): the resolved listing is authoritative
+      // about its OWN identity — a typed search string ("4320 Floramar Ter")
+      // gets corrected to the canonical line, and imported agent remarks land
+      // in Voiceover notes so the pulled context is visible, not silent. These
+      // drive the completion toast below so the agent knows exactly what stuck.
+      const addressCorrected = intoProject && Boolean(importedAddr) && normAddr(importedAddr) !== normAddr(listingNow.address);
+      const remarksAdded = Boolean(importedRemarks) && !listingNow.remarks.trim();
       if (intoProject) {
-        // Fill ONLY the fields the agent left empty — never clobber typed
-        // values. Photos append after whatever is already in the tray.
+        // Identity fields (address, city) reflect the resolved listing — an
+        // import IS a "pull this exact listing" action. Soft facts still fill
+        // only if the agent left them empty, and typed remarks are never lost.
         setListing({
-          address: listingNow.address || addr?.line || "",
-          city: listingNow.city || [addr?.city, addr?.state].filter(Boolean).join(" "),
+          address: importedAddr || listingNow.address || "",
+          city: importedCity || listingNow.city || "",
           price: listingNow.price || (facts.price ? String(facts.price) : ""),
           beds: listingNow.beds || (facts.beds != null ? String(facts.beds) : ""),
           baths: listingNow.baths || (facts.baths != null ? String(facts.baths) : ""),
           squareFeet: listingNow.squareFeet || (facts.sqft != null ? String(facts.sqft) : ""),
-          // v62.96: the page's agent remarks feed the voiceover's selling
-          // points (v62.94 MINE THE REMARKS). Same never-clobber rule.
-          remarks: listingNow.remarks || (facts.remarks ? String(facts.remarks) : "")
+          remarks: listingNow.remarks || importedRemarks
         });
         addPhotos(finalPhotos);
       } else {
@@ -341,16 +359,23 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
       // v62.60: an account-level verdict (credits gone, concurrency
       // saturated) outranks the per-tier symptom it caused.
       const failNote = serverWarnings.find((w) => /CREDITS EXHAUSTED|concurrency saturated/.test(w)) || serverWarnings[0] || "";
+      // v62.101: say out loud what the import did to the two fields agents
+      // second-guess — so nobody re-types context that's already captured, or
+      // ships the search string they typed as the on-screen address.
+      const addressNote = addressCorrected ? ` Address set to “${importedAddr}”.` : "";
+      const contextNote = remarksAdded
+        ? " Listing selling points added to Voiceover notes below."
+        : (importedRemarks ? "" : " No agent remarks found — add any selling points in Voiceover notes.");
       setToast(
         finalPhotos.length > 0
           ? shortfallNote
-            ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${planNote}. ${shortfallNote}`
-            : `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote}${planNote} — review and render.`
+            ? `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${planNote}.${addressNote}${contextNote} ${shortfallNote}`
+            : `Imported ${photos.length} photo${photos.length === 1 ? "" : "s"}${curatedNote}${planNote}.${addressNote}${contextNote} Review and render.`
           : planNote
-            ? `Listing details imported${planNote} — no usable photos, so add your own and render.`
+            ? `Listing details imported${planNote}.${addressNote}${contextNote} No usable photos, so add your own and render.`
             : failNote
               ? `Listing details imported, but the photos didn't make it: ${failNote}`
-              : "Listing details imported — add your photos and render."
+              : `Listing details imported.${addressNote}${contextNote} Add your photos and render.`
       );
 
       // v62.24: the diversity pass, off the critical path. Deliberately not
