@@ -2096,6 +2096,158 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     imp.includes("SUFFIX_EXPAND[key] || tok"));
 }
 
+/* ── v62.103: the SPOKEN address + noun-less room tails ──────────────────
+   Two renders on Aug 12 shipped mangled speech: "Welcome to 4320 Flora
+   Marteur" (the abbreviated "Ter" fed to ElevenLabs on Troy's Floramar
+   make-right) and "N43 45th Road" (Pryor OK — the bare directional jammed
+   into the ordinal). Plus Pretoria's noun-less tail "the spacious
+   living." on the shipped audio. These fixtures are permanent. */
+{
+  const reLine = planSrc.slice(planSrc.indexOf("const SPOKEN_FULL_SUFFIX_RE"));
+  eval(`globalThis.SPOKEN_FULL_SUFFIX_RE = ${reLine.slice(reLine.indexOf("=") + 1, reLine.indexOf(";")).trim()}`);
+  eval(`globalThis.spokenAddressMaps = ${grab(planSrc, "spokenAddressMaps").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.speakableAddressLine = ${grab(planSrc, "speakableAddressLine").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.repairSpokenAddressText = ${grab(planSrc, "repairSpokenAddressText").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.repairNounlessRoomTails = ${grab(planSrc, "repairNounlessRoomTails").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.applySpokenTextRepairs = ${grab(planSrc, "applySpokenTextRepairs").replace(/^function \w+/, "function")}`);
+
+  // The two shipped defects, verbatim.
+  check("spoken addr: Floramar Ter → Terrace (the make-right blocker)",
+    speakableAddressLine("4320 Floramar Ter") === "4320 Floramar Terrace",
+    `got "${speakableAddressLine("4320 Floramar Ter")}"`);
+  check("spoken addr: N 4345th Rd → North 4345th Road (Pryor jam)",
+    speakableAddressLine("1021 N 4345th Rd") === "1021 North 4345th Road",
+    `got "${speakableAddressLine("1021 N 4345th Rd")}"`);
+  // Ordinals stay digits — captions mirror narration through forced
+  // alignment; a spelled ordinal would be 3 caption words for 1 token.
+  check("spoken addr: ordinal digits preserved",
+    speakableAddressLine("33578 E 160th Ave").includes("160th"));
+  check("spoken addr: directional expands with a real street name present",
+    speakableAddressLine("2812 N Havenwood Way") === "2812 North Havenwood Way",
+    `got "${speakableAddressLine("2812 N Havenwood Way")}"`);
+  // Sacramento's "E St": the directional IS the street name — "E" must not
+  // become "East" (the suffix still expands; "E Street" is the spoken form).
+  check("spoken addr: bare 'E St' keeps its E, expands Street",
+    speakableAddressLine("1021 E St") === "1021 E Street",
+    `got "${speakableAddressLine("1021 E St")}"`);
+  // v62.102's Saint guard, same rule here: only the LAST suffix token.
+  check("spoken addr: St James Ct keeps Saint, expands Court",
+    speakableAddressLine("12 St James Ct") === "12 St James Court",
+    `got "${speakableAddressLine("12 St James Ct")}"`);
+  check("spoken addr: unit designator expands (Darlington Apt 101)",
+    speakableAddressLine("11907 Darlington Ave Apt 101") === "11907 Darlington Avenue Apartment 101",
+    `got "${speakableAddressLine("11907 Darlington Ave Apt 101")}"`);
+  check("spoken addr: already-expanded line is untouched",
+    speakableAddressLine("4320 Floramar Terrace") === "4320 Floramar Terrace");
+  check("spoken addr: city tail after comma passes through",
+    speakableAddressLine("4320 Floramar Ter, New Port Richey, FL") === "4320 Floramar Terrace, New Port Richey, FL",
+    `got "${speakableAddressLine("4320 Floramar Ter, New Port Richey, FL")}"`);
+
+  check("addr repair: hook sentence normalized",
+    repairSpokenAddressText("Welcome to 4320 Floramar Ter.", "4320 Floramar Ter") === "Welcome to 4320 Floramar Terrace.",
+    `got "${repairSpokenAddressText("Welcome to 4320 Floramar Ter.", "4320 Floramar Ter")}"`);
+  check("addr repair: tag-tolerant inside the monologue span",
+    repairSpokenAddressText("Welcome to 4320 [warm] Floramar Ter.", "4320 Floramar Ter") === "Welcome to 4320 Floramar Terrace.");
+  check("addr repair: already-expanded text rewrites to itself",
+    repairSpokenAddressText("Welcome to 4320 Floramar Terrace.", "4320 Floramar Ter") === "Welcome to 4320 Floramar Terrace.");
+  check("addr repair: no-op when the stored line needs nothing",
+    repairSpokenAddressText("Welcome to 9803 North 65th Place.", "9803 North 65th Place") === "Welcome to 9803 North 65th Place.");
+  check("addr repair: unrelated text untouched",
+    repairSpokenAddressText("The kitchen features white cabinetry.", "4320 Floramar Ter") === "The kitchen features white cabinetry.");
+
+  // Pretoria's shipped audio, verbatim.
+  check("tail repair: 'the spacious living.' gains its noun",
+    repairNounlessRoomTails("Natural light fills the spacious living.") === "Natural light fills the spacious living area.",
+    `got "${repairNounlessRoomTails("Natural light fills the spacious living.")}"`);
+  check("tail repair: bare 'the dining.' gains its noun",
+    repairNounlessRoomTails("Enjoy meals in the dining.") === "Enjoy meals in the dining area.");
+  // Lifestyle idioms are complete noun phrases and must survive.
+  check("tail repair: 'easy Florida living.' survives (the Floramar close)",
+    repairNounlessRoomTails("Peaceful waterfront days and easy Florida living.") === "Peaceful waterfront days and easy Florida living.");
+  check("tail repair: 'the easy Florida living.' survives (capitalized guard)",
+    repairNounlessRoomTails("Enjoy the easy Florida living.") === "Enjoy the easy Florida living.");
+  check("tail repair: no article, no repair ('Enjoy outdoor living.')",
+    repairNounlessRoomTails("Enjoy outdoor living.") === "Enjoy outdoor living.");
+  check("tail repair: living room named normally is untouched",
+    repairNounlessRoomTails("The living room glows at dusk.") === "The living room glows at dusk.");
+
+  // Whole-narration repair keeps sentences ↔ monologue reconstructable.
+  const nar = {
+    monologue: "Welcome to 4320 [warm] Floramar Ter. Natural light fills the spacious living. Schedule your tour today.",
+    direction: "warm",
+    source: "director",
+    sentences: [
+      { text: "Welcome to 4320 Floramar Ter.", photos: ["p1"] },
+      { text: "Natural light fills the spacious living.", photos: ["p2"] },
+      { text: "Schedule your tour today.", photos: ["p3"] }
+    ]
+  };
+  const res = applySpokenTextRepairs(nar, "4320 Floramar Ter");
+  check("narration repair: address + tail both applied",
+    res.addressRepaired === 1 && res.tailRepaired === 1,
+    `got ${JSON.stringify(res)}`);
+  check("narration repair: sentence text normalized",
+    nar.sentences[0].text === "Welcome to 4320 Floramar Terrace." &&
+    nar.sentences[1].text === "Natural light fills the spacious living area.");
+  check("narration repair: monologue matches (alignment-safe)",
+    nar.monologue.includes("Floramar Terrace.") && nar.monologue.includes("living area."),
+    `got "${nar.monologue}"`);
+  const detagNorm = (t) => String(t).replace(/\[[^\][\n]{1,40}\]/g, " ").toLowerCase().replace(/[^a-z0-9']+/gi, " ").replace(/\s+/g, " ").trim();
+  check("narration repair: sentences still reconstruct the monologue",
+    detagNorm(nar.sentences.map((s) => s.text).join(" ")) === detagNorm(nar.monologue));
+  // Pre-diverged narration must be left alone (validate-and-revert).
+  const broken = {
+    monologue: "A completely different monologue about the home.",
+    sentences: [{ text: "Welcome to 4320 Floramar Ter.", photos: ["p1"] }]
+  };
+  const res2 = applySpokenTextRepairs(broken, "4320 Floramar Ter");
+  check("narration repair: reverts when sentences can't reconstruct the monologue",
+    res2.addressRepaired === 0 && broken.sentences[0].text === "Welcome to 4320 Floramar Ter.");
+
+  check("prompt lint: the Director is handed the speech-ready address",
+    planSrc.includes("THE SPOKEN ADDRESS"));
+  check("wiring: attach-time repair reads the intro card headline",
+    planSrc.includes("applySpokenTextRepairs(narration, plan?.introCard?.headline"));
+  check("wiring: post-rewrite repair runs after smoothing/expansion/trim",
+    planSrc.includes("applySpokenTextRepairs(normalizedPlan.narration, addrForSpeech)"));
+}
+
+/* ── v62.104: voiceless scene-adjacency clamp (Amy Schrader) ─────────────
+   First voiceless lead render: ~six kitchen scenes back-to-back, no
+   narration to mask it. The clamp reorders middle scenes on VOICELESS
+   plans only — voiced scene order is narration-bound and untouchable. */
+{
+  eval(`globalThis.interleaveSameRoomScenes = ${grab(planSrc, "interleaveSameRoomScenes").replace(/^function \w+/, "function")}`);
+  const mk = (rooms) => rooms.map((r, i) => ({ photoId: `p${i}`, roomType: r, order: i + 1 }));
+  const rooms = (arr) => arr.map((s) => s.roomType).join(",");
+
+  // The Amy shape: exterior, 6× kitchen, living, exterior.
+  const amy = mk(["exterior", "kitchen", "kitchen", "kitchen", "kitchen", "kitchen", "kitchen", "living", "exterior"]);
+  const out = interleaveSameRoomScenes(amy);
+  check("interleave: fires on the Amy shape", out.changed === true);
+  check("interleave: run shrinks", out.after < out.before, `before ${out.before} after ${out.after}`);
+  check("interleave: hero fixed", out.scenes[0].photoId === "p0");
+  check("interleave: closer fixed", out.scenes[out.scenes.length - 1].photoId === "p8");
+  check("interleave: same multiset of scenes",
+    [...out.scenes].map((s) => s.photoId).sort().join(",") === amy.map((s) => s.photoId).sort().join(","));
+  // Stability: kitchens keep their relative order.
+  const kitchenIds = out.scenes.filter((s) => s.roomType === "kitchen").map((s) => s.photoId).join(",");
+  check("interleave: stable within a room class", kitchenIds === "p1,p2,p3,p4,p5,p6", kitchenIds);
+
+  // A healthy alternating tour is untouched.
+  const healthy = mk(["exterior", "kitchen", "living", "bedroom", "bathroom", "outdoor"]);
+  check("interleave: healthy tour unchanged", interleaveSameRoomScenes(healthy).changed === false);
+  // A deliberate wide+detail pair (run of 2) is film grammar — untouched.
+  const pair = mk(["exterior", "kitchen", "kitchen", "living", "outdoor"]);
+  check("interleave: run of 2 untouched", interleaveSameRoomScenes(pair).changed === false);
+  // Degenerate all-same-room gallery: nothing to interleave with.
+  const mono = mk(["kitchen", "kitchen", "kitchen", "kitchen"]);
+  check("interleave: all-one-room returns unchanged", interleaveSameRoomScenes(mono).changed === false);
+
+  check("wiring: clamp gated to voiceless plans",
+    planSrc.includes("context.includeNarration === false && baseScenes.length >= 4"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

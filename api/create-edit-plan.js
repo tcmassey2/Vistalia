@@ -1026,6 +1026,23 @@ export default async function handler(request, response) {
         }
       }
     }
+    // v62.103: the smoothing/expansion/trim rewrites above carry
+    // listingDetails in their prompts and can reintroduce the raw
+    // abbreviated address — run the spoken-text normalization LAST, after
+    // every rewrite, so what ships is what the voice can say. Voiceless
+    // plans have no narration object and skip this entirely.
+    if (normalizedPlan.narration) {
+      const addrForSpeech = String(listingDetails?.address || normalizedPlan?.introCard?.headline || "");
+      const lateRepairs = applySpokenTextRepairs(normalizedPlan.narration, addrForSpeech);
+      if (lateRepairs.addressRepaired || lateRepairs.tailRepaired) {
+        normalizedPlan.narrationScript = stripNarrationAudioTags(normalizedPlan.narration.monologue);
+        console.info(
+          `[plan] SPOKEN-TEXT repair (post-rewrite): "${String(addrForSpeech).split(",")[0]}" → ` +
+          `"${speakableAddressLine(addrForSpeech).split(",")[0]}" — ${lateRepairs.addressRepaired} span(s), ` +
+          `${lateRepairs.tailRepaired} tail(s).`
+        );
+      }
+    }
     // v32 observability: make the continuous script's presence LOUD in the
     // function logs — its absence was silent for a full smoke-test round.
     // v62.25: the word count alone couldn't explain the 39-word render — the
@@ -1152,6 +1169,15 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
         // were sitting in listingDetails unread. Facts make the hook
         // concrete; remarks carry the selling points no photo can show.
         `USE THE LISTING FACTS: when listingDetails carries beds/baths/sqft, weave them naturally into the opening two sentences ("…a four-bedroom, three-bath home with just under 2,900 square feet"). Speak the price ONLY when the style is MLS or Investor — luxury tours leave price unspoken. When yearBuilt or lotSize is present and notable (new construction, acreage), one of them may earn a mention where it fits.`,
+        // v62.103 (Floramar "Ter" / Pryor "N 4345th"): the model copies the
+        // stored address verbatim into the hook, abbreviations included, and
+        // ElevenLabs reads "Ter" as a word and jams bare directionals into
+        // ordinals. Hand it the speech-ready form up front; the deterministic
+        // repair after attach is the enforcement layer (prompts are soft).
+        ...(String(listingDetails?.address || "").trim() &&
+            speakableAddressLine(String(listingDetails.address)) !== String(listingDetails.address).trim()
+          ? [`THE SPOKEN ADDRESS: say the street line exactly as "${speakableAddressLine(String(listingDetails.address))}" — never voice abbreviations ("Ter", "Rd", a bare "N"/"S"/"E"/"W"); expanded words only.`]
+          : []),
         `MINE THE REMARKS: listingDetails.remarks, when present, is the AGENT'S OWN listing copy — the definitive source for what makes this home special. Pull the 2-3 most concrete selling points (upgrades, materials, water/view/lot, renovations with years) and voice each one in the sentence whose photo best matches it. Remarks-sourced facts may be spoken even when the photo cannot show them (a new roof, a half-acre lot) — but never say anything the remarks and photos both fail to support, and never copy whole remark sentences verbatim; rewrite them in the tour's voice.`,
         `FAIR HOUSING — ABSOLUTE: never mention schools, school districts, school ratings, neighborhood demographics, crime, safety, "family-friendly", religious facilities, or who lives nearby. Not even when the remarks do. Location facts anchored to the PROPERTY are fine (waterfront, golf-course lot, corner lot, cul-de-sac).`,
         `Scene 1 is the intro — name the property briefly. The FINAL scene is the CTA — keep it short and punchy (≤8 words) so it finishes cleanly BEFORE the closing brand card ("Schedule your private tour today"). Middle scenes describe what's on screen.`,
@@ -2522,6 +2548,172 @@ function narrationWordBudget(targetDurationSec, voiceId) {
   return Math.max(30, Math.round((t + 1 - SPEECH_PAD_SEC - stops * m.secPerStop) / m.secPerWord));
 }
 
+/* ── v62.103: THE SPOKEN ADDRESS (Floramar "Ter" / Pryor "N 4345th") ────
+   Two renders in one day shipped a mangled street line. Troy's Floramar
+   make-right opened "Welcome to 4320 Flora Marteur" — the project carried
+   the Zillow slug's abbreviated suffix and ElevenLabs read "Ter" as a
+   word — and Pryor OK shipped "N43 45th Road", the bare directional
+   jammed into the ordinal. v62.102 expands the suffix at IMPORT for new
+   projects; every EXISTING project, typed address, and lead record still
+   carries abbreviations, so the durable fix is here at plan time, on the
+   speech side. Measured on the shipped audio: ElevenLabs self-expands
+   "Rd"→"Road" but chokes on directionals and abbreviated suffixes.
+   Ordinals stay digits ("4345th") ON PURPOSE — captions mirror narration
+   word-for-word through forced alignment, and a spelled-out ordinal would
+   caption as three words against one spoken token. Separating the
+   directional is what un-jams the observed failure. */
+function spokenAddressMaps() {
+  return {
+    dirs: { n: "North", s: "South", e: "East", w: "West", ne: "Northeast", nw: "Northwest", se: "Southeast", sw: "Southwest" },
+    suffixes: {
+      rd: "Road", st: "Street", dr: "Drive", ln: "Lane", ct: "Court", ave: "Avenue",
+      blvd: "Boulevard", cir: "Circle", pl: "Place", ter: "Terrace", trl: "Trail",
+      pkwy: "Parkway", hwy: "Highway", sq: "Square", cv: "Cove", pt: "Point",
+      bnd: "Bend", xing: "Crossing", aly: "Alley"
+    },
+    units: { apt: "Apartment", ste: "Suite", no: "Number", num: "Number" }
+  };
+}
+
+// Full-word suffixes a street line may already carry — used only to LOCATE
+// the suffix token, never to rewrite it.
+const SPOKEN_FULL_SUFFIX_RE = /^(road|street|drive|lane|court|avenue|boulevard|circle|place|terrace|trail|parkway|highway|square|cove|point|bend|crossing|alley|way|run|walk|path|pass|row|loop)$/i;
+
+function speakableAddressLine(rawLine) {
+  const line = String(rawLine || "").trim();
+  if (!line) return line;
+  const { dirs, suffixes, units } = spokenAddressMaps();
+  // Operate on the street segment only — everything before the first comma
+  // (city/state/zip tails pass through untouched).
+  const commaIdx = line.indexOf(",");
+  const street = commaIdx === -1 ? line : line.slice(0, commaIdx);
+  const rest = commaIdx === -1 ? "" : line.slice(commaIdx);
+  const tokens = street.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return line;
+  const keyOf = (t) => t.replace(/\.+$/, "").toLowerCase();
+  // The LAST suffix-looking token is the street suffix — v62.102's rule:
+  // "St James Ct" keeps its Saint "St"; only the final "Ct" expands.
+  let suffixIdx = -1;
+  for (let i = 1; i < tokens.length; i++) {
+    const k = keyOf(tokens[i]);
+    if (suffixes[k] || SPOKEN_FULL_SUFFIX_RE.test(tokens[i].replace(/\.+$/, ""))) suffixIdx = i;
+  }
+  const out = tokens.map((t, i) => {
+    const key = keyOf(t);
+    if (i === suffixIdx && suffixes[key]) return suffixes[key];
+    if (units[key] && i > 0 && /\d/.test(tokens[i + 1] || "")) return units[key];
+    if (dirs[key] && i > 0) {
+      // "1021 E St": the directional IS the whole street name (nothing
+      // between the house number and the suffix) — leave it alone.
+      if (i === 1 && suffixIdx === 2) return t;
+      return dirs[key];
+    }
+    return t;
+  });
+  return out.join(" ") + rest;
+}
+
+// Deterministic backstop: the Director copies the STORED address verbatim
+// into its hook no matter what the prompt asks, so normalize any literal
+// occurrence of the raw street line inside narration text. Tag-tolerant —
+// the monologue may carry [warm]-style audio tags between words. The
+// matcher accepts each token in abbreviated OR expanded form, so already-
+// correct text rewrites to itself and the caller sees no change.
+function repairSpokenAddressText(text, rawLine) {
+  const src = String(text || "");
+  const street = String(rawLine || "").split(",")[0].trim();
+  if (!src || !street) return src;
+  const spokenStreet = speakableAddressLine(street);
+  if (spokenStreet === street) return src;
+  const { dirs, suffixes, units } = spokenAddressMaps();
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const alts = (tok) => {
+    const bare = tok.replace(/\.+$/, "");
+    const key = bare.toLowerCase();
+    const set = new Set([esc(bare)]);
+    if (suffixes[key]) set.add(esc(suffixes[key]));
+    if (dirs[key]) set.add(esc(dirs[key]));
+    if (units[key]) set.add(esc(units[key]));
+    // Longest first — regex alternation is ordered, and "Ter" before
+    // "Terrace" would match inside the already-expanded word.
+    return `(?:${[...set].sort((a, b) => b.length - a.length).join("|")})\\.?`;
+  };
+  const sep = "(?:\\s+(?:\\[[^\\]\\n]{1,40}\\]\\s+)?)";
+  let pattern;
+  try {
+    const parts = street.split(/\s+/).filter(Boolean).map(alts);
+    // The FINAL token must not consume the sentence's own period —
+    // "Floramar Ter." at sentence end would lose it (the integrity gate
+    // normalizes punctuation and can't see that). \b instead of \.?: the
+    // alternative "Ter" must not match inside an already-expanded
+    // "Terrace" either.
+    parts[parts.length - 1] = parts[parts.length - 1].replace(/\\\.\?$/, "") + "\\b";
+    pattern = new RegExp(parts.join(sep), "i");
+  } catch {
+    return src; // an address that breaks regex construction ships as-is
+  }
+  return src.replace(pattern, spokenStreet);
+}
+
+/* ── v62.103: NOUN-LESS ROOM TAILS (Pretoria: "the spacious living.") ───
+   The shipped Pretoria audio says "Natural light fills the spacious
+   living." — "living" used as a noun with the noun amputated. The clamp's
+   HANGING_ADJ list can't carry living/dining (stripping them would gut
+   "easy Florida living"), so this is a REPAIR, not a strip: a terminal
+   living/dining preceded by an article (+ at most one lowercase adjective)
+   gains its noun — "the spacious living." → "the spacious living area."
+   Lifestyle idioms survive: a capitalized or lifestyle word before
+   living/dining ("Florida living", "country living") is a complete noun
+   phrase and stays. Wrong repair is worse than a soft miss (v62.76's
+   doctrine) — everything ambiguous is left alone. Applied identically to
+   sentences and monologue (boundary lookahead), so alignment never sees
+   the two diverge; applySpokenTextRepairs gates adoption on equality. */
+function repairNounlessRoomTails(text) {
+  return String(text || "").replace(
+    /\b(the|a|an)(\s+[A-Za-z][a-z-]*)?(\s+)(living|dining)(?=[.!?])/g,
+    (full, art, adj, sp, word) => {
+      const between = (adj || "").trim();
+      if (between && (/^[A-Z]/.test(between) ||
+        /^(florida|country|city|urban|coastal|desert|resort|lakefront|waterfront|luxury|outdoor|indoor|everyday|easy|al|fresco|gracious|southern)$/i.test(between))) {
+        return full;
+      }
+      return `${art}${adj || ""}${sp}${word} area`;
+    }
+  );
+}
+
+// One entry point for both v62.103 text repairs, with the file's
+// validate-and-revert contract: the repaired sentences must still
+// reconstruct the repaired monologue (forced alignment reads both, and a
+// one-word divergence smears the captions), else the WHOLE repair reverts.
+function applySpokenTextRepairs(narration, rawAddrLine) {
+  const none = { addressRepaired: 0, tailRepaired: 0 };
+  if (!narration || !Array.isArray(narration.sentences) || !narration.sentences.length) return none;
+  const detag = (t) => String(t || "").replace(/\[[^\][\n]{1,40}\]/g, " ");
+  const normalize = (t) => detag(t).toLowerCase().replace(/[^a-z0-9']+/gi, " ").replace(/\s+/g, " ").trim();
+  let addressRepaired = 0;
+  let tailRepaired = 0;
+  const fixText = (text) => {
+    const addr = repairSpokenAddressText(text, rawAddrLine);
+    if (addr !== text) addressRepaired += 1;
+    const tailed = repairNounlessRoomTails(addr);
+    if (tailed !== addr) tailRepaired += 1;
+    return tailed;
+  };
+  const candSentences = narration.sentences.map((s) => ({ ...s, text: fixText(s.text) }));
+  const sentenceChanges = addressRepaired + tailRepaired;
+  const candMonologue = repairNounlessRoomTails(repairSpokenAddressText(narration.monologue, rawAddrLine));
+  if (!sentenceChanges && candMonologue === narration.monologue) return none;
+  const joined = candSentences.map((s) => s.text).join(" ");
+  if (normalize(joined) !== normalize(candMonologue)) {
+    console.warn("[plan] spoken-text repair reverted — sentences/monologue diverged (audio tag inside the repaired span?); shipping the original text.");
+    return none;
+  }
+  narration.sentences = candSentences;
+  narration.monologue = candMonologue;
+  return { addressRepaired, tailRepaired };
+}
+
 function roomTypesNamedIn(text) {
   // v62.40 (audit P2, now seen in production twice): two phrase families
   // read as room claims when they claim nothing about THIS photo —
@@ -3107,6 +3299,20 @@ function attachNarration(plan, rawNarration, { targetDurationSec = 30, roomMisma
     narration = deriveFromLines("narration object absent");
   }
 
+  // v62.103: normalize the SPOKEN street line + repair noun-less room
+  // tails on whatever narration is about to ship — director, derived (the
+  // "Welcome to ${addrLine}" hook above copies the abbreviated intro-card
+  // headline), thin-upgrade, or stock fallback lines. The raw address
+  // rides the intro card on every plan.
+  if (narration) {
+    const spokenRepairs = applySpokenTextRepairs(narration, plan?.introCard?.headline || "");
+    if (spokenRepairs.addressRepaired || spokenRepairs.tailRepaired) {
+      console.info(
+        `[plan] SPOKEN-TEXT repair: ${spokenRepairs.addressRepaired} address span(s) normalized for speech, ` +
+        `${spokenRepairs.tailRepaired} noun-less room tail(s) completed.`
+      );
+    }
+  }
   if (narration) {
     plan.narration = narration;
     // Old-worker compat: narrationScript mirrors the clean monologue.
@@ -3480,6 +3686,53 @@ function snapDurationsToBeat(durations, grid, unit) {
   return out;
 }
 
+/* ── v62.104: VOICELESS SCENE-ADJACENCY CLAMP (Amy Schrader, Aug 12) ────
+   The first post-v62.93 voiceless lead render shipped ~six kitchen shots
+   back-to-back: SELECTION DIVERSITY is a prompt rule, the Director only
+   SEES the first vision-limit photos, and a music-only render has no
+   narration to mask a monotone stretch. Prompts are soft (v62.14's law) —
+   this is the hard clamp, and it runs ONLY on voiceless plans: a voiced
+   plan's scene order is bound to its narration and must not be shuffled.
+   First and last scenes hold their slots (hero + closer — the same pair
+   the scene-budget trim protects). Greedy + stable: a scene that matches
+   its predecessor's roomType defers to the EARLIEST different-room scene
+   still waiting; relative order within a room class never changes; if
+   only one class remains, it runs as-is. Reordering happens BEFORE
+   cadence/beat work so durations follow the new order. Runs of 2 are
+   deliberate film grammar (wide + detail) and are left alone — the clamp
+   fires on runs of 3+. */
+function interleaveSameRoomScenes(scenes) {
+  const n = Array.isArray(scenes) ? scenes.length : 0;
+  const room = (s) => String(s?.roomType || "?");
+  const runLen = (arr) => {
+    let best = 1;
+    let cur = 1;
+    for (let i = 1; i < arr.length; i++) {
+      cur = room(arr[i]) === room(arr[i - 1]) ? cur + 1 : 1;
+      if (cur > best) best = cur;
+    }
+    return best;
+  };
+  const before = runLen(scenes || []);
+  if (n < 4 || before < 3) return { scenes, changed: false, before, after: before };
+  const out = [scenes[0]];
+  const pool = scenes.slice(1, n - 1);
+  const closerRoom = room(scenes[n - 1]);
+  while (pool.length) {
+    const prevRoom = room(out[out.length - 1]);
+    // The last middle slot also tries to differ from the fixed closer.
+    const lastSlot = pool.length === 1;
+    let pick = pool.findIndex((s) => room(s) !== prevRoom && (!lastSlot || room(s) !== closerRoom));
+    if (pick === -1) pick = pool.findIndex((s) => room(s) !== prevRoom);
+    if (pick === -1) pick = 0;
+    out.push(pool.splice(pick, 1)[0]);
+  }
+  out.push(scenes[n - 1]);
+  const after = runLen(out);
+  if (after >= before) return { scenes, changed: false, before, after: before };
+  return { scenes: out, changed: true, before, after };
+}
+
 function normalizeEditPlan(plan, photos, context) {
   const photoIds = new Set(photos.map((photo) => photo.id));
   const engine = RENDER_ENGINES.includes(context.engine) ? context.engine : "remotion";
@@ -3605,6 +3858,22 @@ function normalizeEditPlan(plan, photos, context) {
       rawNarration: cleanText(scene.narrationLine || "", 240)
       };
     });
+
+  // v62.104: voiceless plans only — reorder same-room runs before any
+  // duration/beat math so a music-only tour never sits on one room for
+  // six straight scenes (Amy Schrader, the first voiceless lead render).
+  if (context.includeNarration === false && baseScenes.length >= 4) {
+    const interleaved = interleaveSameRoomScenes(baseScenes);
+    if (interleaved.changed) {
+      const reordered = interleaved.scenes.map((s, i) => ({ ...s, order: i + 1 }));
+      baseScenes.length = 0;
+      baseScenes.push(...reordered);
+      console.info(
+        `[plan] voiceless scene diversity: longest same-room run ${interleaved.before} → ${interleaved.after} — ` +
+        `middle scenes interleaved (hero + closer fixed).`
+      );
+    }
+  }
 
   // v44.1: when the cadence was stretched (photo-limited long render), lift
   // each planned duration to the stretched cadence BEFORE snapping — the AI
