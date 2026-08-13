@@ -2077,6 +2077,25 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     ps.includes("tells you when it did"));
 }
 
+/* ── v62.102: expand the abbreviated street suffix from portal slugs ── */
+{
+  const imp = fs.readFileSync(path.join(ROOT, "api/import-listing.js"), "utf8");
+  check("v62.102: the parser carries a street-suffix expansion map incl. ter→terrace",
+    imp.includes("const SUFFIX_EXPAND = {") &&
+    imp.includes('ter: "terrace"') &&
+    imp.includes('st: "street"') &&
+    imp.includes("function expandSuffixToken(tok)"));
+  check("v62.102: splitSlugAddress expands the known suffix token before the unit logic",
+    imp.includes("if (suffixIdx >= 0) tokens[suffixIdx] = expandSuffixToken(tokens[suffixIdx]);"));
+  check("v62.102: redfin + realtor slug branches expand their final suffix word",
+    (imp.match(/expandLineSuffix\(/g) || []).length >= 2 &&
+    imp.includes("titleCase(expandLineSuffix("));
+  check("v62.102: only the known suffix token is expanded — leading 'St' (Saint) is left alone",
+    // the expander keys off SUFFIX_EXPAND, never a blanket replace of 'st'
+    !imp.includes('.replace(/\\bst\\b/') &&
+    imp.includes("SUFFIX_EXPAND[key] || tok"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

@@ -79,6 +79,32 @@ function titleCase(s) {
     .replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 
+// v62.102 (Troy, Floramar rerun): every portal slug abbreviates the street
+// suffix — Zillow writes "…-Floramar-Ter-…", others "-St-", "-Dr-". The parser
+// only title-cased it, so the canonical address came back "4320 Floramar Ter"
+// and (since v62.101 lets the import correct the address) overwrote the agent's
+// correctly typed "Terrace". Expand the abbreviation to its full word. Only the
+// KNOWN suffix token is expanded, so a street literally named "St James Pl"
+// keeps its "St" (= Saint) and only "Pl" → "Place".
+const SUFFIX_EXPAND = {
+  rd: "road", st: "street", dr: "drive", ln: "lane", ct: "court", ave: "avenue",
+  blvd: "boulevard", cir: "circle", pl: "place", ter: "terrace", trl: "trail",
+  pkwy: "parkway", hwy: "highway", sq: "square", cv: "cove", pt: "point",
+  bnd: "bend", xing: "crossing", aly: "alley"
+};
+function expandSuffixToken(tok) {
+  const key = String(tok || "").toLowerCase().replace(/[.,]/g, "");
+  return SUFFIX_EXPAND[key] || tok;
+}
+// Expand the LAST word of a plain street line ("Main St" → "Main Street").
+// Used where the suffix is the final token (redfin/realtor strip the zip
+// first); splitSlugAddress expands its known suffix token directly instead.
+function expandLineSuffix(line) {
+  const words = String(line || "").split(/\s+/).filter(Boolean);
+  if (words.length) words[words.length - 1] = expandSuffixToken(words[words.length - 1]);
+  return words.join(" ");
+}
+
 // Split a dash-separated slug like
 //   "28412-N-Summit-Springs-Rd-Rio-Verde-AZ-85263"
 // into { line, city, state, zip, display }. City boundary is found by
@@ -104,6 +130,10 @@ function splitSlugAddress(slug) {
   for (let i = 0; i < tokens.length; i++) {
     if (STREET_SUFFIXES.test(tokens[i])) suffixIdx = i;
   }
+  // v62.102: expand the abbreviated street suffix in place BEFORE the unit
+  // logic advances suffixIdx — at this point tokens[suffixIdx] is the street
+  // suffix itself ("ter" → "terrace"). titleCase below normalizes the casing.
+  if (suffixIdx >= 0) tokens[suffixIdx] = expandSuffixToken(tokens[suffixIdx]);
   // Unit designators after the suffix belong to the street line, not the
   // city: "…-Rd-UNIT-34-Scottsdale-…" → line "… Rd Unit 34", city "Scottsdale".
   if (suffixIdx >= 0 && suffixIdx < tokens.length - 1) {
@@ -144,7 +174,7 @@ export function parseAddressFromUrl(rawUrl) {
     if (m) {
       const parts = m[1].split("_");
       if (parts.length >= 4) {
-        const line = titleCase(parts[0].replace(/-/g, " "));
+        const line = titleCase(expandLineSuffix(parts[0].replace(/-/g, " ")));
         const city = titleCase(parts[1].replace(/-/g, " "));
         const state = parts[2].toUpperCase();
         const zip = (parts[3].match(/\d{5}/) || [""])[0];
@@ -165,7 +195,7 @@ export function parseAddressFromUrl(rawUrl) {
       const city = titleCase(m[2].replace(/-/g, " "));
       const streetSlug = m[3];
       const zip = (streetSlug.match(/(\d{5})$/) || [])[1] || "";
-      const line = titleCase(streetSlug.replace(/-?\d{5}$/, "").replace(/-/g, " "));
+      const line = titleCase(expandLineSuffix(streetSlug.replace(/-?\d{5}$/, "").replace(/-/g, " ")));
       return {
         line, city, state, zip,
         display: [line, city, [state, zip].filter(Boolean).join(" ")].filter(Boolean).join(", "),
