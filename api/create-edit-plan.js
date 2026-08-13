@@ -731,6 +731,29 @@ export default async function handler(request, response) {
       } else {
         console.info(`[plan] selection mix: ${mixStr} (${photoScenesD.length} scenes).`);
       }
+      // v62.112 tour-order telemetry (Teri Kelly: a bathroom led the
+      // interiors while the canal closed the tour). The voiced lane can't
+      // be reordered post-hoc — narration walks the scenes in order — so
+      // it is prompt-ruled and MEASURED here, on the reconciled labels,
+      // the same way the v62.93 diversity line measures its rules. The
+      // voiceless lane was already re-sorted deterministically in
+      // normalizeEditPlan, so a flag here on a voiceless plan means the
+      // repair pass relabeled a room after the sort — worth seeing too.
+      {
+        const seq = photoScenesD.map((s) => String(s.roomType || "").toLowerCase());
+        const orderFlags = [];
+        const firstInteriorIdx = seq.findIndex((rt) => ["living", "kitchen", "bedroom", "bathroom"].includes(rt));
+        if (firstInteriorIdx >= 0 && seq[firstInteriorIdx] === "bathroom") {
+          orderFlags.push("a bathroom leads the interiors");
+        }
+        const outdoorFam = seq.map((rt, i) => (["exterior", "outdoor", "amenity"].includes(rt) ? i : -1)).filter((i) => i >= 0);
+        if (seq.length >= 4 && outdoorFam.length === 1 && outdoorFam[0] === seq.length - 1) {
+          orderFlags.push("the only outdoor-family scene is the close");
+        }
+        if (orderFlags.length) {
+          console.warn(`[plan] TOUR ORDER violated despite the v62.112 rule — ${orderFlags.join("; ")} (${seq.join(">")}).`);
+        }
+      }
     }
     // v34.3 GLOBAL POLISH (test-12): verify-and-repair fixed the FACTS but
     // cost the script its voice — 18 isolated single-photo calls share no
@@ -1287,7 +1310,7 @@ function buildOpenAIRequest({ allPhotos, visionPhotos, listingDetails, selectedS
               // listing whose water never got a scene). The tour is a
               // buyer's first walkthrough — every scene must earn its slot
               // by showing something NEW.
-              "SCENE DIVERSITY — HARD RULES: (1) At most TWO scenes may show the home's exterior/facade, and only one of those opens the video — a second exterior must reveal a genuinely different side (backyard, water frontage, pool). (2) Never give two scenes to the SAME room unless the gallery offers fewer distinct spaces than the scene count. (3) Utility spaces — laundry areas, garages, mechanical rooms, empty closets — are last-resort filler only; skip any photo where a washer/dryer, water heater, or storage racking is prominent unless nothing better exists. (4) THE HEADLINE ASSET RULE: identify the listing's single most marketable asset from the photos and facts — waterfront, pool, view, acreage, chef's kitchen, outdoor living — and give it a scene, always. A waterfront home whose video never shows the water has failed regardless of what else is in it. (5) Prefer the sharpest, highest-resolution version when near-duplicate shots exist. (6) NO CLOSE-UPS OR TIGHT PARTIALS: a photo dominated by a single appliance, fixture, counter section, or wall/decor detail — a stove wall, a backsplash, a shower panel, a feature wall, anything showing less than roughly half a room — is last-resort filler exactly like utility spaces: never select one while ANY unused full-room view remains, of any space. Camera motion makes tight framing tighter, so a partial shot ends the scene as a full close-up with nothing left for the voice to describe.",
+              "SCENE DIVERSITY — HARD RULES: (1) At most TWO scenes may show the home's exterior/facade, and only one of those opens the video — a second exterior must reveal a genuinely different side (backyard, water frontage, pool). (2) Never give two scenes to the SAME room unless the gallery offers fewer distinct spaces than the scene count. (3) Utility spaces — laundry areas, garages, mechanical rooms, empty closets — are last-resort filler only; skip any photo where a washer/dryer, water heater, or storage racking is prominent unless nothing better exists. (4) THE HEADLINE ASSET RULE: identify the listing's single most marketable asset from the photos and facts — waterfront, pool, view, acreage, chef's kitchen, outdoor living — and give it a scene, always. A waterfront home whose video never shows the water has failed regardless of what else is in it. (5) Prefer the sharpest, highest-resolution version when near-duplicate shots exist. (6) NO CLOSE-UPS OR TIGHT PARTIALS: a photo dominated by a single appliance, fixture, counter section, or wall/decor detail — a stove wall, a backsplash, a shower panel, a feature wall, anything showing less than roughly half a room — is last-resort filler exactly like utility spaces: never select one while ANY unused full-room view remains, of any space. Camera motion makes tight framing tighter, so a partial shot ends the scene as a full close-up with nothing left for the voice to describe. (7) NATURAL TOUR ORDER: sequence the scenes the way a listing video walks a buyer through the property — exterior/curb opener, then the headline outdoor asset (waterfront, pool, view) EARLY, then the living spaces, then kitchen and dining, then bedrooms, then a bathroom if one earns a scene, closing back outside. A bathroom is NEVER the first or second scene and never precedes the living spaces — a tour that features a bathroom before the main living areas reads like a rental walkthrough, not a listing film. The headline asset from rule (4) plays within the first three scenes; the close may repeat it, but the close must never be its only appearance.",
               "Order the scenes as a professional property tour: exterior hero → entry → kitchen → living/great room → dining → primary bedroom → other bedrooms → bathrooms → outdoor/pool → neighborhood/amenities → detail/outro.",
               "Never invent property features, views, amenities, upgrades, materials, or room names.",
               "Only describe details visible in the image or user-provided listing facts.",
@@ -3806,6 +3829,42 @@ function interleaveSameRoomScenes(scenes) {
   return { scenes: out, changed: true, before, after };
 }
 
+/* v62.112 (Teri Kelly, Aug 13: "I would never want to start a video tour
+   with a bathroom shot as the first feature" — her cut led the interiors
+   with a bathroom while the canal sat buried at the close): the
+   deterministic half of the natural-order fix, VOICELESS plans only.
+   Voiced plans bind narration to scene order — the monologue walks the
+   photos in scene order by contract — so reordering them here would
+   unstitch the tour; the voiced lane gets the same policy as the (7)
+   NATURAL TOUR ORDER hard prompt rule plus the tour-order telemetry in
+   the handler. Opener and closer stay pinned exactly like the v62.104
+   interleave (the opener carries the index-derived address overlay, the
+   closer was chosen to end the tour); the MIDDLE re-sorts into the walk
+   a listing video actually takes: outdoor/headline assets early, then
+   living, kitchen, bedrooms, and bathrooms last among the interiors.
+   The sort is stable (explicit index tiebreak), so equal-rank scenes
+   keep the Director's order, and the v62.104 interleave still runs
+   after this to break up any remaining same-room run. */
+const TOUR_ORDER_RANK = { exterior: 0, outdoor: 1, amenity: 2, living: 3, kitchen: 4, bedroom: 5, bathroom: 6, detail: 7 };
+function naturalTourOrder(scenes) {
+  const n = Array.isArray(scenes) ? scenes.length : 0;
+  if (n < 4) return { scenes, changed: false };
+  // Unknown room labels travel like bedrooms: mid-tour, never promoted
+  // ahead of the living spaces and never demoted behind the bathrooms.
+  const rank = (s) => {
+    const r = TOUR_ORDER_RANK[String(s?.roomType || "").toLowerCase()];
+    return typeof r === "number" ? r : 5;
+  };
+  const middle = scenes.slice(1, n - 1);
+  const sorted = middle
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => (rank(a.s) - rank(b.s)) || (a.i - b.i))
+    .map((x) => x.s);
+  const out = [scenes[0], ...sorted, scenes[n - 1]];
+  const changed = out.some((s, i) => s !== scenes[i]);
+  return { scenes: out, changed };
+}
+
 function normalizeEditPlan(plan, photos, context) {
   const photoIds = new Set(photos.map((photo) => photo.id));
   const engine = RENDER_ENGINES.includes(context.engine) ? context.engine : "remotion";
@@ -3936,6 +3995,20 @@ function normalizeEditPlan(plan, photos, context) {
   // duration/beat math so a music-only tour never sits on one room for
   // six straight scenes (Amy Schrader, the first voiceless lead render).
   if (context.includeNarration === false && baseScenes.length >= 4) {
+    // v62.112: natural listing order FIRST (opener + closer pinned, middle
+    // re-ranked outdoor→living→kitchen→bed→bath), THEN the v62.104
+    // interleave breaks up whatever same-room runs the sort grouped.
+    const ordered = naturalTourOrder(baseScenes);
+    if (ordered.changed) {
+      const beforeSeq = baseScenes.map((s) => String(s.roomType || "?")).join(">");
+      const reranked = ordered.scenes.map((s, i) => ({ ...s, order: i + 1 }));
+      baseScenes.length = 0;
+      baseScenes.push(...reranked);
+      console.info(
+        `[plan] natural tour order: ${beforeSeq} → ${baseScenes.map((s) => String(s.roomType || "?")).join(">")} ` +
+        `(opener + closer pinned, middle re-ranked).`
+      );
+    }
     const interleaved = interleaveSameRoomScenes(baseScenes);
     if (interleaved.changed) {
       const reordered = interleaved.scenes.map((s, i) => ({ ...s, order: i + 1 }));

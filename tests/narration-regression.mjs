@@ -2446,6 +2446,65 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     fhSrc.includes("rr-armed") && !/\bwindow\.confirm\(|[^.\w]confirm\(/.test(fhSrc));
 }
 
+/* ── v62.112: natural listing-video scene order (Teri Kelly, Aug 13) ─────
+   Her cut led the interiors with a bathroom and buried the canal at the
+   close ("I would never want to start a video tour with a bathroom shot
+   as the first feature"). Voiceless plans re-sort deterministically —
+   opener + closer pinned, middle re-ranked outdoor→living→kitchen→bed→
+   bath — while voiced plans (narration-bound order) get a hard NATURAL
+   TOUR ORDER prompt rule plus loud telemetry on the reconciled labels. */
+{
+  const rankConst = planSrc.match(/const TOUR_ORDER_RANK = \{[^}]*\};/);
+  check("order: rank table present", !!rankConst);
+  eval(`globalThis.TOUR_ORDER_RANK = ${rankConst[0].replace("const TOUR_ORDER_RANK = ", "").replace(/;$/, "")}`);
+  eval(`globalThis.naturalTourOrder = ${grab(planSrc, "naturalTourOrder").replace(/^function \w+/, "function")}`);
+  const mk = (rooms) => rooms.map((r, i) => ({ photoId: `p${i}`, roomType: r, order: i + 1 }));
+  const seq = (o) => o.scenes.map((s) => s.roomType).join(",");
+
+  // The Teri shape: exterior, BATHROOM, bedroom, bedroom, outdoor, exterior.
+  const teri = mk(["exterior", "bathroom", "bedroom", "bedroom", "outdoor", "exterior"]);
+  const out = naturalTourOrder(teri);
+  check("order: fires on the Teri shape", out.changed === true);
+  check("order: outdoor promoted ahead of the interiors, bathroom demoted last",
+    seq(out) === "exterior,outdoor,bedroom,bedroom,bathroom,exterior", seq(out));
+  check("order: opener pinned", out.scenes[0].photoId === "p0");
+  check("order: closer pinned", out.scenes[out.scenes.length - 1].photoId === "p5");
+  check("order: same multiset of scenes",
+    [...out.scenes].map((s) => s.photoId).sort().join(",") === teri.map((s) => s.photoId).sort().join(","));
+
+  // Already-natural tour: untouched.
+  const natural = mk(["exterior", "outdoor", "living", "kitchen", "bedroom", "bathroom"]);
+  check("order: natural tour unchanged", naturalTourOrder(natural).changed === false);
+  // Stability within a rank class.
+  const twins = mk(["exterior", "bedroom", "bathroom", "bedroom", "exterior"]);
+  const tw = naturalTourOrder(twins);
+  check("order: stable within a rank (bedrooms keep order)",
+    tw.scenes.filter((s) => s.roomType === "bedroom").map((s) => s.photoId).join(",") === "p1,p3");
+  // Unknown labels travel mid-tour like bedrooms.
+  const unk = mk(["exterior", "bathroom", "mystery", "outdoor"]);
+  check("order: unknown room rides mid-tour, bath still demoted",
+    seq(naturalTourOrder(unk)) === "exterior,mystery,bathroom,outdoor");
+  // Tiny plans untouched (fail-open).
+  check("order: three-scene plan untouched", naturalTourOrder(mk(["exterior", "bathroom", "outdoor"])).changed === false);
+
+  // Wiring: voiceless-only, sort BEFORE the v62.104 interleave.
+  const gi = planSrc.indexOf("context.includeNarration === false && baseScenes.length >= 4");
+  const ni = planSrc.indexOf("naturalTourOrder(baseScenes)");
+  const ii = planSrc.indexOf("interleaveSameRoomScenes(baseScenes)");
+  check("wiring: sort inside the voiceless guard, ahead of the interleave", gi !== -1 && ni > gi && ii > ni);
+
+  // Prompt: the hard rule for the voiced lane.
+  check("prompt: NATURAL TOUR ORDER hard rule present",
+    planSrc.includes("(7) NATURAL TOUR ORDER") &&
+    planSrc.includes("NEVER the first or second scene") &&
+    planSrc.includes("plays within the first three scenes"));
+  // Telemetry: measured on the voiced lane.
+  check("telemetry: tour-order violations logged loud",
+    planSrc.includes("TOUR ORDER violated despite the v62.112 rule") &&
+    planSrc.includes("a bathroom leads the interiors") &&
+    planSrc.includes("the only outdoor-family scene is the close"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);
