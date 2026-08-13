@@ -2351,6 +2351,99 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     qcSrc.includes('reasons.push("text artifacts (notes contradict the verdict)")'));
 }
 
+/* ── v62.110: founder re-render to the customer's account ────────────────
+   The make-right button. The money-path invariants this section pins:
+   the comp flag is internal-only, the spend gate bypass exists ONLY under
+   comp, the usage bump skips comp renders, and — above all — the v46
+   watermark stamp is UNTOUCHED, so a trial customer's re-render ships
+   watermarked with the clean master retained and the unlock purchase
+   exactly as sellable. */
+{
+  const fldSrc = fs.readFileSync(path.join(ROOT, "api/founder-lead.js"), "utf8");
+  const rndSrc = fs.readFileSync(path.join(ROOT, "api/render.js"), "utf8");
+
+  eval(`globalThis.auditPhotosForPlan = ${grab(fldSrc, "auditPhotosForPlan").replace(/^function \w+/, "function")}`);
+  eval(`globalThis.buildReRenderManifest = ${grab(fldSrc, "buildReRenderManifest").replace(/^function \w+/, "function")}`);
+
+  // Audit scenes → plan photos: dedupe by URL, order preserved, roomType
+  // rides as category (feeds reconciliation AND the v62.105 pool filter).
+  const scenes = [
+    { photoUrl: "https://x/storage/a%20b.jpg", roomType: "kitchen" },
+    { photoUrl: "https://x/storage/c.jpg", roomType: "exterior" },
+    { photoUrl: "https://x/storage/a%20b.jpg", roomType: "kitchen" }, // dwell repeat
+    { photo_url: "https://x/storage/d.jpg", room_type: "detail" },
+    { photoUrl: "https://x/storage/e.jpg" }
+  ];
+  const ph = auditPhotosForPlan(scenes);
+  check("re-render photos: deduped with order preserved", ph.length === 4 && ph[0].url.endsWith("a%20b.jpg") && ph[3].id === "p4");
+  check("re-render photos: roomType becomes category (snake_case too)", ph[0].category === "kitchen" && ph[2].category === "detail");
+  check("re-render photos: fileName decoded from the URL", ph[0].fileName === "a b.jpg");
+  check("re-render photos: durable/public urls filled for the manifest", ph.every((p) => p.durableUrl === p.url && p.publicUrl === p.url));
+
+  const plan = {
+    scenes: [{ photoId: "p1", duration: 4, roomType: "kitchen", overlay: {}, narrationLine: "x" }],
+    narration: { monologue: "Welcome.", sentences: [] },
+    narrationScript: "Welcome.",
+    musicMood: "luxury",
+    introCard: { headline: "1 Test St" },
+    outroCard: {},
+    runwayConfig: {}
+  };
+  const voiced = buildReRenderManifest({ userId: "u1", jobSeed: "job-abc123", title: "T", listingDetails: { address: "1 Test St", city: "X" }, photos: ph, editPlan: plan, wantNarration: true, selectedStyle: "Cinematic Luxury", targetDurationSec: 30 });
+  check("re-render manifest: founderComp rides the manifest", voiced.founderComp === true && voiced.founderReRender === true);
+  check("re-render manifest: renders as the CUSTOMER", voiced.project.userId === "u1");
+  check("re-render manifest: voiced original stays voiced", voiced.skipNarration === false && voiced.captionsEnabled === true && voiced.narrationScript === "Welcome.");
+  const silent = buildReRenderManifest({ userId: "u1", jobSeed: "j", title: "T", listingDetails: {}, photos: ph, editPlan: plan, wantNarration: false, selectedStyle: "Cinematic Luxury", targetDurationSec: 30 });
+  check("re-render manifest: music-only original stays music-only", silent.skipNarration === true && silent.narration === null && silent.captionsEnabled === false);
+  check("re-render manifest: make-rights ship clean (no brand kit)", voiced.brandKit === null);
+  check("re-render manifest: scene photo urls resolve from the photo list", voiced.scenes[0].durableUrl === ph[0].url);
+  // v62.18: shape is a customer choice — a square original re-renders square.
+  const sq = buildReRenderManifest({ userId: "u1", jobSeed: "j", title: "T", listingDetails: {}, photos: ph, editPlan: plan, wantNarration: true, selectedStyle: "Cinematic Luxury", targetDurationSec: 30, exportFormat: "square" });
+  check("re-render manifest: square original stays square", sq.exportFormat === "square" && voiced.exportFormat === "vertical");
+  check("re-render: narration probe reads the REAL audit column (narration_applied)",
+    fldSrc.includes("row.narration_applied === true"));
+  check("re-render: shape follows the audit row's exportFormat",
+    fldSrc.includes('rc.exportFormat || "").toLowerCase() === "square"'));
+
+  // render.js money-path invariants.
+  check("comp: flag is internal-only (403 without the secret)",
+    rndSrc.includes("const founderComp = manifest?.founderComp === true;") &&
+    rndSrc.includes('"founderComp requires an internal submission."'));
+  check("comp: spend gate bypass exists ONLY under founderComp",
+    /if \(!state\.can_render\) \{\s*\n[^]{0,400}if \(founderComp\)/.test(rndSrc));
+  check("comp: usage bump skipped for comp renders",
+    rndSrc.includes("workerResponse.ok && tierGuard.userId && !tierGuard.comp") &&
+    rndSrc.includes("usage bump skipped"));
+  check("comp: the v46 watermark stamp is UNTOUCHED by comp",
+    rndSrc.includes('String(tierGuard.state?.tier || "") === "trial" &&') &&
+    rndSrc.includes("Number(tierGuard.state?.render_credits || 0) < 1") &&
+    rndSrc.includes("manifest.freeRenderWatermark = true;") &&
+    !/freeRenderWatermark[^\n]*comp|comp[^\n]*freeRenderWatermark/.test(rndSrc));
+  check("comp: the 30s free cap is untouched",
+    rndSrc.includes("manifest.freeRenderWatermark && Number(manifest.targetDurationSec || 0) > 30"));
+  check("comp: guard returns the comp flag to the handler",
+    rndSrc.includes("return { ok: true, userId, state, comp: founderComp };"));
+
+  // founder-lead.js lane invariants.
+  check("re-render: action wired with on-behalf plan headers",
+    fldSrc.includes('String(request.body?.action || "") === "re_render"') &&
+    fldSrc.includes('"x-canary-secret": cronSecret') &&
+    fldSrc.includes('"x-on-behalf-user": ownerId'));
+  check("re-render: template fallback plans are refused (make-right rule)",
+    fldSrc.includes('plan.json?.status === "fallback"'));
+  check("re-render: submit goes through the front door with the internal secret",
+    fldSrc.includes('"x-internal-secret": cronSecret'));
+  check("re-render: function window covers the plan build", fldSrc.includes("maxDuration: 300"));
+
+  // founder.html: chips + no blocking dialogs.
+  const fhSrc = fs.readFileSync(path.join(ROOT, "founder.html"), "utf8");
+  check("re-render UI: chips on dossier rows and library cards",
+    fhSrc.includes('class="lr-rerender"') && fhSrc.includes('class="rc-rerender"') &&
+    fhSrc.includes("function founderReRender(chip)"));
+  check("re-render UI: two-click arm, no blocking confirm()",
+    fhSrc.includes("rr-armed") && !/\bwindow\.confirm\(|[^.\w]confirm\(/.test(fhSrc));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

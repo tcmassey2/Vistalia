@@ -97,9 +97,19 @@
   #lead .lr-play{width:28px;height:28px;border-radius:50%;background:rgba(11,11,13,.6);border:1px solid rgba(230,206,142,.55);display:grid;place-items:center;color:var(--gold-light);font-size:11px;padding-left:2px;flex-shrink:0}
   #lead .lr-photos{font-size:11px;padding:5px 9px;border-radius:16px;border:1px solid var(--edge);color:var(--ink-muted);flex-shrink:0;white-space:nowrap}
   #lead .lr-photos:hover{border-color:var(--gold);color:var(--gold-light)}
+  /* v62.110: the make-right button — re-render to the customer's account.
+     Armed (first click) goes gold; in-flight dims; done goes green. */
+  #lead .lr-rerender{font-size:11px;padding:5px 9px;border-radius:16px;border:1px solid var(--edge);color:var(--ink-muted);flex-shrink:0;white-space:nowrap;cursor:pointer}
+  #lead .lr-rerender:hover{border-color:var(--gold);color:var(--gold-light)}
+  .rr-armed{border-color:var(--gold)!important;color:var(--gold-light)!important}
+  .rr-busy{opacity:.55;pointer-events:none}
+  .rr-done{border-color:var(--green,#3fbf7f)!important;color:var(--green,#3fbf7f)!important;pointer-events:none}
+  .rr-err{border-color:var(--red)!important;color:var(--red)!important}
   /* v62.100: photos-used / re-render helper */
   .rc-photos{display:inline-block;margin-top:8px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-muted);border:1px solid var(--edge);border-radius:14px;padding:4px 8px;background:rgba(11,11,13,.55);cursor:pointer}
   .rc-photos:hover{border-color:var(--gold);color:var(--gold-light)}
+  .rc-rerender{display:inline-block;margin-top:8px;margin-left:6px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-muted);border:1px solid var(--edge);border-radius:14px;padding:4px 8px;background:rgba(11,11,13,.55);cursor:pointer}
+  .rc-rerender:hover{border-color:var(--gold);color:var(--gold-light)}
   #rphotos{position:fixed;inset:0;background:rgba(11,11,13,.94);z-index:22;overflow-y:auto;padding:28px 14px 60px}
   #rphotos .rpbox{background:var(--surface);border:1px solid var(--edge);border-radius:16px;max-width:640px;margin:0 auto;padding:22px}
   #rphotos .rphead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px}
@@ -265,6 +275,42 @@
     var base=String(u).split('?')[0].split('/').pop()||('photo-'+(i+1));
     if(!/\.(jpe?g|png|webp|gif)$/i.test(base)) base+='.jpg';
     return String(i+1).padStart(2,'0')+'-'+base;
+  }
+  // v62.110: the make-right button. Two-click arm (no blocking dialogs),
+  // then one long POST — the plan build runs up to ~2 minutes before the
+  // job even queues, so the chip narrates its own progress. Renders to the
+  // CUSTOMER's account under their own plan: a trial original comes back
+  // watermarked with the clean master retained, so the unlock purchase
+  // stays exactly as sellable; narration follows the original render.
+  function founderReRender(chip){
+    if(chip.classList.contains('rr-busy')||chip.classList.contains('rr-done')) return;
+    if(!chip.classList.contains('rr-armed')){
+      chip.classList.add('rr-armed');
+      chip.setAttribute('data-label',chip.textContent);
+      chip.textContent='Confirm re-render?';
+      chip._rrTimer=setTimeout(function(){ chip.classList.remove('rr-armed'); chip.textContent=chip.getAttribute('data-label'); },5000);
+      return;
+    }
+    clearTimeout(chip._rrTimer);
+    chip.classList.remove('rr-armed','rr-err');
+    chip.classList.add('rr-busy');
+    chip.textContent='Re-rendering… (~2 min to queue)';
+    fetch('/api/founder-lead',{method:'POST',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},
+      body:JSON.stringify({action:'re_render',job_id:chip.getAttribute('data-job')})})
+      .then(function(r){ if(r.status===401){ showGate(); throw new Error('unauthorized'); } return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
+      .then(function(res){
+        chip.classList.remove('rr-busy');
+        if(res.ok&&res.j&&res.j.status==='ok'){
+          chip.classList.add('rr-done');
+          chip.textContent='Queued ✓ '+(res.j.narrated?'narrated':'music-only');
+          chip.title='Job '+res.j.job_id+' — lands in their library + render-complete email; watermark per their plan.';
+        } else {
+          chip.classList.add('rr-err');
+          chip.textContent='Failed — click to retry';
+          chip.title=(res.j&&res.j.error)||'re-render failed';
+        }
+      })
+      .catch(function(err){ chip.classList.remove('rr-busy'); chip.classList.add('rr-err'); chip.textContent='Failed — click to retry'; chip.title=String((err&&err.message)||err); });
   }
   function closeRPhotos(){ var ov=document.getElementById('rphotos'); if(ov){ ov.remove(); document.removeEventListener('keydown',onRPKey); } }
   function onRPKey(e){ if(e.key==='Escape') closeRPhotos(); }
@@ -442,6 +488,7 @@
             '<div class="lr-main"><div class="lr-t">'+esc(r.title)+(r.internal?' <span class="badge internal">Internal</span>':'')+'</div>'+
             '<div class="lr-s">'+ago(r.created_at)+(r.city?' · '+esc(r.city):'')+(r.engine?' · '+esc(r.engine):'')+(r.narrated?' · narrated':' · music-only')+(failed?' · <span style="color:var(--red)">'+esc(r.status)+'</span>':'')+'</div></div>'+
             (r.job_id?'<span class="lr-photos" data-job="'+esc(r.job_id)+'" data-title="'+esc(r.title)+'" title="Photos used — download to re-render">Photos</span>':'')+
+            (r.job_id&&!failed?'<span class="lr-rerender" data-job="'+esc(r.job_id)+'" title="Re-render on the current engine — to THEIR account; watermark and unlock follow their plan">Re-render</span>':'')+
             (r.mp4_url?'<span class="lr-play">▶</span>':'')+
           '</div>';
         }).join('')
@@ -466,6 +513,10 @@
     });
     Array.prototype.forEach.call(ov.querySelectorAll('.lr-photos'),function(pb){
       pb.onclick=function(e){ e.stopPropagation(); openRenderPhotos(pb.getAttribute('data-job'), pb.getAttribute('data-title')); };
+    });
+    // v62.110: the make-right button, dossier edition.
+    Array.prototype.forEach.call(ov.querySelectorAll('.lr-rerender'),function(rb){
+      rb.onclick=function(e){ e.stopPropagation(); founderReRender(rb); };
     });
     var save=ov.querySelector('#crm-save');
     if(save) save.onclick=function(){
@@ -507,6 +558,7 @@
           '<div class="rsub">'+esc(r.email||'unknown')+(failed?' · '+ago(r.created_at):'')+'</div>'+
           lastLine+
           (r.job_id?'<span class="rc-photos" data-job="'+esc(r.job_id)+'" data-title="'+esc(r.title)+'" title="Photos used — download to re-render">Photos used</span>':'')+
+          (r.job_id&&!failed?'<span class="rc-rerender" data-job="'+esc(r.job_id)+'" title="Re-render on the current engine — to their account; watermark and unlock follow their plan">Re-render</span>':'')+
         '</div>'+
       '</div>';
     }).join('');
@@ -519,6 +571,10 @@
     // v62.100: the "Photos used" chip pulls source photos without triggering playback.
     Array.prototype.forEach.call(el.querySelectorAll('.rc-photos'),function(pb){
       pb.onclick=function(e){ e.stopPropagation(); openRenderPhotos(pb.getAttribute('data-job'), pb.getAttribute('data-title')); };
+    });
+    // v62.110: the make-right button, library edition.
+    Array.prototype.forEach.call(el.querySelectorAll('.rc-rerender'),function(rb){
+      rb.onclick=function(e){ e.stopPropagation(); founderReRender(rb); };
     });
   }
 

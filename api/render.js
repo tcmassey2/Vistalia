@@ -273,7 +273,7 @@ export default async function handler(request, response) {
     // videos consume 2 credits: they're 10 Veo scenes vs 5, literally
     // double the generation cost. Fire-and-forget — a counter failure
     // must NOT block the render.
-    if (workerResponse.ok && tierGuard.userId) {
+    if (workerResponse.ok && tierGuard.userId && !tierGuard.comp) {
       const credits = renderCreditsFor(manifest);
       // v26.7: pass the jobId so the usage ledger (migration 15) can record
       // exactly what this render consumed — the refund path reverses it by
@@ -282,6 +282,12 @@ export default async function handler(request, response) {
       bumpUsage(tierGuard.userId, credits, jobId).catch((err) => {
         console.warn("[render] usage increment failed:", err.message || err);
       });
+    } else if (workerResponse.ok && tierGuard.comp) {
+      // v62.110: founder-comp renders consume nothing — the customer's
+      // allowance, credits, and monthly counters are untouched, so their
+      // own next render (or purchase) behaves exactly as if the make-right
+      // never happened.
+      console.info(`[render] FOUNDER COMP: usage bump skipped for user ${tierGuard.userId} (job ${(payload && payload.jobId) || "?"}).`);
     }
 
     response.status(workerResponse.status).json(payload || {
@@ -456,6 +462,19 @@ async function enforceTierGuard(request, manifest) {
   const isOnBehalf =
     !!process.env.CRON_SECRET && internalSecretEarly === process.env.CRON_SECRET &&
     !!String(manifest?.project?.userId || "").trim();
+  // v62.110: FOUNDER COMP — a make-right re-render submitted for a customer
+  // from the founder portal. The render is on the house: it bypasses the
+  // can_render spend gate and skips the usage bump, but EVERYTHING ELSE
+  // runs as the customer — tier state, the v46 watermark stamp (trial with
+  // no purchased credits still ships watermarked with the clean master
+  // retained, so the unlock purchase stays exactly as sellable), the 30s
+  // free cap, engine entitlements. Never client-settable: without the
+  // internal secret the flag is an outright rejection, not a silent strip —
+  // a Bearer-token submission carrying it is someone probing.
+  const founderComp = manifest?.founderComp === true;
+  if (founderComp && !isOnBehalf) {
+    return { ok: false, status: 403, error: "founderComp requires an internal submission." };
+  }
 
   const auth = String(request.headers.authorization || "");
   if (!auth.startsWith("Bearer ") && !isOnBehalf) {
@@ -517,13 +536,24 @@ async function enforceTierGuard(request, manifest) {
   if (!state) return { ok: true };
 
   if (!state.can_render) {
-    return {
-      ok: false,
-      status: 402,
-      error: state.reason || "Your plan does not allow more videos this month.",
-      upgradeRequired: true,
-      currentTier: state.tier
-    };
+    // v62.110: a founder-comp make-right renders even when the customer's
+    // allowance is spent — that's the entire point (the original render
+    // already consumed their freebie). Tier state still flows through so
+    // the watermark stamp reflects what THEY are entitled to.
+    if (founderComp) {
+      console.info(
+        `[render] FOUNDER COMP: spend gate bypassed for user ${userId} ` +
+        `(tier=${state.tier}, blocked reason suppressed: "${String(state.reason || "").slice(0, 60)}")`
+      );
+    } else {
+      return {
+        ok: false,
+        status: 402,
+        error: state.reason || "Your plan does not allow more videos this month.",
+        upgradeRequired: true,
+        currentTier: state.tier
+      };
+    }
   }
 
   const requestedEngine = String(manifest.engine || "remotion").toLowerCase();
@@ -562,7 +592,7 @@ async function enforceTierGuard(request, manifest) {
     };
   }
 
-  return { ok: true, userId, state };
+  return { ok: true, userId, state, comp: founderComp };
 }
 
 // Look up an in-flight render in Supabase render_jobs table when the worker
