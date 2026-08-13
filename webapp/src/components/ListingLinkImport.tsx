@@ -14,7 +14,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
-import { importListing, curatePhotos, resolveListing, radarAutocomplete, radarConfigured } from "../lib/api";
+import { importListing, curatePhotos, resolveListing, addressAutocomplete, addressLookupConfigured } from "../lib/api";
 import type { Photo } from "../lib/types";
 
 // v62.96: the band accepts free text now, not just URLs. URL-ish input
@@ -43,7 +43,7 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  // v62.96 address typeahead (Radar, free tier). Only engages on non-URL
+  // v62.96 address typeahead (v62.111: Geoapify free tier). Only engages on non-URL
   // input when the publishable key is configured; without it the band is
   // the same plain field as before.
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -57,13 +57,13 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
       setSuggestions([]);
       return;
     }
-    if (busy || !radarConfigured() || q.length < 5 || isUrlish(q)) {
+    if (busy || !addressLookupConfigured() || q.length < 5 || isUrlish(q)) {
       setSuggestions([]);
       return;
     }
     let stale = false;
     suggestTimer.current = window.setTimeout(async () => {
-      const list = await radarAutocomplete(q);
+      const list = await addressAutocomplete(q);
       if (!stale) setSuggestions(list);
     }, 280);
     return () => {
@@ -456,7 +456,7 @@ export default function ListingLinkImport({ intoProject = false }: { intoProject
             autoComplete="off"
             className="w-full h-11 rounded-lg bg-surface-input border border-edge px-3 text-sm placeholder:text-ink-dim focus:border-gold outline-none"
           />
-          {/* v62.96: address typeahead (Radar free tier). Renders only when
+          {/* v62.96: address typeahead (v62.111: Geoapify free tier). Renders only when
               results exist; picking one fills the field and closes the list.
               No key configured: this never renders and the band stays a
               plain field. */}

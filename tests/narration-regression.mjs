@@ -1802,10 +1802,12 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     lli96.includes("importListing(importInput, projectId)") &&
     lli96.indexOf("await resolveListing(trimmed)") < lli96.indexOf("importListing(importInput, projectId)"));
   check("v62.96: address typeahead is key-gated and degrades to a plain field",
-    lli96.includes("radarConfigured()") &&
-    lli96.includes("radarAutocomplete(q)") &&
-    api96.includes("VITE_RADAR_PUBLISHABLE_KEY") &&
-    api96.includes("if (!RADAR_KEY || query.trim().length < 4) return [];"));
+    // v62.111: Radar → Geoapify (Radar gated signup behind a sales call).
+    // Same contract survives the swap: configured() gate, 4-char floor, fail-open [].
+    lli96.includes("addressLookupConfigured()") &&
+    lli96.includes("addressAutocomplete(q)") &&
+    api96.includes("VITE_GEOAPIFY_API_KEY") &&
+    api96.includes("if (!GEO_KEY || query.trim().length < 4) return [];"));
   check("v62.96: imported agent remarks fill the listing without clobbering typed notes",
     // v62.101 refactor: same fill-if-empty contract, now via the hoisted
     // importedRemarks const (identity fields moved to import-wins alongside).
@@ -1820,7 +1822,7 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     ps96.includes("setListing({ remarks: e.target.value })"));
   check("v62.96: EXIF rescue is suggest-only — reverse geocode, confirm chip, never auto-applied",
     ps96.includes("firstGpsInFiles(accepted)") &&
-    ps96.includes("radarReverseGeocode(fix.lat, fix.lng)") &&
+    ps96.includes("addressReverseGeocode(fix.lat, fix.lng)") &&
     ps96.includes("Use this address") &&
     ps96.includes('!useStore.getState().listing.address.trim()'));
   check("v62.96: the GPS parser walks APP1→GPS IFD, caps its read, and rejects the (0,0) garbage fix",

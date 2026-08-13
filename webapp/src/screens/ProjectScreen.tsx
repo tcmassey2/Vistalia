@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefOb
 import { useStore } from "../lib/store";
 import ListingLinkImport from "../components/ListingLinkImport";
 import { uploadListingPhoto, photoFromUpload, readImageDimensions, uploadAgentHeadshot, uploadBrokerageLogo } from "../lib/supabase";
-import { createEditPlan, submitRender, pollRender, fetchLibrary, fetchUsage, authHeaders, radarReverseGeocode, RenderJobMissingError, type RenderManifest } from "../lib/api";
+import { createEditPlan, submitRender, pollRender, fetchLibrary, fetchUsage, authHeaders, addressReverseGeocode, RenderJobMissingError, type RenderManifest } from "../lib/api";
 import { firstGpsInFiles } from "../lib/exif-gps";
 import VoiceSection from "../components/VoiceSection";
 import { events, track } from "../lib/analytics";
@@ -382,7 +382,7 @@ function PhotosArea({ projectId, userId }: { projectId: string; userId: string }
         firstGpsInFiles(accepted)
           .then(async (fix) => {
             if (!fix) return;
-            const addr = await radarReverseGeocode(fix.lat, fix.lng);
+            const addr = await addressReverseGeocode(fix.lat, fix.lng);
             if (addr && !useStore.getState().listing.address.trim()) setAddrSuggest(addr);
           })
           .catch(() => { /* the rescue is a bonus, never a blocker */ });

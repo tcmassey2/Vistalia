@@ -391,28 +391,32 @@ export async function resolveListing(query: string): Promise<{ status: string; u
   }
 }
 
-// Radar address autocomplete + reverse geocoding — free tier covers our
-// volume by orders of magnitude. Both fail open to null/[] when the
-// publishable key isn't configured, so every UI that uses them degrades
-// to a plain text field. Key: VITE_RADAR_PUBLISHABLE_KEY (frontend-safe
-// by design — Radar publishable keys are meant for the browser).
-const RADAR_KEY: string = (import.meta.env?.VITE_RADAR_PUBLISHABLE_KEY as string | undefined) || "";
+// v62.111: address autocomplete + reverse geocoding moved Radar → Geoapify.
+// Radar gates account setup behind a sales meeting; Geoapify is instant
+// self-serve (3,000 free credits/day — orders of magnitude past our
+// volume) and its API key is designed for browser use (their own
+// geocoder-autocomplete widget ships client-side). Data is OSM +
+// OpenAddresses grade, which is exactly enough here: the typeahead only
+// assists typing before the v62.95 resolver does the authoritative
+// lookup, and the EXIF chip is confirm-only. Both fail open to ""/[]
+// when the key isn't configured, so every UI degrades to a plain text
+// field — same contract as before. Key: VITE_GEOAPIFY_API_KEY.
+const GEO_KEY: string = (import.meta.env?.VITE_GEOAPIFY_API_KEY as string | undefined) || "";
 
-export function radarConfigured(): boolean {
-  return RADAR_KEY.length > 0;
+export function addressLookupConfigured(): boolean {
+  return GEO_KEY.length > 0;
 }
 
-export async function radarAutocomplete(query: string): Promise<string[]> {
-  if (!RADAR_KEY || query.trim().length < 4) return [];
+export async function addressAutocomplete(query: string): Promise<string[]> {
+  if (!GEO_KEY || query.trim().length < 4) return [];
   try {
     const res = await fetch(
-      `https://api.radar.io/v1/search/autocomplete?query=${encodeURIComponent(query.trim())}&limit=5&countryCode=US`,
-      { headers: { Authorization: RADAR_KEY } }
+      `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(query.trim())}&limit=5&filter=countrycode:us&format=json&apiKey=${encodeURIComponent(GEO_KEY)}`
     );
     if (!res.ok) return [];
-    const data = (await res.json().catch(() => ({}))) as { addresses?: Array<{ formattedAddress?: string }> };
-    return (data.addresses || [])
-      .map((a) => String(a.formattedAddress || "").trim())
+    const data = (await res.json().catch(() => ({}))) as { results?: Array<{ formatted?: string }> };
+    return (data.results || [])
+      .map((r) => String(r.formatted || "").trim())
       .filter(Boolean)
       .slice(0, 5);
   } catch {
@@ -420,16 +424,15 @@ export async function radarAutocomplete(query: string): Promise<string[]> {
   }
 }
 
-export async function radarReverseGeocode(lat: number, lng: number): Promise<string> {
-  if (!RADAR_KEY) return "";
+export async function addressReverseGeocode(lat: number, lng: number): Promise<string> {
+  if (!GEO_KEY) return "";
   try {
     const res = await fetch(
-      `https://api.radar.io/v1/geocode/reverse?coordinates=${lat.toFixed(6)},${lng.toFixed(6)}`,
-      { headers: { Authorization: RADAR_KEY } }
+      `https://api.geoapify.com/v1/geocode/reverse?lat=${lat.toFixed(6)}&lon=${lng.toFixed(6)}&format=json&apiKey=${encodeURIComponent(GEO_KEY)}`
     );
     if (!res.ok) return "";
-    const data = (await res.json().catch(() => ({}))) as { addresses?: Array<{ formattedAddress?: string }> };
-    return String(data.addresses?.[0]?.formattedAddress || "").trim();
+    const data = (await res.json().catch(() => ({}))) as { results?: Array<{ formatted?: string }> };
+    return String(data.results?.[0]?.formatted || "").trim();
   } catch {
     return "";
   }
