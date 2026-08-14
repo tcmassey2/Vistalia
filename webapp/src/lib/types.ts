@@ -291,6 +291,15 @@ export interface LibraryEntry {
   socialShortCount: number;
   formatsCount: number;
   narrationApplied: boolean;
+  // v62.113: watermark state, computed server-side from the audit row.
+  // watermarkActive — a clean master exists and hasn't been unlocked yet
+  // (post-v55 trial render, still marked): powers the unlock band in the
+  // render view. watermarkUnlocked — the $39 unlock already happened and
+  // mp4Url is serving the clean master. Paid renders carry neither (no
+  // clean variant is uploaded for them). Optional: rows predating v55 /
+  // migration 30 lack the columns.
+  watermarkActive?: boolean;
+  watermarkUnlocked?: boolean;
   narrationVoiceId?: string | null;
   // v46: server-side classification (api/library.js) — the ID's shape can't
   // distinguish presets from clones because the worker stores the RESOLVED

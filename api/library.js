@@ -131,6 +131,14 @@ export default async function handler(request, response) {
         // through to the marked URL unchanged.
         mp4Url: (row.unlocked_at && row.master_clean_url) ? row.master_clean_url : (row.master_mp4_url || ""),
         watermarkUnlocked: Boolean(row.unlocked_at && row.master_clean_url),
+        // v62.113 (Victor Vasu: logged in, downloaded the marked master,
+        // left — no unlock offer existed in the render view): the unlock
+        // band's signal. TRUE only while a clean master exists and the $39
+        // unlock hasn't happened — paid renders (no clean variant) and
+        // pre-v55 rows are correctly false. The client additionally gates
+        // the band to the NEWEST render, matching the webhook's
+        // latest-completed unlock semantics.
+        watermarkActive: Boolean(row.master_clean_url && !row.unlocked_at),
         thumbnailUrl: row.thumbnail_url || "",
         socialShortCount: Number(row.social_short_count || 0),
         formatsCount: Number(row.formats_count || 1),

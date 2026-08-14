@@ -2505,6 +2505,41 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
     planSrc.includes("the only outdoor-family scene is the close"));
 }
 
+/* ── v62.113: the unlock moment lives with the video (Victor Vasu) ───────
+   $1,380/30d bought 279 leads and zero sales. Victor logged in, watched
+   two solid renders, downloaded the watermarked master, and left — the
+   $39 unlock existed only behind "render another" and Settings→pricing,
+   never in the render view. The library detail modal now carries the
+   unlock band on the NEWEST still-watermarked render (matching the payg
+   webhook's latest-completed unlock semantics); /api/library computes
+   the watermarkActive signal server-side; downloads stay free. */
+{
+  const lds = fs.readFileSync(path.join(ROOT, "api/library.js"), "utf8");
+  const lm = fs.readFileSync(path.join(ROOT, "webapp/src/screens/LibraryDetailModal.tsx"), "utf8");
+  const ds113 = fs.readFileSync(path.join(ROOT, "webapp/src/screens/DashboardScreen.tsx"), "utf8");
+  const ty113 = fs.readFileSync(path.join(ROOT, "webapp/src/lib/types.ts"), "utf8");
+
+  check("unlock: server computes watermarkActive from clean-master + unlocked_at",
+    lds.includes("watermarkActive: Boolean(row.master_clean_url && !row.unlocked_at)"));
+  check("unlock: served clean master still wins after the unlock (v55 untouched)",
+    lds.includes("mp4Url: (row.unlocked_at && row.master_clean_url) ? row.master_clean_url : (row.master_mp4_url || \"\")"));
+  check("unlock: type carries both watermark states",
+    ty113.includes("watermarkActive?: boolean;") && ty113.includes("watermarkUnlocked?: boolean;"));
+  check("unlock: band renders only when eligible and opens the paywall",
+    lm.includes("{unlockEligible && (") &&
+    lm.includes("Remove watermark — $39") &&
+    lm.includes("setUnlockOpen(true)"));
+  check("unlock: paywall wired with the instant-unlock reason",
+    lm.includes('import PaywallModal from "../components/PaywallModal"') &&
+    lm.includes("open={unlockOpen}") &&
+    lm.includes("already rendered and unlocks the moment"));
+  check("unlock: dashboard gates the band to the newest watermarked render",
+    ds113.includes("selectedEntry.jobId === library?.[0]?.jobId") &&
+    ds113.includes("selectedEntry.watermarkActive === true"));
+  check("unlock: downloads stay ungated (the watermarked file is the ad)",
+    lm.includes("the watermarked file is the ad"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (failures.length) {
   for (const f of failures) console.error("  FAIL:", f);

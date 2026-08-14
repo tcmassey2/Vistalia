@@ -294,6 +294,16 @@ export default function DashboardScreen() {
           entry={selectedEntry}
           onClose={() => setSelectedEntry(null)}
           onUpdated={reloadLibrary}
+          // v62.113: the unlock band shows only on the NEWEST render and only
+          // while it's still watermarked — the payg webhook unlocks the
+          // user's latest completed render, and /api/library returns rows
+          // newest-first, so library[0] is exactly the render that purchase
+          // will unlock. watermarkActive is server-computed (clean master
+          // exists, unlocked_at not stamped).
+          unlockEligible={
+            selectedEntry.jobId === library?.[0]?.jobId &&
+            selectedEntry.watermarkActive === true
+          }
         />
       )}
     </div>

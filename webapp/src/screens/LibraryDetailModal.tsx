@@ -11,6 +11,7 @@ import {
 import { cn } from "../lib/cn";
 import { engineLabel, isAiVideoEngine } from "../lib/engine-labels";
 import { downloadVideo, deliverableFilename } from "../lib/download";
+import PaywallModal from "../components/PaywallModal";
 
 /**
  * Library detail modal — shown when an agent clicks a render in their
@@ -30,12 +31,22 @@ import { downloadVideo, deliverableFilename } from "../lib/download";
 export default function LibraryDetailModal({
   entry,
   onClose,
-  onUpdated
+  onUpdated,
+  unlockEligible = false
 }: {
   entry: LibraryEntry;
   onClose: () => void;
   onUpdated?: () => void;
+  // v62.113: true only for the NEWEST still-watermarked render — the payg
+  // webhook unlocks the user's latest completed render
+  // (unlockLatestCleanRender), so showing the band on an older render
+  // would make "this video" a lie. Computed at the Dashboard callsite.
+  unlockEligible?: boolean;
 }) {
+  // v62.113 unlock band → the existing $39 paywall (payg leads for
+  // non-subscribers). State lives here so the band works without touching
+  // the Dashboard's modal plumbing.
+  const [unlockOpen, setUnlockOpen] = useState(false);
   // Lock body scroll while modal is open.
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -201,6 +212,34 @@ export default function LibraryDetailModal({
           <RenderDetailsPanel entry={entry} />
         </div>
 
+        {/* v62.113 (Victor Vasu, Aug 14: logged in, watched both renders,
+            downloaded the watermarked master, left — the $39 unlock existed
+            only behind "render another" and Settings → pricing, never at the
+            moment of intent): the unlock offer lives WITH the video. Shown
+            only when the Dashboard says this is the NEWEST still-watermarked
+            render, because the payg webhook unlocks the user's LATEST
+            completed render (unlockLatestCleanRender) — on an older render
+            "this video" would be a lie. The clean master already exists
+            (v55), so delivery is genuinely instant. Downloads stay free by
+            design: the watermarked file is the ad; this band is the ask. */}
+        {unlockEligible && (
+          <div className="mx-6 sm:mx-8 mt-6 rounded-xl border border-gold/50 bg-gold/5 px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <div className="text-sm font-semibold text-ink">This video carries the vistalia.ai watermark</div>
+              <div className="text-xs text-ink-muted mt-0.5">
+                Your clean master is already rendered — it unlocks the moment you do. $39 once, no subscription.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUnlockOpen(true)}
+              className="card-press h-10 px-4 rounded-lg text-sm font-semibold bg-gold text-paper hover:bg-gold-light transition-colors flex-shrink-0"
+            >
+              Remove watermark — $39 →
+            </button>
+          </div>
+        )}
+
         {/* v33.3 Downloads — every format the render produced, one click
             each, real file downloads (blob-forced; the download attribute is
             ignored cross-origin and used to NAVIGATE to the mp4). */}
@@ -324,6 +363,16 @@ export default function LibraryDetailModal({
           </div>
         </div>
       </div>
+
+      {/* v62.113: the $39 paywall, opened from the unlock band above. Renders
+          as a sibling overlay on top of this modal (both fixed layers); the
+          payg card leads for non-subscribers, so the band's promise and the
+          first thing they see agree. */}
+      <PaywallModal
+        open={unlockOpen}
+        onClose={() => setUnlockOpen(false)}
+        reason="Remove the watermark from this video — your clean master is already rendered and unlocks the moment you're done."
+      />
     </div>
   );
 }
