@@ -1240,6 +1240,17 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
         !/text='VISTALIA'/.test(rjSrc2) &&
         !/upgrade at vistalia\.ai to remove/.test(rjSrc2);
     })());
+  check("v62.115: the mark overlay ends with the video (shortest=1)",
+    /* The color canvas is an infinite source: without shortest=1 the
+       overlay outlives the main input, every mark pass hits its 240s
+       timeout, and fail-open ships CLEAN masters — five did on Aug 15.
+       Single-frame previews cannot catch non-termination; only a full
+       encode can. This regex is the tripwire if anyone rebuilds the
+       graph without the terminator. */
+    (() => {
+      const fn = rjSrc2.match(/export function buildTrialMarkFilterGraph[\s\S]*?\n}/);
+      return !!fn && /overlay=0:0:shortest=1/.test(fn[0]);
+    })());
   check("v62.114: one argv builder feeds all three trial-mark lanes",
     (() => {
       const regenSrc114 = fs.readFileSync(path.join(ROOT, "render-worker/src/regenerate-job.mjs"), "utf8");

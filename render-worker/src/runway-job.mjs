@@ -3272,7 +3272,17 @@ export function buildTrialMarkFilterGraph(dimensions) {
     `:borderw=2:bordercolor=black@0.25` +
     `:x=(w-text_w)/2:y=(h-text_h)/2,` +
     `rotate=-0.4189:c=none[wm];` +
-    `[0:v][wm]overlay=0:0[vdiag];` +
+    // v62.115: shortest=1 or this never ends. The color source is infinite;
+    // without it the overlay outlives the main input's EOF (framesync
+    // repeats the last main frame under the still-running canvas), every
+    // trial-mark pass ran into its 240s timeout, and the v55 fail-open
+    // shipped FIVE clean masters on Aug 15 — the exact laundering the mark
+    // exists to prevent. shortest=1 ends the overlay at the first EOF,
+    // which is always the video (the canvas never ends). Single-frame
+    // previews can't catch this class: termination is only provable by a
+    // full encode, which is now part of the drop protocol for any
+    // filter_complex change.
+    `[0:v][wm]overlay=0:0:shortest=1[vdiag];` +
     `[vdiag]drawtext=fontfile='${font}'` +
     `:text='vistalia.ai'` +
     `:fontcolor=white@0.94:fontsize=${bugSize}` +
