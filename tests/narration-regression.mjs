@@ -1206,30 +1206,49 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.55: signup still fires the pixel Lead",
     /trackLead\(\);/.test(asSrc));
 
-  /* ── v62.79: the watermark swings back. v62.54 built a wall (breathing
-     centre FREE PREVIEW + two crop-defeating echoes + upgrade banner);
-     Troy killed it — "that is too much" — because the wall buried the
-     footage that sells the upgrade. One quiet serif mark now, in the
-     title card's voice. These tests are inverted on purpose: they guard
-     the ABSENCE of the wall, which is the thing a future "make the trial
-     convert harder" instinct would silently reintroduce. */
-  check("v62.79: the free-render wall is gone (no centre mark, echoes, banner)",
-    !/FREE PREVIEW/.test(rjSrc2.replace(/\/\/[^\n]*/g, "")) &&
-    !/text='VISTALIA'/.test(rjSrc2) &&
-    !/upgrade at vistalia\.ai to remove/.test(rjSrc2));
-  check("v62.79: exactly one drawtext survives in the free-render mark",
+  /* ── v62.114: the watermark's THIRD swing — obnoxious again, this time
+     on data. v62.54 built a wall (breathing centre FREE PREVIEW + echoes
+     + banner); v62.79 killed it ("that is too much") and went quiet; with
+     the quiet mark live, trial users watched, downloaded the marked
+     master free, and left (Victor, Aug 14) — 84 paid leads Aug 10-14,
+     checkout clicks, zero purchases. Troy, Aug 15: "make the watermark
+     obnoxious again." The new mark splits the prior swings: ONE large
+     translucent diagonal 'vistalia.ai · PREVIEW' across mid-frame + the
+     v62.79 corner bug — and STILL no wall. These tests guard both
+     directions at once: the diagonal must exist, the wall must not
+     return. */
+  check("v62.114: diagonal centre mark — translucent, rotated, centred, bordered",
     (() => {
-      const fn = rjSrc2.match(/export function buildFreeRenderWatermark[\s\S]*?\n}/);
-      return !!fn && (fn[0].match(/drawtext=/g) || []).length === 1;
+      const fn = rjSrc2.match(/export function buildTrialMarkFilterGraph[\s\S]*?\n}/);
+      return !!fn && /text='vistalia\.ai  ·  PREVIEW'/.test(fn[0]) &&
+        /rotate=-0\.4189:c=none/.test(fn[0]) &&
+        /fontcolor=white@0\.45/.test(fn[0]) &&
+        /x=\(w-text_w\)\/2:y=\(h-text_h\)\/2/.test(fn[0]);
     })());
-  check("v62.79: the mark is the title card's serif, shadowed, unboxed",
-    /VistaliaSerif-SemiBold\.ttf/.test(rjSrc2) &&
+  check("v62.114: the corner bug keeps its serif, shadow, and launch position",
     (() => {
-      const fn = rjSrc2.match(/export function buildFreeRenderWatermark[\s\S]*?\n}/)[0];
-      return /shadowcolor=black@0\.55/.test(fn) && !/box=1/.test(fn);
+      const fn = rjSrc2.match(/export function buildTrialMarkFilterGraph[\s\S]*?\n}/);
+      return !!fn && /VistaliaSerif-SemiBold\.ttf/.test(fn[0]) &&
+        /text='vistalia\.ai'/.test(fn[0]) && /x=36:y=40/.test(fn[0]) &&
+        /shadowcolor=black@0\.55/.test(fn[0]) && !/box=1/.test(fn[0]);
     })());
-  check("v62.79: the vistalia.ai mark keeps its launch position",
-    /text='vistalia\.ai'/.test(rjSrc2) && /x=36:y=40/.test(rjSrc2));
+  check("v62.114: two drawtext layers exactly — diagonal + bug, and no v62.54 wall",
+    (() => {
+      const fn = rjSrc2.match(/export function buildTrialMarkFilterGraph[\s\S]*?\n}/);
+      return !!fn && (fn[0].match(/drawtext=/g) || []).length === 2 &&
+        !/FREE PREVIEW/.test(rjSrc2.replace(/\/\/[^\n]*/g, "")) &&
+        !/text='VISTALIA'/.test(rjSrc2) &&
+        !/upgrade at vistalia\.ai to remove/.test(rjSrc2);
+    })());
+  check("v62.114: one argv builder feeds all three trial-mark lanes",
+    (() => {
+      const regenSrc114 = fs.readFileSync(path.join(ROOT, "render-worker/src/regenerate-job.mjs"), "utf8");
+      return (rjSrc2.match(/buildTrialMarkArgs\(/g) || []).length === 3 &&
+        /buildTrialMarkArgs,/.test(regenSrc114) &&
+        (regenSrc114.match(/buildTrialMarkArgs\(/g) || []).length === 1 &&
+        !/buildFreeRenderWatermark/.test(rjSrc2.replace(/\/\/[^\n]*/g, "")) &&
+        !/buildFreeRenderWatermark/.test(regenSrc114);
+    })());
   check("v62.79: agent lower-third speaks the card's voice, not boxed plates",
     (() => {
       const fn = rjSrc2.match(/function buildWatermarkDrawtext[\s\S]*?\n}/)[0];

@@ -1665,20 +1665,15 @@ export async function renderRunwayJob(body, options = {}) {
   if (manifest.freeRenderWatermark) {
     try {
       const markedPath = path.join(tempDir, `${jobId}-marked.mp4`);
-      await runFFmpeg([
-        "-y", "-threads", ENCODE_THREADS,
-        "-i", masterForVariants,
-        "-vf", buildFreeRenderWatermark(masterDims),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER,
-        "-c:a", "copy",
-        markedPath
-      ], { timeoutMs: 240000, label: "v55:trial-mark" });
+      await runFFmpeg(
+        buildTrialMarkArgs(masterForVariants, masterDims, markedPath),
+        { timeoutMs: 240000, label: "v62.114:trial-mark" }
+      );
       masterCleanPath = masterForVariants;
       masterForVariants = markedPath;
-      console.info("[v55] trial mark applied in final pass — clean master retained for instant unlock.");
+      console.info("[v62.114] diagonal trial mark applied in final pass — clean master retained for instant unlock.");
     } catch (err) {
-      console.warn(`[v55] trial-mark pass failed (${err.message}) — shipping the clean master unmarked rather than failing the render.`);
+      console.warn(`[v62.114] trial-mark pass failed (${err.message}) — shipping the clean master unmarked rather than failing the render.`);
       masterCleanPath = "";
     }
   }
@@ -1785,18 +1780,13 @@ export async function renderRunwayJob(body, options = {}) {
     if (manifest.freeRenderWatermark) {
       try {
         const squareMarked = path.join(squareDir, `${jobId}-square-marked.mp4`);
-        await runFFmpeg([
-          "-y", "-threads", ENCODE_THREADS,
-          "-i", squareFinal,
-          "-vf", buildFreeRenderWatermark({ width: 1080, height: 1080 }),
-          "-c:v", "libx264", "-pix_fmt", "yuv420p",
-          "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER,
-          "-c:a", "copy",
-          squareMarked
-        ], { timeoutMs: 180000, label: "v55:square-trial-mark" });
+        await runFFmpeg(
+          buildTrialMarkArgs(squareFinal, { width: 1080, height: 1080 }, squareMarked),
+          { timeoutMs: 180000, label: "v62.114:square-trial-mark" }
+        );
         squareDeliverable = squareMarked;
       } catch (err) {
-        console.warn(`[v55] square trial-mark failed (${err.message}) — shipping square unmarked.`);
+        console.warn(`[v62.114] square trial-mark failed (${err.message}) — shipping square unmarked.`);
       }
     }
     variants.square = { format: "square", path: squareDeliverable, dimensions: { width: 1080, height: 1080 } };
@@ -3248,28 +3238,64 @@ function runwayDimensions(manifest) {
 
 // v46 (Troy, launch day): FREE-render watermark. v46 kept it "subtle
 // enough that posting it is still tempting"; v62.54 swung to a full wall
-// (pulsing center FREE PREVIEW, corner echoes, bottom banner). v62.79
-// swings back on Troy's call: "that is too much" — the wall buried the
-// exact footage that sells the upgrade. The free render now carries ONE
-// mark: vistalia.ai at the top, set in the title card's serif voice
-// (VistaliaSerif-SemiBold, soft shadow, no box) at a similar size, so the
-// brand reads as part of the film rather than a bug overlay. Top-LEFT, not
-// centered — the scene-1 title card owns top-center for its first ~5s.
-// Conversion pressure moves to the email + portal upgrade path. Serif
-// missing on disk → Liberation fallback in the SAME clean shadow styling
-// (never the old boxed pill). Static text only — no user input here.
-export function buildFreeRenderWatermark(dimensions) {
-  const w = dimensions.width;
-  const markSize = Math.max(26, Math.round(w / 30));
+// (pulsing center FREE PREVIEW, corner echoes, bottom banner); v62.79
+// swung back on Troy's call — "that is too much" — because the wall
+// buried the exact footage that sells the upgrade. v62.114 is the third
+// swing, and this one is data-driven, not taste-driven: with the quiet
+// mark live, trial users watched, downloaded the marked master free, and
+// left (Victor, Aug 14); 84 paid leads Aug 10-14 produced checkout clicks
+// but zero purchases. Troy, Aug 15: "make the watermark obnoxious again."
+// The design deliberately splits the two prior swings: ONE large
+// translucent 'vistalia.ai · PREVIEW' set ~24° diagonal across mid-frame
+// (unmissable in every scene, survives cropping, but translucent enough
+// that the footage still sells itself — no pulsing, no corner echoes, no
+// banner: the v62.54 mistakes this refuses to repeat) + the v62.79
+// top-left serif bug unchanged. The diagonal needs rotate, which drawtext
+// can't do, so the mark is drawn on a transparent lavfi canvas and
+// overlaid — a -filter_complex graph now, not a -vf chain. Serif missing
+// on disk → Liberation fallback, same styling. Static text only — no
+// user input reaches this graph.
+export function buildTrialMarkFilterGraph(dimensions) {
+  const { width: W, height: H } = dimensions;
   const serifPath = path.join(CAPTIONS_FONTS_DIR, "VistaliaSerif-SemiBold.ttf");
   const font = existsSync(serifPath) ? serifPath : FFMPEG_FONT;
+  // w/13 spans ~80% of frame width at this glyph set; rotated ends rise
+  // ~sin(24°)·text_w/2 ≈ 0.16·W from center — inside every canvas we ship
+  // (16:9 half-height 0.28·W, 1:1 0.50·W, 9:16 0.89·W).
+  const diagSize = Math.max(48, Math.round(W / 13));
+  const bugSize = Math.max(26, Math.round(W / 30));
   return (
+    `color=c=black@0.0:s=${W}x${H}:r=24,format=rgba,` +
     `drawtext=fontfile='${font}'` +
+    `:text='vistalia.ai  ·  PREVIEW'` +
+    `:fontcolor=white@0.45:fontsize=${diagSize}` +
+    `:borderw=2:bordercolor=black@0.25` +
+    `:x=(w-text_w)/2:y=(h-text_h)/2,` +
+    `rotate=-0.4189:c=none[wm];` +
+    `[0:v][wm]overlay=0:0[vdiag];` +
+    `[vdiag]drawtext=fontfile='${font}'` +
     `:text='vistalia.ai'` +
-    `:fontcolor=white@0.94:fontsize=${markSize}` +
+    `:fontcolor=white@0.94:fontsize=${bugSize}` +
     `:x=36:y=40` +
-    `:shadowcolor=black@0.55:shadowx=0:shadowy=2`
+    `:shadowcolor=black@0.55:shadowx=0:shadowy=2[vout]`
   );
+}
+
+// One argv for the trial-mark encode, shared by every lane that marks
+// (master, derived square, regen) so the mark can never drift between
+// lanes again. Filter_complex requires explicit maps: [vout] plus "0:a?"
+// — stream-copies the source audio when present, tolerates its absence.
+export function buildTrialMarkArgs(inputPath, dimensions, outputPath) {
+  return [
+    "-y", "-threads", ENCODE_THREADS,
+    "-i", inputPath,
+    "-filter_complex", buildTrialMarkFilterGraph(dimensions),
+    "-map", "[vout]", "-map", "0:a?",
+    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER,
+    "-c:a", "copy",
+    outputPath
+  ];
 }
 
 // v48: scene-one address chip — a listing video should say WHERE. Reads

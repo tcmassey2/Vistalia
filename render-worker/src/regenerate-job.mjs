@@ -45,7 +45,7 @@ import {
   stitchClipsAndOverlays,
   uploadPerSceneClips,
   uploadDeliverables,
-  buildFreeRenderWatermark,
+  buildTrialMarkArgs,
   ENCODE_PRESET,
   ENCODE_CRF_MASTER
 } from "./runway-job.mjs";
@@ -300,15 +300,10 @@ async function rebuildWithSteadyScene({ jobId, sceneIndex, manifest, auditRow, o
   let includeClean = Boolean(auditRow.master_clean_url);
   if (manifest.freeRenderWatermark) {
     const markedPath = path.join(tempDir, `${jobId}-marked.mp4`);
-    await runFFmpeg([
-      "-y", "-threads", ENCODE_THREADS,
-      "-i", cleanMaster,
-      "-vf", buildFreeRenderWatermark(masterDims),
-      "-c:v", "libx264", "-pix_fmt", "yuv420p",
-      "-preset", ENCODE_PRESET, "-crf", ENCODE_CRF_MASTER,
-      "-c:a", "copy",
-      markedPath
-    ], { timeoutMs: 240000, label: "regen:trial-mark" });
+    await runFFmpeg(
+      buildTrialMarkArgs(cleanMaster, masterDims, markedPath),
+      { timeoutMs: 240000, label: "regen:trial-mark" }
+    );
     deliverablePath = markedPath;
     includeClean = true;
     console.info("[regen] trial mark re-applied — clean master retained for instant unlock.");
