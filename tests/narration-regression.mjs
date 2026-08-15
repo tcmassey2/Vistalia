@@ -1225,6 +1225,16 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
         /fontcolor=white@0\.45/.test(fn[0]) &&
         /x=\(w-text_w\)\/2:y=\(h-text_h\)\/2/.test(fn[0]);
     })());
+  check("v62.116: the diagonal is self-contrasting (keyline + shadow — white kitchens)",
+    /* 2730 Mountain View: a white interior swallowed the 45% white fill
+       behind a 2px border. The outline must carry the mark on white
+       footage, the fill on dark — remove either and one class of scene
+       hides the mark entirely. */
+    (() => {
+      const fn = rjSrc2.match(/export function buildTrialMarkFilterGraph[\s\S]*?\n}/);
+      return !!fn && /borderw=3:bordercolor=black@0\.4/.test(fn[0]) &&
+        /shadowcolor=black@0\.35:shadowx=0:shadowy=3/.test(fn[0]);
+    })());
   check("v62.114: the corner bug keeps its serif, shadow, and launch position",
     (() => {
       const fn = rjSrc2.match(/export function buildTrialMarkFilterGraph[\s\S]*?\n}/);

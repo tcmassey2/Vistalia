@@ -3268,8 +3268,16 @@ export function buildTrialMarkFilterGraph(dimensions) {
     `color=c=black@0.0:s=${W}x${H}:r=24,format=rgba,` +
     `drawtext=fontfile='${font}'` +
     `:text='vistalia.ai  ·  PREVIEW'` +
+    // v62.116: white interiors swallowed the mark (2730 Mountain View —
+    // white kitchen, Troy: "only the small watermark is showing"). A 45%
+    // white fill with a hairline border has no contrast against blown
+    // walls; the corner bug survives only because it is 94% opaque. The
+    // mark must be SELF-contrasting: a real dark keyline + drop shadow so
+    // the outline carries it on white footage and the fill carries it on
+    // dark. Fill opacity stays at Troy's 45% pick.
     `:fontcolor=white@0.45:fontsize=${diagSize}` +
-    `:borderw=2:bordercolor=black@0.25` +
+    `:borderw=3:bordercolor=black@0.4` +
+    `:shadowcolor=black@0.35:shadowx=0:shadowy=3` +
     `:x=(w-text_w)/2:y=(h-text_h)/2,` +
     `rotate=-0.4189:c=none[wm];` +
     // v62.115: shortest=1 or this never ends. The color source is infinite;
