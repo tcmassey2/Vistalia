@@ -1289,6 +1289,19 @@ check("v62.35 floor: shipping behaviour really was 34% at 8.811s", Math.abs((3.5
   check("v62.80/v62.93: the legacy narration fields ride alongside, gated the same way",
     /narrationScript: LEAD_RENDERS_VOICELESS \? "" : \(editPlan\.narrationScript \|\| ""\)/.test(leadSrc) &&
     /narrationLine: scene\.narrationLine \|\| ""/.test(leadSrc));
+  check("v62.117: lead/trial lane defaults to Modern Social + Open House, pinned in BOTH places",
+    /* Style + track ride the plan request AND the manifest as named
+       constants (env-overridable like the voiceless flag). The ===2
+       counts are the point: the beat-sync era proved that setting the
+       track in one place and not the other silently diverges — the plan
+       snaps to one song while the worker mixes another. */
+    (() => {
+      return /const LEAD_TRIAL_STYLE = process\.env\.LEAD_TRIAL_STYLE \|\| "Modern Social";/.test(leadSrc) &&
+        /const LEAD_TRIAL_MUSIC_TRACK = process\.env\.LEAD_TRIAL_MUSIC_TRACK \|\| "the_mountain-pop-490010\.mp3";/.test(leadSrc) &&
+        (leadSrc.match(/selectedStyle: LEAD_TRIAL_STYLE/g) || []).length === 2 &&
+        (leadSrc.match(/musicTrack: LEAD_TRIAL_MUSIC_TRACK/g) || []).length === 2 &&
+        !/selectedStyle: "Cinematic Luxury"/.test(leadSrc);
+    })());
   check("v62.80: the plan prompt still mandates the spoken address",
     /the spoken address is the one sentence every listing video must carry/.test(planSrc));
 

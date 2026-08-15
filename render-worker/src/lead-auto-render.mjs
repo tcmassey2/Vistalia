@@ -51,6 +51,13 @@ const MAX_RETRIES = RETRY_BACKOFF_MIN.length;
 // than no voice at all. Default ON; set LEAD_RENDERS_VOICELESS=0 on the
 // worker to restore narration the moment the quality bar is met.
 const LEAD_RENDERS_VOICELESS = String(process.env.LEAD_RENDERS_VOICELESS || "1") === "1";
+// v62.117 (Troy, Aug 15): trial/lead lane defaults — Modern Social style,
+// "Open House" bed (the friendly label for the_mountain-pop file; Modern
+// Social's own style default, pinned explicitly so plan beat-snap, worker
+// mix, and audit row all name the same track). Env-overridable the same
+// way as the voiceless flag: no deploy to experiment.
+const LEAD_TRIAL_STYLE = process.env.LEAD_TRIAL_STYLE || "Modern Social";
+const LEAD_TRIAL_MUSIC_TRACK = process.env.LEAD_TRIAL_MUSIC_TRACK || "the_mountain-pop-490010.mp3";
 let retryColumnsMissing = false; // set on first PGRST error naming them
 
 function rest() {
@@ -196,10 +203,17 @@ function buildManifest({ userId, projectId, address, facts, photos, editPlan }) 
     narration: LEAD_RENDERS_VOICELESS ? null : (editPlan.narration || null),
     narrationScript: LEAD_RENDERS_VOICELESS ? "" : (editPlan.narrationScript || ""),
     musicMood: editPlan.musicMood,
-    musicTrack: "",
+    // v62.117 (Troy, Aug 15): trial/lead renders default to Modern Social
+    // with "Open House" (the_mountain-pop-490010.mp3) as the bed. The
+    // track is Modern Social's style default already, but it rides the
+    // manifest EXPLICITLY — the beat-sync lesson (music library rework)
+    // was that an empty musicTrack silently re-resolves to whatever the
+    // style default happens to be that week; the audit row should say
+    // what actually played. Keep in lockstep with the plan request below.
+    musicTrack: LEAD_TRIAL_MUSIC_TRACK,
     skipMusic: false,
     musicBedLevel: 0.22,
-    selectedStyle: "Cinematic Luxury",
+    selectedStyle: LEAD_TRIAL_STYLE,
     runwayConfig: { ...(editPlan.runwayConfig || {}), useCrossfades: true },
     brandKit: null,
     organizationId: null,
@@ -389,7 +403,12 @@ async function processOne() {
           city: [imp.json?.address?.city, imp.json?.address?.state].filter(Boolean).join(", "),
           ...(imp.json?.facts || {})
         },
-        selectedStyle: "Cinematic Luxury",
+        selectedStyle: LEAD_TRIAL_STYLE,
+        // v62.117: musicTrack in the PLAN request too — the plan's
+        // beat-grid snap keys off the track file; omitting it here would
+        // snap to the style default by fallback, which works only until
+        // the default moves. Explicit in both places, by design.
+        musicTrack: LEAD_TRIAL_MUSIC_TRACK,
         exportFormat: "vertical",
         engine: "veo",
         targetDurationSec: 30,
