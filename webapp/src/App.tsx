@@ -1,4 +1,5 @@
 import { useEffect, Component, type ReactNode } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import { useStore } from "./lib/store";
 import AuthScreen from "./screens/AuthScreen";
 import DashboardScreen from "./screens/DashboardScreen";
@@ -111,6 +112,7 @@ export default function App() {
         {screen === "editStudio" && <EditStudioScreen />}
       </main>
       <Toast />
+      <Analytics />
     </ErrorBoundary>
   );
 }
