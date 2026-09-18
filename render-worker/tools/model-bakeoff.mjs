@@ -1,4 +1,16 @@
-// Vistalia — i2v model bake-off harness (v59, round 2).
+// Vistalia — i2v model bake-off harness (v59 round 2; v63.0 round 3).
+//
+// Round 3 (Sep 17 2026): Troy + customers don't love Kling V3 Std — the
+// named faults are architecture morph/invention, wrong motion, and soft
+// output. Candidates are the Sep-2026 fal generation: MiniMax H3 (open
+// weights, native 2K) + H3 Max (incl. the numeric camera-controls
+// endpoint: azimuth/elevation/distance keyframes + rigid default prompt),
+// Wan 3.0, Kling 3.0 Pro (1080p), Gemini Omni 1.1 Flash, Veo 3.1 Lite as
+// the price floor, and Kling V3 Std as the baseline. New `--set=real`:
+// six REAL Phoenix HDR listing photos (public photographer-portfolio
+// URLs) — the canary set is AI-generated and went 30/30 with zero
+// discrimination. Numeric scoring (first-frame SSIM, line drift, flow
+// smoothness, sharpness) runs OUTSIDE this harness on the clips dir.
 //
 // Round 1 (June 9, eyeball-judged): Veo 3 Fast vs Kling o3 vs Seedance 1.0
 // Pro on two failure scenes → Troy picked Veo 3.1 Fast. A month of
@@ -24,6 +36,11 @@
 //   node render-worker/tools/model-bakeoff.mjs --full          # all 12 scenes × all models (~$25)
 //   node render-worker/tools/model-bakeoff.mjs --full --models=kling3std,hailuo23fastpro
 //   node render-worker/tools/model-bakeoff.mjs --dry           # print plan + cost, no API calls
+// Round 3 (local Mac is fine — only FAL_KEY needed, results in render-worker/bakeoff-results/):
+//   cd render-worker && FAL_KEY=… node tools/model-bakeoff.mjs --set=real --models=round3
+//       → 3 probe scenes (kitchen, bedroom, twilight) × 8 models ≈ $16
+//   cd render-worker && FAL_KEY=… node tools/model-bakeoff.mjs --set=real --full --models=h3maxcam,h3,wan30
+//       → all 6 real scenes for the finalists (resume-safe: finished clips are never re-bought)
 //
 // Env: FAL_KEY required; OPENAI_API_KEY / GEMINI_API_KEY for the QC judge
 // (without them clips still generate but scoring is eyeball-only).
@@ -56,6 +73,24 @@ const SCENES = [
   { name: "11-ramada", roomType: "exterior" },
   { name: "12-hallway", roomType: "hallway" }
 ].map((s, i) => ({ ...s, index: i, imageUrl: `${APP_URL}/showcase/canary/${s.name}.jpg` }));
+
+/* ── Round-3 real set: six real Phoenix HDR listing photos (1800×1200),
+   public photographer-portfolio URLs (snaplyst.com). Real HDR flattening,
+   real wide-angle distortion, real straight lines — the things the AI
+   canaries don't have. Private test inputs only; never shipped. Probe =
+   the first three (kitchen straight lines + pendants, bedroom patterned
+   rug + art + fan blades, twilight exterior with railings + sky). */
+
+const REAL_BASE = "https://snaplyst.com/wp-content/uploads/2025/05";
+const REAL_SCENES = [
+  { name: "r1-kitchen-greatroom", roomType: "kitchen", file: "HDR-Real-Estate-Photography-Phoenix-Arizona_10-23.webp" },
+  { name: "r2-primary-bedroom", roomType: "bedroom", file: "HDR-Real-Estate-Photography-Phoenix-Arizona_10-28.webp" },
+  { name: "r3-exterior-twilight", roomType: "exterior", file: "Twilight-Real-Estate-Photos-Phoenix-Metro-Arizona-12.webp" },
+  { name: "r4-bath-mirrors", roomType: "bathroom", file: "HDR-Real-Estate-Photography-Phoenix-Arizona_10-25.webp" },
+  { name: "r5-pool-patio", roomType: "pool", file: "HDR-Real-Estate-Photography-Phoenix-Arizona_10-31.webp" },
+  { name: "r6-kitchen-modern", roomType: "kitchen", file: "HDR-Real-Estate-Photography-Phoenix-Arizona_10-35.webp" }
+].map((s, i) => ({ ...s, index: i, imageUrl: `${REAL_BASE}/${s.file}` }));
+const REAL_PROBE_COUNT = 3;
 
 /* ── Prompts — mirrors production risk routing ───────────────────────────
    CONSTRAINED_* copied from runway-job.mjs CONSTRAINED_PROMPTS (v40/v46);
@@ -225,13 +260,16 @@ const MODELS = {
     })
   },
   kling3std: {
+    // Round-3 baseline = production engine. Schema moved since July:
+    // the image field is now `start_image_url` (fal API page 2026-09-17);
+    // 5s to match the round-3 candidates ($0.42 @720p, audio off).
     endpoint: "fal-ai/kling-video/v3/standard/image-to-video",
-    label: "Kling V3 Standard",
-    estPerScene: 0.5,
+    label: "Kling V3 Standard (production baseline)",
+    estPerScene: 0.42,
     buildInput: (p, img) => ({
       prompt: p,
-      image_url: img,
-      duration: "6",
+      start_image_url: img,
+      duration: "5",
       negative_prompt: NEGATIVE_PROMPT,
       generate_audio: false
     })
@@ -258,7 +296,119 @@ const MODELS = {
       duration: "6",
       resolution: "720p"
     })
+  },
+
+  /* ── Round 3 (Sep 2026) candidates. Schemas from fal API pages 2026-09-17;
+     estPerScene = fal list price for the configured duration/resolution,
+     audio off. A 422 in probe mode means the schema moved — fix here. */
+  h3maxcam: {
+    // The only production i2v endpoint with NUMERIC camera keyframes
+    // (azimuth°/elevation°/distance on a 0–1 timeline) and a rigid-scene
+    // default prompt. distance 1.0 = the reference camera; 0.92 ≈ the same
+    // ~8% push the kitchen constrained prompt asks for. prompt_expansion
+    // disabled so our prompt is used verbatim.
+    endpoint: "minimax/h3-max/camera-controls",
+    label: "H3 Max camera-controls 1080p (dolly keyframes)",
+    estPerScene: 0.8,
+    buildInput: (p, img) => ({
+      prompt: p,
+      image_url: img,
+      duration: 5,
+      resolution: "1080P",
+      prompt_expansion_mode: "disabled",
+      camera_trajectory: [
+        { time: 0, azimuth: 0, elevation: 0, distance: 1.0 },
+        { time: 1, azimuth: 0, elevation: 0, distance: 0.92 }
+      ]
+    })
+  },
+  h3max: {
+    endpoint: "minimax/h3-max/image-to-video",
+    label: "H3 Max 1080p (prompt camera)",
+    estPerScene: 0.8,
+    buildInput: (p, img) => ({
+      prompt: p,
+      image_url: img,
+      duration: 5,
+      resolution: "1080P",
+      prompt_expansion_mode: "disabled"
+    })
+  },
+  h3: {
+    // Open-weights base (self-host hedge). Native 2K — no 1080p tier.
+    endpoint: "minimax/h3/image-to-video",
+    label: "MiniMax H3 2K (open weights)",
+    estPerScene: 0.65,
+    buildInput: (p, img) => ({
+      prompt: p,
+      image_url: img,
+      duration: 5,
+      resolution: "2K",
+      prompt_expansion_mode: "disabled"
+    })
+  },
+  wan30: {
+    // Best independent evidence of locked scene geometry; known habit of
+    // inserting an unrequested cut on long clips → keep ≤6s, expansion off.
+    endpoint: "alibaba/wan-3.0/image-to-video",
+    label: "Wan 3.0 1080p",
+    estPerScene: 1.0,
+    buildInput: (p, img) => ({
+      prompt: p,
+      start_image_url: img,
+      duration: 5,
+      resolution: "1080p",
+      aspect_ratio: "adaptive",
+      audio: false,
+      enable_prompt_expansion: false
+    })
+  },
+  kling3pro: {
+    endpoint: "fal-ai/kling-video/v3/pro/image-to-video",
+    label: "Kling 3.0 Pro 1080p",
+    estPerScene: 0.56,
+    buildInput: (p, img) => ({
+      prompt: p,
+      start_image_url: img,
+      duration: "5",
+      negative_prompt: NEGATIVE_PROMPT,
+      generate_audio: false
+    })
+  },
+  omni11: {
+    // Google's post-Veo line (#2–3 on both arenas). 1080p is upscaled.
+    endpoint: "google/gemini-omni-flash/v1.1/image-to-video",
+    label: "Gemini Omni 1.1 Flash 1080p",
+    estPerScene: 0.75,
+    buildInput: (p, img) => ({
+      prompt: p,
+      image_url: img,
+      duration: 5,
+      resolution: "1080p",
+      aspect_ratio: "16:9"
+    })
+  },
+  veo31lite: {
+    // Price floor ($0.05/s at 1080p, audio off). 4/6/8s only.
+    endpoint: "fal-ai/veo3.1/lite/image-to-video",
+    label: "Veo 3.1 Lite 1080p 4s (price floor)",
+    estPerScene: 0.2,
+    buildInput: (p, img) => ({
+      prompt: p,
+      image_url: img,
+      duration: "4s",
+      resolution: "1080p",
+      aspect_ratio: "auto",
+      negative_prompt: NEGATIVE_PROMPT,
+      generate_audio: false,
+      safety_tolerance: "4"
+    })
   }
+};
+
+// `--models=round3` expands to the Sep-2026 set + the Kling V3 Std baseline.
+const MODEL_GROUPS = {
+  round3: ["kling3std", "kling3pro", "h3maxcam", "h3max", "h3", "wan30", "omni11", "veo31lite"]
 };
 
 /* ── Small utils ─────────────────────────────────────────────────────── */
@@ -268,7 +418,10 @@ function parseArgs(argv) {
   for (const a of argv.slice(2)) {
     if (a === "--full") args.full = true;
     else if (a === "--dry") args.dry = true;
-    else if (a.startsWith("--models=")) args.models = a.slice(9).split(",").map((s) => s.trim()).filter(Boolean);
+    else if (a.startsWith("--models=")) {
+      args.models = a.slice(9).split(",").map((s) => s.trim()).filter(Boolean)
+        .flatMap((k) => MODEL_GROUPS[k] || [k]);
+    }
     else if (a.startsWith("--scenes=")) args.scenes = a.slice(9).split(",").map((s) => s.trim()).filter(Boolean);
     else if (a.startsWith("--out=")) args.out = a.slice(6);
     else if (a.startsWith("--set=")) args.set = a.slice(6);
@@ -366,6 +519,8 @@ async function main() {
   if (args.set === "hard") {
     const all = await loadHardScenes(args.limit);
     scenes = args.full ? all : all.slice(0, 1);
+  } else if (args.set === "real") {
+    scenes = args.full ? REAL_SCENES : REAL_SCENES.slice(0, REAL_PROBE_COUNT);
   } else {
     scenes = args.full ? SCENES : SCENES.filter((s) => s.name === "04-kitchen");
   }
@@ -374,7 +529,7 @@ async function main() {
 
   const est = modelKeys.reduce((sum, k) => sum + MODELS[k].estPerScene * scenes.length, 0);
   console.log(`\n=== i2v bake-off ===`);
-  console.log(`set    : ${args.set}${args.set === "hard" ? " (production failure scenes, from audit log)" : ""}`);
+  console.log(`set    : ${args.set}${args.set === "hard" ? " (production failure scenes, from audit log)" : args.set === "real" ? " (real Phoenix HDR listing photos)" : ""}`);
   console.log(`models : ${modelKeys.map((k) => MODELS[k].label).join(" | ")}`);
   console.log(`scenes : ${scenes.length} (${scenes.map((s) => s.name.slice(0, 3)).join(",")})`);
   console.log(`judge  : ${qcEnabled() ? "production QC (frame-vs-photo)" : "DISABLED — no OPENAI/GEMINI key; eyeball-only"}`);
