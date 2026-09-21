@@ -29,6 +29,7 @@ import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
 import { qcVeoClip, qcEnabled, qcMasterSceneCheck, qcSwapCandidatePhoto } from "./veo-qc.mjs";
 import { isMinimaxModel } from "./veo-job.mjs";
 import { parallaxPolicy, renderParallax } from "./parallax-job.mjs";
+import { gateClip, gateEnabled } from "./clip-gate.mjs";
 
 /* v63.0 ENGINE FAMILIES. Every "is this Kling?" gate in this file was
    really asking one of three different questions, and the MiniMax H3
@@ -59,6 +60,17 @@ const isKlingEngine = () => engineId().includes("kling");
 const isMinimaxEngine = () => isMinimaxModel(engineId());
 const isExactSecondsEngine = () => isKlingEngine() || isMinimaxEngine();
 const isVerticalSourceEngine = () => isKlingEngine() || isMinimaxEngine();
+
+// v64 MEASURED GATE: every per-clip QC verdict is ANDed with numbers from
+// tools/clip-gate.py (zoom vs budget, flow-compensated rigidity, straight-edge
+// persistence, exposure pumping). The VLM judges four frames for objects; it
+// cannot see a 37% push or a wall morphing between its samples. Measured
+// reasons are "hard" (never "motion…"), so they drive the ladder and, with
+// PARALLAX_MODE set, end on the exact engine instead of a fourth roll.
+async function qcClipMeasured(args) {
+  const verdict = await qcVeoClip(args);
+  return gateClip(verdict, args.clipPath, { sceneIndex: args.sceneIndex });
+}
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -955,7 +967,7 @@ export async function renderRunwayJob(body, options = {}) {
       }
       touchWatchdog();
       const swapSrcUrl = swapScene.__deliveryAspectUrl || candidateUrl;
-      const verdict = await qcVeoClip({
+      const verdict = await qcClipMeasured({
         clipPath: clip.clipPath, sourceImageUrl: swapSrcUrl,
         sceneIndex: index, roomType: scene.roomType, tempDir
       });
@@ -1183,7 +1195,7 @@ export async function renderRunwayJob(body, options = {}) {
           // sweep already crops its reference — v60.7 fixed this same class
           // there; the per-clip pass was simply never updated.)
           const qcSrcUrl = scene.__deliveryAspectUrl || pickImageUrl(scene, qcPhoto);
-          let verdict = await qcVeoClip({
+          let verdict = await qcClipMeasured({
             clipPath: result.clipPath, sourceImageUrl: qcSrcUrl,
             sceneIndex: index, roomType: scene.roomType, tempDir
           });
@@ -1202,7 +1214,7 @@ export async function renderRunwayJob(body, options = {}) {
               // first constrained attempt uses the gentle-motion variant).
               attemptsUsed++;
               const retry = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, strictConstrained: true });
-              const verdict2 = await qcVeoClip({
+              const verdict2 = await qcClipMeasured({
                 clipPath: retry.clipPath, sourceImageUrl: qcSrcUrl,
                 sceneIndex: index, roomType: scene.roomType, tempDir
               });
@@ -1261,7 +1273,7 @@ export async function renderRunwayJob(body, options = {}) {
                 try {
                   attemptsUsed++;
                   third = await generateVeoSceneClip(scene, manifest, tempDir, index, { constrained: true, gentleReroll: true });
-                  verdict3 = await qcVeoClip({
+                  verdict3 = await qcClipMeasured({
                     clipPath: third.clipPath, sourceImageUrl: qcSrcUrl,
                     sceneIndex: index, roomType: scene.roomType, tempDir
                   });
@@ -1422,6 +1434,9 @@ export async function renderRunwayJob(body, options = {}) {
       `${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
       `${droppedCount} dropped (floor-of-the-floor). Detected artifacts shipped: 0 by construction.`
     );
+    if (gateEnabled()) {
+      console.info(`[gate] measured clip gate ON (zoom/rigidity/lines/flicker on every generated clip; thresholds via GATE_*).`);
+    }
     if (parallaxPrimaryCount > 0) {
       console.info(`[parallax] ${parallaxPrimaryCount}/${photoScenes.length} scene${photoScenes.length === 1 ? "" : "s"} rendered on the depth-parallax engine as primary (PARALLAX_MODE=${String(process.env.PARALLAX_MODE || "off")}, $0 generation, exact camera).`);
     }

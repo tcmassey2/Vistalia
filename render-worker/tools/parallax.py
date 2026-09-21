@@ -23,7 +23,7 @@ move out, every pixel from the customer's photo, straight lines straight.
 Usage (the Node wrapper in src/parallax-job.mjs builds this):
   parallax.py --src photo.png --out clip.mp4 --seconds 5.0 [--fps 30]
               [--out-size 1080x1920] [--zoom 1.07] [--yaw 0.4] [--pitch -0.2]
-              [--truck 0] [--near-ratio 4] [--map-every 2] [--layers 32]
+              [--truck 0] [--near-ratio 4] [--map-every 3] [--layers 32]
               [--model models/dav2_small.onnx] [--report r.json] [--depth-out d.png]
   parallax.py --check [--model ...]        # dependency / model probe, JSON out
 
@@ -446,7 +446,7 @@ def main():
     ap.add_argument("--depth-res", type=int, default=770)
     ap.add_argument("--min-seg", type=int, default=70)
     ap.add_argument("--layers", type=int, default=32)
-    ap.add_argument("--map-every", type=int, default=2, help="compute warp maps every N frames, interpolate between")
+    ap.add_argument("--map-every", type=int, default=3, help="compute warp maps every N frames, interpolate between (3 = maps at 10 fps; 2x faster than every frame, no visible loss)")
     ap.add_argument("--model", default=os.path.join(here, "..", "models", "dav2_small.onnx"))
     ap.add_argument("--depth-out", default=None)
     ap.add_argument("--report", default=None)
