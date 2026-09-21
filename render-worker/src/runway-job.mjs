@@ -28,6 +28,7 @@ import { runFFmpeg, timed , ENCODE_THREADS } from "./ffmpeg-runner.mjs";
 import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
 import { qcVeoClip, qcEnabled, qcMasterSceneCheck, qcSwapCandidatePhoto } from "./veo-qc.mjs";
 import { isMinimaxModel } from "./veo-job.mjs";
+import { parallaxPolicy, renderParallax } from "./parallax-job.mjs";
 
 /* v63.0 ENGINE FAMILIES. Every "is this Kling?" gate in this file was
    really asking one of three different questions, and the MiniMax H3
@@ -42,7 +43,17 @@ import { isMinimaxModel } from "./veo-job.mjs";
                           ONLY. MiniMax de-escalates through camera_trajectory
                           distance (numeric) and keeps the Veo-era constrained
                           templates on risky rooms, because rigidity prose is
-                          exactly what H3 obeys. */
+                          exactly what H3 obeys.
+   v64.0 DEPTH-PARALLAX ENGINE (parallax-job.mjs + tools/parallax.py).
+   PARALLAX_MODE=off|floor|interior|all. Stage-2 bake-off on the 9:16
+   production crops (MODEL_BAKEOFF_SEP2026.md §4b): MiniMax's numeric camera
+   is IGNORED on vertical input (zoom 0.91–1.01 at both distance 0.92 and
+   0.96), Kling v3 Pro pushes 9–37% against an 8% ask, Wan flickers. No
+   hosted engine holds the camera on the delivery aspect, so the exact
+   engine becomes the primary for interiors and the floor for everything:
+   an exact 6–8% dolly from the customer's own pixels, native resolution,
+   nothing invented. Generative stays for exteriors/pools where sky and
+   water motion sells (PARALLAX_MODE=interior). */
 const engineId = () => String(process.env.FAL_VIDEO_MODEL || "").toLowerCase();
 const isKlingEngine = () => engineId().includes("kling");
 const isMinimaxEngine = () => isMinimaxModel(engineId());
@@ -731,6 +742,7 @@ export async function renderRunwayJob(body, options = {}) {
   let qcRetryCount = 0;      // v31.2: clips regenerated constrained after QC fail
   let qcThirdTryCount = 0;   // v34: clips that needed the third (pull_out) attempt
   let qcFloorCount = 0;      // v36: clips shipped on the premium photo-motion floor
+  let parallaxPrimaryCount = 0; // v64: scenes rendered on the depth-parallax engine as the PRIMARY (no fal spend)
   let qcFailOpenCount = 0;   // v45.1: clips that shipped with NO completed verdict (rate-limit blackout telemetry)
   let guardForcedCount = 0;
   // v49 stall circuit breaker. 2026-07-16 fal outage: all 8 scenes stalled
@@ -996,6 +1008,32 @@ export async function renderRunwayJob(body, options = {}) {
           );
         }
         let usedConstrained = constrained;
+        // ── v64 DEPTH-PARALLAX PRIMARY ──────────────────────────────────
+        // PARALLAX_MODE=interior|all routes this scene to tools/parallax.py
+        // BEFORE any fal spend: an exact 6-8% dolly from the customer's own
+        // pixels, no ladder, no QC roll. (Sep-21 stage-2 bake-off: on the
+        // 9:16 production crop no hosted engine holds the camera — MiniMax
+        // ignores its numeric trajectory, Kling v3 Pro pushes 9-37% against
+        // an 8% ask.) Fails closed to the generative ladder below, so a
+        // broken Python on the host costs nothing but the old behaviour.
+        if (parallaxPolicy(scene) === "primary") {
+          try {
+            const clip = await generateKenBurnsFallback(scene, manifest, tempDir, index, {
+              durationSec: Number(scene.duration) > 0 ? Number(scene.duration) + 0.5 : undefined,
+              parallaxOnly: true
+            });
+            parallaxPrimaryCount++;
+            scenesCompleted++;
+            touchWatchdog();
+            // fallback:true keeps the deterministic-clip contract downstream
+            // (no final-sweep inspection, no gimbal pass); parallaxPrimary
+            // tells the audit this was the engine, not a rescue.
+            return { ...clip, fallback: true, usedPhotoMotionFloor: false, parallaxPrimary: true, attemptsUsed: 0, floorReason: null };
+          } catch (parErr) {
+            touchWatchdog();
+            console.warn(`[parallax] scene ${index + 1}: primary render failed (${String(parErr?.message || parErr).slice(0, 160)}) — generative ladder as before.`);
+          }
+        }
         // Circuit open → don't even ask fal; straight to the floor.
         if (falStallCount >= FAL_STALL_BREAKER) {
           try {
@@ -1384,6 +1422,9 @@ export async function renderRunwayJob(body, options = {}) {
       `${qcFloorCount} shipped on the PREMIUM PHOTO MOTION floor (v36, deterministic), ` +
       `${droppedCount} dropped (floor-of-the-floor). Detected artifacts shipped: 0 by construction.`
     );
+    if (parallaxPrimaryCount > 0) {
+      console.info(`[parallax] ${parallaxPrimaryCount}/${photoScenes.length} scene${photoScenes.length === 1 ? "" : "s"} rendered on the depth-parallax engine as primary (PARALLAX_MODE=${String(process.env.PARALLAX_MODE || "off")}, $0 generation, exact camera).`);
+    }
     // v45.1 blackout telemetry (m32b: EVERY inspection 429'd and the render
     // shipped fully unverified without a single loud line saying so).
     if (qcFailOpenCount > 0) {
@@ -2418,6 +2459,45 @@ export async function generateKenBurnsFallback(scene, manifest, tempDir, sceneIn
 
   const clipPath = path.join(tempDir, `fallback-${String(sceneIndex).padStart(3, "0")}.mp4`);
   const motion = String(scene.cameraMotion || "push_in").toLowerCase();
+
+  // v64 DEPTH-PARALLAX RUNG (see parallax-job.mjs / tools/parallax.py). With
+  // PARALLAX_MODE set, this sits above homography drift: the same "every
+  // pixel from the photo" contract, plus real parallax (near things move
+  // more than far things) and straight edges kept straight by construction
+  // (per-edge affine depth + exact pinhole dolly, self-checked per clip).
+  // Falls through to v39 on any error — unless the caller asked for
+  // parallax only (the v64 primary path prefers the generative ladder to a
+  // homography floor when parallax itself is down).
+  if (parallaxPolicy(scene) !== "off" || options.parallaxOnly) {
+    try {
+      const r = await renderParallax({
+        photoPath: localPhoto,
+        outPath: clipPath,
+        durationSec: duration,
+        width: dimensions.width,
+        height: dimensions.height,
+        roomType: scene.roomType,
+        sceneIndex,
+        cameraMotion: motion
+      });
+      console.info(`[floor] scene ${sceneIndex + 1}: DEPTH-PARALLAX ${options.parallaxOnly ? "primary" : "floor"} rendered (${duration}s, zoom ${r.move.zoom}).`);
+      return {
+        sceneIndex,
+        photoId: scene.photoId,
+        clipPath,
+        duration,
+        transition: scene.transition || "crossfade",
+        overlay: scene.overlay || null,
+        runwayTaskId: null,
+        fallback: true,
+        floorEngine: "parallax",
+        parallaxSummary: r.summary
+      };
+    } catch (parErr) {
+      if (options.parallaxOnly) throw parErr;
+      console.warn(`[floor] scene ${sceneIndex + 1}: depth-parallax unavailable (${String(parErr?.message || parErr).slice(0, 160)}) — v39 homography-drift floor.`);
+    }
+  }
 
   // v39 PRIMARY FLOOR: homography drift (see homography-drift.mjs). The
   // deterministic terminal rung — camera rotation + gentle dolly composed
@@ -3893,12 +3973,12 @@ export async function uploadPerSceneClips({ manifest, jobId, normalizedClips, cl
       cameraMotion: original.cameraMotion || "",
       duration: Number(clip.duration || original.duration || 5),
       runwayPrompt: original.runwayPrompt || "",
-      wasFallback: Boolean(original.fallback),
+      wasFallback: Boolean(original.fallback) && !original.parallaxPrimary,
       // v49 audit enrichment — the Veo path finally writes the v23 fields.
       // engineUsed/fallbackReason/attempts power the floor-rate tuning
       // queries (render_scene_breakdown) and, later, the MLS-Safe
       // Certificate's per-scene provenance.
-      engineUsed: (original.usedPhotoMotionFloor || original.fallback) ? "photo_motion" : "veo",
+      engineUsed: original.parallaxPrimary ? "parallax" : (original.usedPhotoMotionFloor || original.fallback) ? "photo_motion" : "veo",
       fallbackReason: original.floorReason || null,
       attempts: Number.isFinite(original.attemptsUsed) ? original.attemptsUsed : null,
       sweepReplaced: Boolean(original.sweepReplaced),

@@ -2,6 +2,9 @@
 # v24: stripped back to lean v22-era image. Depth engine code is in
 # the repo but not routed by server.mjs, so we don't need its heavy
 # system deps (X11 dev libs, xvfb, build-essential, Mesa).
+# v64: python3 sidecar for the depth-parallax engine (tools/parallax.py) —
+# numpy + opencv-contrib-headless + onnxruntime and the Depth Anything V2
+# small ONNX baked in (~260 MB). No X11, no GL: the warp is plain OpenCV.
 # Render Pro 4GB plan recommended. Smaller plans WILL OOM on Gen-4 renders.
 
 FROM node:20-bookworm-slim
@@ -14,9 +17,11 @@ WORKDIR /app
 #   - ffmpeg for stitching Runway clips and audio/transitions.
 #   - fonts so Remotion text overlays render correctly.
 #   - ca-certificates for HTTPS to Supabase, OpenAI, Runway, ElevenLabs.
+#   - python3/pip + curl for the v64 depth-parallax sidecar.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     ffmpeg \
     fonts-liberation \
     fonts-noto-color-emoji \
@@ -40,7 +45,28 @@ RUN apt-get update \
     libcairo2 \
     libasound2 \
     libdbus-1-3 \
+    python3 \
+    python3-pip \
   && rm -rf /var/lib/apt/lists/*
+
+# v64 depth-parallax sidecar (tools/parallax.py, driven by src/parallax-job.mjs).
+# Pinned ranges known to ship cp311 wheels; opencv-CONTRIB for LSD line
+# segments + ximgproc joint-bilateral. --break-system-packages: PEP 668 on
+# bookworm; this image has no other Python consumers.
+RUN pip3 install --no-cache-dir --break-system-packages \
+      "numpy>=1.26,<2.4" \
+      "opencv-contrib-python-headless>=4.10,<4.14" \
+      "onnxruntime>=1.19,<1.26"
+
+# Depth Anything V2 small (Apache-2.0, ~99 MB fp32 ONNX). Baked into the
+# image so a cold container never downloads at render time; the size check
+# fails the build rather than shipping an HTML error page as a model.
+# Override the path at runtime with PARALLAX_MODEL_PATH.
+RUN mkdir -p /app/models \
+  && curl -fsSL --retry 3 --retry-delay 5 \
+       -o /app/models/dav2_small.onnx \
+       "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx" \
+  && python3 -c "import os,sys; s=os.path.getsize('/app/models/dav2_small.onnx'); print('depth model', s, 'bytes'); sys.exit(0 if s > 50_000_000 else 1)"
 
 # Install dependencies. Using `npm install` rather than `npm ci` because
 # the lock file isn't regenerated in the sandbox where edits happen.
@@ -55,6 +81,9 @@ COPY . .
 # Pre-warm Remotion's Chromium download at build time so the first render
 # doesn't have to download ~150MB on a cold container.
 RUN node -e "require('@remotion/renderer').ensureBrowser().then(() => console.log('Chromium ready')).catch(err => { console.error(err); process.exit(1); })"
+
+# v64: prove the sidecar imports and sees the model, at build time.
+RUN python3 tools/parallax.py --check --model /app/models/dav2_small.onnx
 
 ENV PORT=8787
 ENV NODE_ENV=production

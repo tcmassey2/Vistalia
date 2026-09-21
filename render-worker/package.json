@@ -5,11 +5,13 @@
   "type": "module",
   "description": "Remotion render worker for EstateMotion MP4 and thumbnail generation.",
   "scripts": {
-    "check": "node --check src/render-job.mjs && node --check src/runway-job.mjs && node --check src/veo-job.mjs && node --check server.mjs && node --check render-local.mjs && node --check render-openai-plan.mjs && node --check verify-async-render.mjs",
+    "check": "node --check src/render-job.mjs && node --check src/runway-job.mjs && node --check src/veo-job.mjs && node --check src/parallax-job.mjs && node --check server.mjs && node --check render-local.mjs && node --check render-openai-plan.mjs && node --check verify-async-render.mjs",
     "start": "node server.mjs",
     "render:sample": "node render-local.mjs",
     "render:openai-plan": "node render-openai-plan.mjs",
-    "verify:async": "node verify-async-render.mjs"
+    "verify:async": "node verify-async-render.mjs",
+    "test:parallax": "node tests/parallax-job.test.mjs",
+    "parallax:check": "python3 tools/parallax.py --check"
   },
   "dependencies": {
     "@fal-ai/client": "^1.4.0",

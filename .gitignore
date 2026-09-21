@@ -82,3 +82,6 @@ bakeoff-results/
 # Bridge-session sweep debris (stranded git locks, patch drop folders).
 # Contents are staging artifacts meant for the Trash, never for history.
 _to_delete/
+
+# v64 depth-parallax: the Depth Anything V2 ONNX is downloaded at Docker build time, never committed
+render-worker/models/

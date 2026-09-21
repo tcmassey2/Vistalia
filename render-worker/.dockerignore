@@ -1,0 +1,12 @@
+# Keep the Render build context lean. node_modules is rebuilt in-image (a
+# macOS node_modules would clobber the Linux sharp binary); clips, scratch
+# and the downloaded depth model never belong in the context.
+node_modules
+bakeoff-results
+out
+scratch
+models
+_to_delete
+*.log
+.env
+.env.*
