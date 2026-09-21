@@ -116,6 +116,27 @@ docker run --rm -p 8787:8787 \
 
 For local verification without Supabase upload, omit the Supabase variables. The worker will return a temporary worker-served `mp4Url` for the rendered file.
 
+## Depth-parallax engine + measured gate (v64)
+
+`tools/parallax.py` (python3 + numpy + opencv-contrib-headless + onnxruntime, Depth Anything V2 small baked into the Docker image at `/app/models/dav2_small.onnx`) renders a scene from the depth of the customer's photo: exact 6–8% dolly, native resolution, every pixel from the photo. `src/parallax-job.mjs` drives it; `src/clip-gate.mjs` + `tools/clip-gate.py` measure every generated clip. Decision record: `~/Documents/EstateMotion/MODEL_BAKEOFF_SEP2026.md` §4b/§8.
+
+```
+PARALLAX_MODE=off        # default — v63 behaviour, nothing changes
+PARALLAX_MODE=floor      # parallax replaces homography drift as the QC floor
+PARALLAX_MODE=interior   # production setting: interiors render on parallax as the PRIMARY (no fal spend);
+                         # exteriors/pools/twilights stay generative + measured gate + parallax floor
+PARALLAX_MODE=all        # every scene on parallax
+MEASURED_GATE=1|0        # force the measured gate on/off (default: on whenever PARALLAX_MODE != off)
+GATE_ZOOM_MIN=1.01 GATE_ZOOM_MAX=1.16 GATE_RIGID_MAX=0.15 GATE_LINES_MIN=50 GATE_FLICKER_MAX=3.0
+PARALLAX_SUPERSAMPLE=1.5 # crop scale fed to the renderer (1–2)
+PARALLAX_MAP_EVERY=3     # warp maps every N frames (lerped); 2 = slower, marginally finer
+PARALLAX_LAYERS=32       # depth layers for the z-test
+PARALLAX_NEAR_RATIO=4    # assumed far/near depth ratio (relative depth's unknown shift)
+PARALLAX_PYTHON=python3  PARALLAX_MODEL_PATH=/app/models/dav2_small.onnx
+```
+
+Checks: `npm run parallax:check` (imports + model present), `npm run test:parallax` (routing, choreography, gate thresholds), `python3 tools/clip-gate.py --clip some.mp4`. Everything fails closed: Python or model missing → the generative ladder and the v39 homography floor exactly as before. Cost: ~50–100 s of worker CPU per 5-second interior scene, serialised; interiors are $0 in generation.
+
 ## Required Runtime Env
 
 - `SUPABASE_URL`
