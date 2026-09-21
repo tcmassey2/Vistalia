@@ -95,6 +95,21 @@ const REAL_SCENES = [
 ].map((s, i) => ({ ...s, index: i, imageUrl: `${REAL_BASE}/${s.file}` }));
 const REAL_PROBE_COUNT = 3;
 
+/* ── Stage 2: the same six photos as PRODUCTION feeds them — v62.10
+   delivery-aspect crops (1080×1920, centered, lanczos) uploaded to fal
+   storage. URLs live in bakeoff-results/<date>/src916/urls.json (built by
+   the Sep-21 stage-2 prep); `--set=real916`. Measures output resolution
+   and sharpness in the shipped aspect and calibrates distance→zoom. */
+const REAL916_URLS = {
+  "r1-kitchen-greatroom": "https://v3b.fal.media/files/b/0aab5c3d/Ayhz8hdIHXVfPGreS8Jxz_r1-kitchen-greatroom.jpg",
+  "r2-primary-bedroom": "https://v3b.fal.media/files/b/0aab5c3d/dCeByNOTeSFcySS8j3_92_r2-primary-bedroom.jpg",
+  "r3-exterior-twilight": "https://v3b.fal.media/files/b/0aab5c3d/CAzwgWeGe-oWuDX-i3yQD_r3-exterior-twilight.jpg",
+  "r4-bath-mirrors": "https://v3b.fal.media/files/b/0aab5c3d/QqA29hX3cF7tMadR_Cxhf_r4-bath-mirrors.jpg",
+  "r5-pool-patio": "https://v3b.fal.media/files/b/0aab5c3d/JtUcN6bLF6SM4XNvFeyxA_r5-pool-patio.jpg",
+  "r6-kitchen-modern": "https://v3b.fal.media/files/b/0aab5c3d/kLWKeF_VDuLeJFIbBYDNc_r6-kitchen-modern.jpg"
+};
+const REAL916_SCENES = REAL_SCENES.map((s) => ({ ...s, imageUrl: REAL916_URLS[s.name] || s.imageUrl }));
+
 /* ── Prompts — mirrors production risk routing ───────────────────────────
    CONSTRAINED_* copied from runway-job.mjs CONSTRAINED_PROMPTS (v40/v46);
    FIDELITY_SUFFIX from VEO_FIDELITY_SUFFIX. Keep in sync by hand — this
@@ -325,6 +340,24 @@ const MODELS = {
       ]
     })
   },
+  h3maxcam96: {
+    // Stage-2 calibration point: distance 0.96 (the 0.92 probe measured
+    // ~13% on the kitchen against an 8% ask).
+    endpoint: "minimax/h3-max/camera-controls",
+    label: "H3 Max camera-controls 1080p (distance 0.96)",
+    estPerScene: 0.8,
+    buildInput: (p, img) => ({
+      prompt: p,
+      image_url: img,
+      duration: 5,
+      resolution: "1080P",
+      prompt_expansion_mode: "disabled",
+      camera_trajectory: [
+        { time: 0, azimuth: 0, elevation: 0, distance: 1.0 },
+        { time: 1, azimuth: 0, elevation: 0, distance: 0.96 }
+      ]
+    })
+  },
   h3max: {
     endpoint: "minimax/h3-max/image-to-video",
     label: "H3 Max 1080p (prompt camera)",
@@ -411,7 +444,10 @@ const MODELS = {
 
 // `--models=round3` expands to the Sep-2026 set + the Kling V3 Std baseline.
 const MODEL_GROUPS = {
-  round3: ["kling3std", "kling3pro", "h3maxcam", "h3max", "h3", "wan30", "omni11", "veo31lite"]
+  round3: ["kling3std", "kling3pro", "h3maxcam", "h3max", "h3", "wan30", "omni11", "veo31lite"],
+  // Stage 2 (vertical crops): two camera-controls distances + the env-flip
+  // fallback; Wan rides on the probe scenes only (see --scenes).
+  stage2: ["h3maxcam96", "h3maxcam", "kling3pro"]
 };
 
 /* ── Small utils ─────────────────────────────────────────────────────── */
@@ -612,6 +648,8 @@ async function main() {
     scenes = args.full ? all : all.slice(0, 1);
   } else if (args.set === "real") {
     scenes = args.full ? REAL_SCENES : REAL_SCENES.slice(0, REAL_PROBE_COUNT);
+  } else if (args.set === "real916") {
+    scenes = args.full ? REAL916_SCENES : REAL916_SCENES.slice(0, REAL_PROBE_COUNT);
   } else {
     scenes = args.full ? SCENES : SCENES.filter((s) => s.name === "04-kitchen");
   }
@@ -620,7 +658,7 @@ async function main() {
 
   const est = modelKeys.reduce((sum, k) => sum + MODELS[k].estPerScene * scenes.length, 0);
   console.log(`\n=== i2v bake-off ===`);
-  console.log(`set    : ${args.set}${args.set === "hard" ? " (production failure scenes, from audit log)" : args.set === "real" ? " (real Phoenix HDR listing photos)" : ""}`);
+  console.log(`set    : ${args.set}${args.set === "hard" ? " (production failure scenes, from audit log)" : args.set === "real" ? " (real Phoenix HDR listing photos)" : args.set === "real916" ? " (real photos, production 9:16 crops)" : ""}`);
   console.log(`models : ${modelKeys.map((k) => MODELS[k].label).join(" | ")}`);
   console.log(`scenes : ${scenes.length} (${scenes.map((s) => s.name.slice(0, 3)).join(",")})`);
   console.log(`judge  : ${qcEnabled() ? "production QC (frame-vs-photo)" : "DISABLED — no OPENAI/GEMINI key; eyeball-only"}`);

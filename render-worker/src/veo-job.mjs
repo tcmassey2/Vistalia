@@ -36,6 +36,11 @@
 //                        kling branch below sends BOTH image_url (o3 shape)
 //                        and start_image_url (v3/pro shape) so the flip is
 //                        env-only — no code change, instant rollback.
+//                        v63.0 MINIMAX: minimax/h3-max/camera-controls (numeric
+//                        camera — the Sep-2026 default), minimax/h3-max/image-to-video,
+//                        minimax/h3/image-to-video. Knobs: MINIMAX_DISTANCE_BOLD /
+//                        _STEADY / _STRICT (rung → distance, 1.0 = reference camera),
+//                        MINIMAX_RESOLUTION (480P|768P|1080P; h3 base 768P|2K|4K).
 //   FAL_RESOLUTION     - "720p" or "1080p" (default "1080p")
 //   FAL_DURATION       - "4s" | "6s" | "8s" (default "6s"; our scenes
 //                        are 5s and Veo only does 4/6/8 — round up)
@@ -207,6 +212,44 @@ const KLING_NEGATIVE_EXTRA =
   (String(process.env.KLING_BOIL_BANS || "1") === "0"
     ? ""
     : ", texture boil, shimmering foliage, crawling textures, flickering leaves, warping vegetation, boiling surfaces");
+// v63.0 MINIMAX H3 FAMILY (Sep 2026 bake-off round 3 → stage 2).
+// Endpoints:  minimax/h3-max/camera-controls   — the camera is a NUMBER
+//             minimax/h3-max/image-to-video    — prompt camera, 1080P
+//             minimax/h3/image-to-video        — open weights, native 2K
+// Why: on real Phoenix listing photos through the production prompts,
+// Kling V3 Std pushed 2–2.5× the asked travel on an accelerating ramp,
+// re-lit twilight skies, and carried a fifth of the photo's detail
+// (sharp 0.21). camera-controls held composition on every scene with the
+// most consistent rigidity (0.10–0.12) at photo-level sharpness — and it
+// is the only production endpoint where "dolly in 8%" is a parameter
+// instead of a sentence, which is what four rounds of Kling prompt
+// surgery never converged on. Full numbers: MODEL_BAKEOFF_SEP2026.md.
+//
+// Camera contract: `camera_trajectory` keyframes {time 0–1, azimuth°,
+// elevation°, distance}; distance 1.0 = the reference camera, smaller =
+// closer. The QC ladder's motionStyle rungs map to distance targets
+// (bold → steady → strict = less travel each rung), so a QC failure
+// de-escalates numerically instead of through prose. Defaults come from
+// the stage-2 calibration on 9:16 production crops; env-overridable so a
+// re-calibration is a flip, not a deploy.
+// Prompt: prompt_expansion_mode "disabled" — our fidelity/lock prompt
+// rides verbatim. H3 obeys rigidity language literally (it UNDER-moves
+// when told "rigid", the right failure direction for listings), so the
+// Kling motion suffixes are deliberately NOT appended on this family.
+// Duration: integer seconds, H3 Max range 5–15; a 4s scene is asked at 5
+// and trimmed by the stitch, same as Kling's 4s floor. No aspect param:
+// output follows the input image, so the v62.10 vertical-source crop is
+// what makes the master native-vertical (see runway-job's gate).
+const MINIMAX_DISTANCE = {
+  bold: Number(process.env.MINIMAX_DISTANCE_BOLD) || 0.92,
+  steady: Number(process.env.MINIMAX_DISTANCE_STEADY) || 0.95,
+  strict: Number(process.env.MINIMAX_DISTANCE_STRICT) || 0.97
+};
+const MINIMAX_RESOLUTION = process.env.MINIMAX_RESOLUTION || "1080P"; // h3-max: 480P|768P|1080P; h3: 768P|2K|4K
+export function isMinimaxModel(model) {
+  return /minimax|\/h3(-max)?(\/|$)/i.test(String(model || ""));
+}
+
 const DEFAULT_RESOLUTION = "1080p";
 const DEFAULT_DURATION = "6s";
 const DEFAULT_GENERATE_AUDIO = false;
@@ -541,7 +584,7 @@ export async function runVeoSmokeTest({ imageUrl, prompt, aspectRatio, duration,
 //   seedance:      prompt, image_url, duration "5|10", resolution
 // Unknown families get the minimal universal pair + aspect/duration in
 // the most common shape, which is also the safest default.
-function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, resolution, generateAudio, safetyTolerance, motionStyle = "bold" }) {
+export function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, resolution, generateAudio, safetyTolerance, motionStyle = "bold" }) {
   const m = String(model || "").toLowerCase();
   const seconds = parseInt(durationEnum, 10) || 6;
 
@@ -623,6 +666,30 @@ function buildModelInput(model, { prompt, imageUrl, aspectRatio, durationEnum, r
       // and audio-on billing is 1.5x ($0.168/s vs $0.112/s on pro).
       generate_audio: false
     };
+  }
+  if (isMinimaxModel(m)) {
+    // v63.0 — see the MINIMAX block above. Integer seconds, floor 5.
+    const dur = Math.min(15, Math.max(5, Math.round(seconds)));
+    const isH3Base = /\/h3\/image-to-video/.test(m);
+    const res = isH3Base
+      ? (/^(768P|2K|4K)$/i.test(MINIMAX_RESOLUTION) ? MINIMAX_RESOLUTION.toUpperCase() : "2K")
+      : (/^(480P|768P|1080P)$/i.test(MINIMAX_RESOLUTION) ? MINIMAX_RESOLUTION.toUpperCase() : "1080P");
+    const input = {
+      prompt,
+      image_url: imageUrl,
+      duration: dur,
+      resolution: res,
+      prompt_expansion_mode: "disabled"
+    };
+    if (m.includes("camera-controls") || m.includes("multi-angle")) {
+      const distance = MINIMAX_DISTANCE[motionStyle] ?? MINIMAX_DISTANCE.steady;
+      input.camera_trajectory = [
+        { time: 0, azimuth: 0, elevation: 0, distance: 1.0 },
+        { time: 1, azimuth: 0, elevation: 0, distance }
+      ];
+      console.info(`[veo] minimax camera-controls: ${motionStyle} rung → distance 1.00→${distance.toFixed(2)}, ${dur}s @ ${res}`);
+    }
+    return input;
   }
   if (m.includes("seedance")) {
     return {

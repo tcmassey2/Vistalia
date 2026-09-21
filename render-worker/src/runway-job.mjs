@@ -27,6 +27,27 @@ import { CAPTIONS_FONTS_DIR } from "./captions.mjs";
 import { runFFmpeg, timed , ENCODE_THREADS } from "./ffmpeg-runner.mjs";
 import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
 import { qcVeoClip, qcEnabled, qcMasterSceneCheck, qcSwapCandidatePhoto } from "./veo-qc.mjs";
+import { isMinimaxModel } from "./veo-job.mjs";
+
+/* v63.0 ENGINE FAMILIES. Every "is this Kling?" gate in this file was
+   really asking one of three different questions, and the MiniMax H3
+   family (Sep 2026 default — see veo-job.mjs) answers them differently:
+     exactSecondsEngine — takes integer-second durations up to 10 (Kling,
+                          MiniMax): scene ceiling 9.5 visible, no 4/6/8 buckets.
+     verticalSourceEngine — output follows the INPUT image's aspect, so the
+                          v62.10 delivery-aspect crop is what makes the master
+                          native-vertical (Kling, MiniMax).
+     klingPromptLadder  — the KLING_MOTION_* prose ladder + vidstab gimbal
+                          pass + "planned prompts first" room policy: Kling
+                          ONLY. MiniMax de-escalates through camera_trajectory
+                          distance (numeric) and keeps the Veo-era constrained
+                          templates on risky rooms, because rigidity prose is
+                          exactly what H3 obeys. */
+const engineId = () => String(process.env.FAL_VIDEO_MODEL || "").toLowerCase();
+const isKlingEngine = () => engineId().includes("kling");
+const isMinimaxEngine = () => isMinimaxModel(engineId());
+const isExactSecondsEngine = () => isKlingEngine() || isMinimaxEngine();
+const isVerticalSourceEngine = () => isKlingEngine() || isMinimaxEngine();
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = process.env.RUNWAY_API_VERSION || "2024-11-06";
@@ -566,7 +587,7 @@ export async function renderRunwayJob(body, options = {}) {
       // before a single clip exists, against an 18-min render cap. 150s is
       // generous for the healthy path (~15-25s) and still leaves the ladder
       // room; a timeout here just means the legacy voice path runs.
-      const maxSceneVisible = /kling/i.test(process.env.FAL_VIDEO_MODEL || "") ? 9.5 : 7.5;
+      const maxSceneVisible = isExactSecondsEngine() ? 9.5 : 7.5; // v63.0: MiniMax joins Kling
       voiceFirst = await Promise.race([
         prepareVoiceFirst({
           manifest, photoScenes, tempDir, jobId, resolveVoice: resolveVoiceId,
@@ -1871,7 +1892,9 @@ export async function renderRunwayJob(body, options = {}) {
     // label said "veo" unconditionally and masked the engine identity all
     // night. Scan a few clips (floors lack the field).
     engine: isVeo
-      ? ((clipResults || []).some((c) => String(c?.veoModel || c?.model || "").includes("kling")) ? "kling" : "veo")
+      ? ((clipResults || []).some((c) => isMinimaxModel(String(c?.veoModel || c?.model || ""))) ? "minimax"
+        : (clipResults || []).some((c) => String(c?.veoModel || c?.model || "").includes("kling")) ? "kling"
+        : "veo")
       : "runway",
     upload,
     narration,
@@ -2125,7 +2148,7 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   // ~2.7x more real pixels in the visible area, and near-native on pro.
   // Fail-open at every step: any error keeps today's exact behavior.
   const wantsVerticalSource =
-    /kling/i.test(process.env.FAL_VIDEO_MODEL || "") &&
+    isVerticalSourceEngine() && // v63.0: MiniMax output also follows the input aspect
     String(process.env.KLING_VERTICAL_SOURCE || "1") !== "0";
   if (wantsVerticalSource) {
     // Cached on the scene: the QC ladder re-enters this function for every
@@ -2164,7 +2187,10 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   // MOTION SUFFIX alone (bold drone glide -> steady push -> minimal push,
   // see veo-job KLING_MOTION_*), so every rung stays a real moving shot
   // and the floor is reserved for true failures. Veo keeps its templates.
-  const klingLadder = String(process.env.FAL_VIDEO_MODEL || "").toLowerCase().includes("kling");
+  // v63.0: Kling ONLY. MiniMax keeps the constrained templates on retries —
+  // its de-escalation is the numeric distance rung in veo-job, and rigidity
+  // prose helps H3 rather than freezing it.
+  const klingLadder = isKlingEngine();
   const plannedPrompt = scene.veoPrompt || scene.veo_prompt || scene.runwayPrompt || scene.runway_prompt || buildConstrainedVeoPrompt(scene);
   const basePrompt = constrained && !klingLadder
     ? buildConstrainedVeoPrompt(scene, { strict: strictConstrained, gentle: gentleReroll })
@@ -2232,12 +2258,15 @@ export async function generateVeoSceneClip(scene, manifest, tempDir, sceneIndex,
   // scenes up to 9.5s visible (9.5 + 0.5 xfade = a 10s ask). The old 8s cap
   // and 4/6/8 bucketing are Veo-shaped (fal enum "4s|6s|8s", 1080p pinned to
   // 8s) — keep them byte-identical on the Veo/rollback path.
-  const klingExact = /kling/i.test(process.env.FAL_VIDEO_MODEL || "");
+  // v63.0: MiniMax takes exact seconds too (range 5–15; floor 5 — a 4s ask
+  // is generated at 5 and trimmed, same as Kling's 4s floor below).
+  const klingExact = isExactSecondsEngine();
+  const exactFloorSec = isMinimaxEngine() ? 5 : 4;
   const targetDuration = clamp(useXfade ? snappedDur + XFADE_COMP_SEC : snappedDur, 1.6, klingExact ? 10 : 8);
   const resolution = process.env.FAL_RESOLUTION || "720p";
   // Smallest fal duration bucket that covers what we'll actually keep.
   // 1080p only exists at 8s on fal — pin the bucket there on rollback.
-  const bucketSec = klingExact ? Math.min(10, Math.max(4, Math.ceil(targetDuration)))
+  const bucketSec = klingExact ? Math.min(10, Math.max(exactFloorSec, Math.ceil(targetDuration)))
     : resolution === "1080p" ? 8
     : targetDuration <= 4 ? 4
     : targetDuration <= 6 ? 6
@@ -4494,7 +4523,10 @@ function decideUseKenBurns(scene, guardLevel) {
   // (QC passed 9/9 either way). On Kling, planned prompts run first;
   // the rotational-object lock, strict mode, risk≥90, complianceMode,
   // and QC-fail constrained RETRIES all remain in force.
-  const klingEngine = String(process.env.FAL_VIDEO_MODEL || "").toLowerCase().includes("kling");
+  // v63.0: Kling ONLY — MiniMax runs constrained-first on the risky rooms
+  // below on purpose (the camera move comes from the trajectory either way;
+  // the constrained prose is what keeps fans, plants and reflections still).
+  const klingEngine = isKlingEngine();
   if (!klingEngine && room === "kitchen") {
     return { useKenBurns: true, risk, reason: `kitchen always falls back (risk ${risk})` };
   }
