@@ -41,6 +41,9 @@
 //       → 3 probe scenes (kitchen, bedroom, twilight) × 8 models ≈ $16
 //   cd render-worker && FAL_KEY=… node tools/model-bakeoff.mjs --set=real --full --models=h3maxcam,h3,wan30
 //       → all 6 real scenes for the finalists (resume-safe: finished clips are never re-bought)
+//   Queue mode (any shell that dies after a few minutes — the device bridge, Render's shell):
+//   node tools/model-bakeoff.mjs --set=real --models=round3 --submit    # seconds; ids → queue-real.json
+//   node tools/model-bakeoff.mjs --set=real --models=round3 --collect   # rerun until "0 pending"
 //
 // Env: FAL_KEY required; OPENAI_API_KEY / GEMINI_API_KEY for the QC judge
 // (without them clips still generate but scoring is eyeball-only).
@@ -414,10 +417,12 @@ const MODEL_GROUPS = {
 /* ── Small utils ─────────────────────────────────────────────────────── */
 
 function parseArgs(argv) {
-  const args = { full: false, dry: false, models: Object.keys(MODELS), scenes: null, out: null, set: "canary", limit: 12 };
+  const args = { full: false, dry: false, submit: false, collect: false, models: Object.keys(MODELS), scenes: null, out: null, set: "canary", limit: 12 };
   for (const a of argv.slice(2)) {
     if (a === "--full") args.full = true;
     else if (a === "--dry") args.dry = true;
+    else if (a === "--submit") args.submit = true;
+    else if (a === "--collect") args.collect = true;
     else if (a.startsWith("--models=")) {
       args.models = a.slice(9).split(",").map((s) => s.trim()).filter(Boolean)
         .flatMap((k) => MODEL_GROUPS[k] || [k]);
@@ -487,6 +492,92 @@ async function pMap(items, concurrency, fn) {
   return results;
 }
 
+/* ── Queue mode (round 3): --submit / --collect ───────────────────────────
+   The device bridge kills a shell after ~3 minutes, and Render's shell has
+   the same habit, so a 20-minute subscribe loop cannot be trusted to live.
+   Split it: --submit fires every model×scene into fal's queue (seconds) and
+   records request ids in <outDir>/queue-<set>.json; --collect polls those
+   ids, downloads finished clips into the same clips/ dir with the same
+   names, and records errors — safe to rerun until nothing is pending.
+   No QC judge here; scoring is tools/score-clips.py on the clips dir. */
+
+async function queuePath(outDir, set) {
+  return path.join(outDir, `queue-${set}.json`);
+}
+
+async function loadQueue(outDir, set) {
+  try { return JSON.parse(await fs.readFile(await queuePath(outDir, set), "utf8")); } catch { return []; }
+}
+
+async function saveQueue(outDir, set, entries) {
+  await fs.writeFile(await queuePath(outDir, set), JSON.stringify(entries, null, 2));
+}
+
+async function submitAll(fal, modelKeys, scenes, outDir, set) {
+  const entries = await loadQueue(outDir, set);
+  let submitted = 0, skipped = 0, failed = 0;
+  for (const modelKey of modelKeys) {
+    const model = MODELS[modelKey];
+    for (const scene of scenes) {
+      const clipPath = path.join(outDir, "clips", `${modelKey}-${scene.name}.mp4`);
+      const have = entries.find((e) => e.model === modelKey && e.scene === scene.name && !e.error);
+      const done = await fs.access(clipPath).then(() => true, () => false);
+      if (have || done) { skipped++; continue; }
+      const input = model.buildInput(promptFor(scene), scene.imageUrl);
+      try {
+        const res = await fal.queue.submit(model.endpoint, { input });
+        entries.push({ model: modelKey, scene: scene.name, roomType: scene.roomType, endpoint: model.endpoint,
+          request_id: res.request_id, submittedAt: new Date().toISOString() });
+        submitted++;
+        console.log(`  submitted ${modelKey}/${scene.name} → ${res.request_id}`);
+      } catch (err) {
+        failed++;
+        const msg = String(err?.body?.detail ? JSON.stringify(err.body.detail) : (err.message || err)).slice(0, 300);
+        entries.push({ model: modelKey, scene: scene.name, roomType: scene.roomType, endpoint: model.endpoint,
+          error: `submit: ${msg}`, submittedAt: new Date().toISOString() });
+        console.warn(`  SUBMIT FAILED ${modelKey}/${scene.name}: ${msg}`);
+      }
+      await saveQueue(outDir, set, entries);
+    }
+  }
+  console.log(`\nsubmit: ${submitted} new, ${skipped} already queued/done, ${failed} failed → ${await queuePath(outDir, set)}`);
+}
+
+async function collectAll(fal, outDir, set) {
+  const entries = await loadQueue(outDir, set);
+  let pending = 0, collected = 0, errored = 0, already = 0;
+  for (const e of entries) {
+    if (e.error || !e.request_id) { errored += e.error ? 1 : 0; continue; }
+    const clipPath = path.join(outDir, "clips", `${e.model}-${e.scene}.mp4`);
+    if (await fs.access(clipPath).then(() => true, () => false)) { already++; continue; }
+    try {
+      const st = await fal.queue.status(e.endpoint, { requestId: e.request_id, logs: false });
+      if (st.status !== "COMPLETED") {
+        pending++;
+        console.log(`  ${e.model}/${e.scene}: ${st.status}${st.queue_position != null ? ` (pos ${st.queue_position})` : ""}`);
+        continue;
+      }
+      const result = await fal.queue.result(e.endpoint, { requestId: e.request_id });
+      const url = pickVideoUrl(result);
+      if (!url) throw new Error(`no video url: ${JSON.stringify(result?.data ?? result).slice(0, 200)}`);
+      e.video_url = url; // fal CDN link — lets the scorer fetch clips without the device bridge
+      await download(url, clipPath);
+      const probe = await ffprobe(clipPath);
+      e.res = `${probe.width}x${probe.height}`; e.clipSec = Math.round(probe.duration * 10) / 10;
+      e.collectedAt = new Date().toISOString();
+      collected++;
+      console.log(`  ${e.model}/${e.scene}: COLLECTED ${e.res} ${e.clipSec}s`);
+    } catch (err) {
+      const msg = String(err?.body?.detail ? JSON.stringify(err.body.detail) : (err.message || err)).slice(0, 300);
+      e.error = `collect: ${msg}`; errored++;
+      console.warn(`  ${e.model}/${e.scene}: ERROR ${msg}`);
+    }
+    await saveQueue(outDir, set, entries);
+  }
+  console.log(`\ncollect: ${collected} new, ${already} already on disk, ${pending} pending, ${errored} errored`);
+  return pending;
+}
+
 /* ── One generation ──────────────────────────────────────────────────── */
 
 async function generateOne(fal, modelKey, scene, outDir) {
@@ -554,6 +645,14 @@ async function main() {
   await fs.mkdir(path.join(outDir, "clips"), { recursive: true });
   await fs.mkdir(path.join(outDir, "tmp"), { recursive: true });
   const fal = await loadFal();
+
+  if (args.submit) { await submitAll(fal, modelKeys, scenes, outDir, args.set); return; }
+  if (args.collect) {
+    const pending = await collectAll(fal, outDir, args.set);
+    if (pending > 0) console.log(`(rerun --collect in a minute or two; ${pending} still generating)`);
+    return;
+  }
+
   const rows = [];
 
   for (const modelKey of modelKeys) {

@@ -152,6 +152,27 @@ def step_flow_mags(frames_g, step=2):
 def lap_var(g):
     return float(cv2.Laplacian(g, cv2.CV_64F).var())
 
+def edge_strength(g):
+    """Grain-robust sharpness: mean gradient magnitude over the strongest 2% of pixels
+    after a light blur (grain/noise has weak gradients; real edges survive the blur)."""
+    b = cv2.GaussianBlur(g, (0, 0), 1.0)
+    gx = cv2.Sobel(b, cv2.CV_32F, 1, 0, ksize=3); gy = cv2.Sobel(b, cv2.CV_32F, 0, 1, ksize=3)
+    mag = np.hypot(gx, gy)
+    thr = np.percentile(mag, 98)
+    return float(mag[mag >= thr].mean())
+
+def frame_at_zoom(frames_g, target=1.06, step=2):
+    """Index of the first sampled frame whose cumulative affine zoom vs frame 0 reaches target
+    (None if never reached). Used to compare rigidity at MATCHED camera travel."""
+    for i in range(step, len(frames_g), step):
+        z = flow_affine(dense_flow(frames_g[0], frames_g[i]))
+        if z >= target:
+            return i
+    return None
+
+def blur(g):
+    return cv2.GaussianBlur(g, (0, 0), 1.2)
+
 def score_clip(clip_path, src_path, out_dir):
     frames = read_frames(clip_path)
     if len(frames) < 8:
@@ -166,11 +187,23 @@ def score_clip(clip_path, src_path, out_dir):
 
     fid, fid_inl = fidelity(src_g, fg[0])
     mid = len(fg) // 2
-    rig_mid, _, _ = rigidity(fg[0], fg[mid])
-    rig_last, flow_last, warped_last = rigidity(fg[0], fg[-1])
-    lp, nlines = line_persistence(fg[0], warped_last)
+    # rigidity on lightly blurred frames so a soft model can't score "rigid" just by being blurry
+    fb = [blur(g) for g in fg]
+    rig_mid, _, _ = rigidity(fb[0], fb[mid])
+    rig_last, flow_last, warped_last = rigidity(fb[0], fb[-1])
+    lp, nlines = line_persistence(fg[0], warp_back(fg[-1], flow_last))
     rough, travel = flow_roughness(flow_last)
     zoom = flow_affine(flow_last)
+    # matched-travel rigidity: residual + line persistence at the frame where zoom first hits 1.06
+    i6 = frame_at_zoom(fb, 1.05)
+    if i6 is not None:
+        rig6, flow6, _ = rigidity(fb[0], fb[i6])
+        lp6, _ = line_persistence(fg[0], warp_back(fg[i6], flow6))
+        t6 = i6 / max(1, len(fg) - 1)
+    else:
+        rig6, lp6, t6 = None, None, None
+    edge_src = edge_strength(src_g)
+    edge0 = edge_strength(fg[0]) / (edge_src + 1e-6); edgel = edge_strength(fg[-1]) / (edge_src + 1e-6)
     mags = step_flow_mags(fg, step=2)
     d = np.diff(mags)
     jerk = float(d.std() / mags.mean()) if (len(d) > 2 and mags.mean() > 0.15) else float("nan")
@@ -196,6 +229,10 @@ def score_clip(clip_path, src_path, out_dir):
         "clip": label, "res": f"{W0}x{H0}", "frames": len(frames),
         "fidelity_ssim": round(fid, 3), "fidelity_inliers": round(fid_inl, 2),
         "rigid_mid": round(rig_mid, 3), "rigid_last": round(rig_last, 3),
+        "rigid_at6": None if rig6 is None else round(rig6, 3),
+        "lines_at6": None if lp6 is None or math.isnan(lp6) else round(lp6, 1),
+        "t_at6": None if t6 is None else round(t6, 2),
+        "edge_f0": round(edge0, 2), "edge_last": round(edgel, 2),
         "line_persist_pct": None if math.isnan(lp) else round(lp, 1), "lines_f0": nlines,
         "flow_rough": round(rough, 3), "zoom_total": round(zoom, 3), "travel_px": round(travel, 1),
         "flow_jerk": None if math.isnan(jerk) else round(jerk, 3),
