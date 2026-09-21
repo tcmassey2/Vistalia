@@ -26,6 +26,7 @@ function curateScene(scene, index) {
   const engine = String(scene?.engineUsed || "").toLowerCase();
   const deterministic =
     engine === "photo_motion" ||
+    engine === "parallax" || // v64: depth-parallax scenes are the photograph itself, camera computed from its depth
     (engine === "" && Boolean(scene?.wasFallback)) ||
     Boolean(scene?.sweepReplaced && engine !== "veo");
   const status = deterministic ? "deterministic" : "verified";
