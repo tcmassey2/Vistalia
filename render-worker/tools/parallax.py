@@ -14,9 +14,13 @@ move out, every pixel from the customer's photo, straight lines straight.
              map keeps it straight — provable, and self-checked below.)
           ─► per frame: exact camera translation (+ optional small rotation)
                  u' = cx + (u - cx - Tx·w) / (1 - Tz·w)        w = inverse depth
-             solved as a LAYERED INVERSE with a z-test (no splat gaps, sub-pixel);
-             disocclusions sample an inpainted background plate (no ghosts)
-          ─► cv2.remap Lanczos from the full-res source ─► ffmpeg libx264
+             solved EXACTLY EVERY FRAME from a forward z-buffer (v64.4 "splat":
+             every source pixel is pushed through the camera, the nearest
+             surface wins, the winner's disparity gives the closed-form
+             inverse at each output pixel, sub-pixel); disocclusions sample an
+             inpainted background plate (no ghosts)
+          ─► anti-aliased resample of the supersampled source (cubic at source
+             resolution, area-averaged down) ─► ffmpeg libx264
           ─► self-check: bend (px) of the photo's own straight edges in the last
              frame, reported in the JSON summary the worker reads.
 
@@ -32,12 +36,28 @@ mid-depth centre framed) at Reel-E amplitude. Two things make that possible:
     --lama), which continues cabinet lines and walls instead of smearing them;
     Telea remains the fallback.
 
+v64.4 "no grain": Troy's Sep-22 note — the pendant light's motion looked
+grainy. Three causes, three fixes, all measured on that clip:
+  · the v64.3 maps were built every 4th frame and lerped (a 4-frame jerk
+    period in the pendant's motion) and quantised depth into 32 layers, whose
+    winner flipped along thin bars (confetti). Now: exact maps every frame
+    from a forward z-buffer (build_maps_splat), no layers.
+  · the Lanczos resample from the 1.75x supersampled source did not prefilter,
+    so bright thin edges crawled with the sub-pixel phase. Now: --aa super.
+  · Depth Anything V2 SMALL returned the frame light as a solid card (the
+    ceiling inside it moved with it) and a 15 px soft edge under it. BASE
+    (~390 MB, +2-3 s/scene) sees the open frame and the cables; steps are
+    hardened with hysteresis so an occlusion edge is hard along its whole
+    length (no teeth), and the plate mask grows geodesically through the
+    foreground only, so LaMa no longer repaints the detail beside a fixture.
+
 Usage (the Node wrapper in src/parallax-job.mjs builds this):
   parallax.py --src photo.png --out clip.mp4 --seconds 5.0 [--fps 30]
               [--out-size 1080x1920] [--margin 108,40] [--zoom 1.07]
               [--truck-x 70] [--truck-y 0] [--arc] [--yaw 0.4] [--pitch -0.2]
-              [--near-ratio 4] [--map-every 3] [--layers 32]
-              [--model models/dav2_small.onnx] [--lama models/lama_fp32.onnx]
+              [--near-ratio 4] [--renderer splat|layers] [--aa super|prefilter|none]
+              [--step-high 0.10] [--step-low 0.06] [--map-every 1]
+              [--model models/dav2_base.onnx] [--lama models/lama_fp32.onnx]
               [--report r.json] [--depth-out d.png]
   parallax.py --check [--model ...] [--lama ...]   # dependency / model probe, JSON out
 
@@ -103,16 +123,31 @@ def normalise_disparity(disp, bgr):
     return np.clip(d, 0, 1)
 
 
-def sharpen_depth_steps(w, tol=0.06, kernels=(3, 5)):
+def sharpen_depth_steps(w, tol=0.06, kernels=((5, 0.5), (3, 0.5)), low=None):
     """Blurred depth steps -> hard steps. Intermediate values across an
-    occlusion edge are upsampling artefacts; the layered renderer would see
-    them as phantom mid-depth slivers and slice the edge into a sawtooth."""
+    occlusion edge are upsampling artefacts: the layered renderer saw them as
+    phantom mid-depth slivers and sliced the edge into a sawtooth; the splat
+    renderer (v64.4) stretches them into a rubber sheet across the gap.
+    v64.4: HYSTERESIS. The decision "this is an occlusion edge" is made per
+    connected band of steep depth (5x5 range > `low`), and the whole band is
+    snapped when any part of it exceeds `tol` — so one edge is hard along its
+    whole length instead of alternating hard step / rubber sheet wherever its
+    contrast wobbles around the threshold (the "teeth" under the pendant).
+    Passes are (window, near_fraction)."""
     out = w.copy()
-    for k in kernels:
+    for k, frac in kernels:
         ker = np.ones((k, k), np.uint8)
         lo = cv2.erode(out, ker); hi = cv2.dilate(out, ker)
-        band = (hi - lo) > tol
-        snap = np.where(out >= 0.5 * (lo + hi), hi, lo)
+        rng = hi - lo
+        band = rng > tol
+        if low is not None and low < tol:
+            cand = (rng > low).astype(np.uint8)
+            n, labels = cv2.connectedComponents(cand, connectivity=8)
+            if n > 1:
+                peak = np.zeros(n, np.float32)
+                np.maximum.at(peak, labels.ravel(), rng.ravel().astype(np.float32))
+                band = (cand > 0) & (peak[labels] > tol)
+        snap = np.where(out >= lo + frac * (hi - lo), hi, lo)
         out = np.where(band, snap, out).astype(np.float32)
     return out
 
@@ -242,22 +277,38 @@ def ease(t, e=0.15):
     return s / (1 - a)
 
 
+def rotation_homography(cx, cy, f, yaw_deg, pitch_deg):
+    """H = K·R·K⁻¹: un-rotated view -> rotated view (exact for any depth)."""
+    yaw = np.deg2rad(yaw_deg); pitch = np.deg2rad(pitch_deg)
+    cyw, syw = np.cos(yaw), np.sin(yaw); cp, sp = np.cos(pitch), np.sin(pitch)
+    Ry = np.array([[cyw, 0, syw], [0, 1, 0], [-syw, 0, cyw]])
+    Rx = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
+    K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]]); Kinv = np.linalg.inv(K)
+    return K @ (Rx @ Ry) @ Kinv
+
+
+def apply_homography(H, xs, ys):
+    H = np.asarray(H, np.float32)          # keep the per-pixel work in float32 (2x faster than an upcast)
+    X = H[0, 0] * xs + H[0, 1] * ys + H[0, 2]
+    Y = H[1, 0] * xs + H[1, 1] * ys + H[1, 2]
+    D = H[2, 0] * xs + H[2, 1] * ys + H[2, 2]
+    return (X / D).astype(np.float32), (Y / D).astype(np.float32)
+
+
 def rotated_grid(xs, ys, cx, cy, f, yaw_deg, pitch_deg):
     """Destination grid seen through a small camera rotation (exact for any
     depth: H = K·R·K⁻¹) — the coordinates in the un-rotated view each output
     pixel looks at."""
     if abs(yaw_deg) < 1e-6 and abs(pitch_deg) < 1e-6:
         return xs, ys
-    yaw = np.deg2rad(yaw_deg); pitch = np.deg2rad(pitch_deg)
-    cyw, syw = np.cos(yaw), np.sin(yaw); cp, sp = np.cos(pitch), np.sin(pitch)
-    Ry = np.array([[cyw, 0, syw], [0, 1, 0], [-syw, 0, cyw]])
-    Rx = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
-    K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]]); Kinv = np.linalg.inv(K)
-    Hinv = np.linalg.inv(K @ (Rx @ Ry) @ Kinv)
-    X = Hinv[0, 0] * xs + Hinv[0, 1] * ys + Hinv[0, 2]
-    Y = Hinv[1, 0] * xs + Hinv[1, 1] * ys + Hinv[1, 2]
-    D = Hinv[2, 0] * xs + Hinv[2, 1] * ys + Hinv[2, 2]
-    return (X / D).astype(np.float32), (Y / D).astype(np.float32)
+    return apply_homography(np.linalg.inv(rotation_homography(cx, cy, f, yaw_deg, pitch_deg)), xs, ys)
+
+
+def rotate_forward(xs, ys, cx, cy, f, yaw_deg, pitch_deg):
+    """Where a point of the un-rotated view lands in the rotated view."""
+    if abs(yaw_deg) < 1e-6 and abs(pitch_deg) < 1e-6:
+        return xs, ys
+    return apply_homography(rotation_homography(cx, cy, f, yaw_deg, pitch_deg), xs, ys)
 
 
 def background_disparity(w, k=31):
@@ -420,6 +471,106 @@ def build_maps(w, cx, cy, Tz, Tx, Ty, layers, grid, w_bg, tol):
     return best_x, best_y, hole
 
 
+def build_maps_splat(w, w_lo, w_hi, cx, cy, Tz, Tx, Ty, grid, fwd, w_bg, tol, xs_g, ys_g, step_tol_=None, same_x=None, same_y=None):
+    """v64.4: exact per-frame inverse map from a forward z-buffer (no depth
+    layers, no keyframe interpolation).
+    Every source pixel is pushed through the camera to the output pixel it
+    lands on (rounded) and the nearest surface wins; the one-pixel cracks a
+    magnified surface leaves are closed by a 3x3 max. The winner's disparity D
+    then gives the closed-form inverse at each output pixel:
+        p = c + (q - c)(1 - Tz·D) + T·D
+    which is checked against the source — D must lie within the disparity
+    range of the 3x3 around p (w_lo/w_hi = eroded/dilated w) — and refined
+    once with the interpolated disparity. Output pixels no surface reaches,
+    or whose supposed surface is not where the map says (a background map
+    that lands inside the foreground's footprint), are disocclusions: they
+    take the background inverse and the caller samples the plate there.
+    `grid` = (gx, gy): un-rotated, pre-scaled view coordinates of each output
+    pixel; `fwd(X, Y)`: un-rotated view coordinates -> output pixels;
+    same_x/same_y: precomputed "neighbours are one surface" masks."""
+    h, wd = w.shape
+    gx, gy = grid
+    cx, cy, Tz, Tx, Ty = (np.float32(v) for v in (cx, cy, Tz, Tx, Ty))
+    den = np.float32(1.0) - Tz * w
+    ox, oy = fwd(cx + (xs_g - cx - Tx * w) / den, cy + (ys_g - cy - Ty * w) / den)
+    Z = np.full(h * wd, -1.0, np.float32)
+
+    def scatter(px_, py_, wv):
+        qx = np.rint(px_).astype(np.int32); qy = np.rint(py_).astype(np.int32)
+        ok = (qx >= 0) & (qx < wd) & (qy >= 0) & (qy < h)
+        np.maximum.at(Z, (qy[ok].astype(np.int64) * wd + qx[ok]), wv[ok])
+
+    scatter(ox, oy, w)
+    # A surface that is stretched more than ~1.6x (a magnified near plane, or
+    # a depth RAMP seen from the side — the bilateral-smoothed 3 px between a
+    # pendant bar and what it hangs over stretches 3-4x under a truck) leaves
+    # cracks wider than the 3x3 fill below closes. Subdivide those source
+    # pixels along the stretched axis (mid-points with interpolated disparity)
+    # so the surface is rendered continuously — the ordinary 2.5D "rubber
+    # sheet" — but only where the neighbours are the same surface: across a
+    # real depth step (> step_tol) the gap is a disocclusion, not a crack.
+    step_tol = step_tol_ if step_tol_ is not None else 0.10
+    for axis in (1, 0):
+        if axis == 1:
+            dx = ox[:, 1:] - ox[:, :-1]; dy = oy[:, 1:] - oy[:, :-1]
+            same = same_x if same_x is not None else (np.abs(w[:, 1:] - w[:, :-1]) <= step_tol)
+        else:
+            dx = ox[1:] - ox[:-1]; dy = oy[1:] - oy[:-1]
+            same = same_y if same_y is not None else (np.abs(w[1:] - w[:-1]) <= step_tol)
+        d2 = dx * dx + dy * dy
+        need = (d2 > 1.6 * 1.6) & same
+        if not need.any():
+            continue
+        n_sub = np.zeros(d2.shape, np.int32)
+        n_sub[need] = np.minimum(8, np.ceil(np.sqrt(d2[need]))).astype(np.int32)
+        for n in range(2, 9):
+            sel = n_sub == n
+            if not sel.any():
+                continue
+            if axis == 1:
+                x0 = xs_g[:, :-1][sel]; y0 = ys_g[:, :-1][sel]; w0 = w[:, :-1][sel]; w1 = w[:, 1:][sel]
+            else:
+                x0 = xs_g[:-1][sel]; y0 = ys_g[:-1][sel]; w0 = w[:-1][sel]; w1 = w[1:][sel]
+            for k in range(1, n):
+                a = np.float32(k / n)
+                wm = w0 * (1 - a) + w1 * a
+                xm = x0 + (a if axis == 1 else 0.0); ym = y0 + (a if axis == 0 else 0.0)
+                dm = 1.0 - Tz * wm
+                pxm, pym = fwd(cx + (xm - cx - Tx * wm) / dm, cy + (ym - cy - Ty * wm) / dm)
+                scatter(pxm, pym, wm)
+    # close the remaining one-pixel cracks with the nearest neighbour (a 3x3
+    # max); what is still empty is a disocclusion. (A "both sides agree"
+    # fill was tried and rejected: inside a stretched depth ramp the 3x3
+    # neighbours legitimately differ by the ramp's slope, so it left a mesh
+    # of pinholes along every near object.)
+    Zd = cv2.dilate(Z.reshape(h, wd), np.ones((3, 3), np.uint8))
+    hole = Zd < 0
+    D = np.where(hole, w_bg, Zd).astype(np.float32)
+    den_d = np.float32(1.0) - Tz * D
+    px = (cx + (gx - cx) * den_d + Tx * D).astype(np.float32)
+    py = (cy + (gy - cy) * den_d + Ty * D).astype(np.float32)
+    lo = cv2.remap(w_lo, px, py, cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
+    hi = cv2.remap(w_hi, px, py, cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
+    hole |= (D > hi + tol) | (D < lo - tol)
+    wl = cv2.remap(w, px, py, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    use = (~hole) & (np.abs(wl - D) <= tol)
+    den_l = np.float32(1.0) - Tz * wl
+    px = np.where(use, cx + (gx - cx) * den_l + Tx * wl, px).astype(np.float32)
+    py = np.where(use, cy + (gy - cy) * den_l + Ty * wl, py).astype(np.float32)
+    if hole.any():
+        hole = cv2.morphologyEx(hole.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)).astype(bool)
+        den_b = np.float32(1.0) - Tz * w_bg
+        px[hole] = (cx + (gx - cx) * den_b + Tx * w_bg)[hole]
+        py[hole] = (cy + (gy - cy) * den_b + Ty * w_bg)[hole]
+    return px, py, hole
+
+
+def default_model_path(here):
+    """models/dav2_base.onnx when present (v64.4), else the v64 small model."""
+    base = os.path.join(here, "..", "models", "dav2_base.onnx")
+    return base if os.path.exists(base) else os.path.join(here, "..", "models", "dav2_small.onnx")
+
+
 def parse_pair(s, default=(0, 0)):
     if not s:
         return default
@@ -450,12 +601,18 @@ def render(args):
         fail(f"depth model missing: {args.model}")
     sess = load_depth_session(args.model)
     d = normalise_disparity(predict_disparity(sess, bgr, args.depth_res), bgr)
-    # Only true occlusion steps get hardened (tol 0.15); smaller transitions
-    # are surface gradients, and snapping those into staircases makes a
-    # single object move as several patches (Sep-22 pendant tearing). Then an
-    # edge-preserving smooth inside surfaces (bilateral on w itself).
-    d = sharpen_depth_steps(d, tol=0.15)
+    # Edge-preserving smooth inside surfaces first (bilateral on w itself),
+    # THEN harden the occlusion steps — the other order left a 0.03 shoulder
+    # on each side of every snapped step (the bilateral mixes across a 0.15
+    # step at exp(-1.8)), and the splat renderer stretched those shoulders
+    # into spikes along the gap. Steps are hardened with hysteresis
+    # (--step-low / --step-high): a band that anywhere exceeds step-high is
+    # snapped along its whole length; smaller transitions are surface
+    # gradients and stay smooth, so a single object still moves as one
+    # piece (Sep-22 pendant tearing) — the splat renders those as a
+    # continuous surface rather than as layer patches.
     d = cv2.bilateralFilter(d.astype(np.float32), 9, 0.08, 6)
+    d = sharpen_depth_steps(d, tol=float(args.step_high), low=float(args.step_low))
     # Objects own their edges: the depth silhouette sits within ±2 px of the
     # colour edge, and where it falls short the object's anti-aliased rim
     # travels with the background and speckles. Growing the near surface by
@@ -495,6 +652,12 @@ def render(args):
     n_lines = 0
     if len(segs):
         w, n_lines = regularise_lines(w, segs)
+        # The per-side fits are feathered over 7 px into the original depth;
+        # where a straight edge runs a few px from its occlusion step (the LED
+        # bar's colour edge vs the fixture's depth silhouette) that feather
+        # turns the hard step back into a ramp, which the splat stretches
+        # into teeth. Re-harden the steps (thresholds scaled from d to w).
+        w = sharpen_depth_steps(w, tol=float(args.step_high) / (1.0 + beta), low=float(args.step_low) / (1.0 + beta))
     if args.depth_out:
         cv2.imwrite(args.depth_out, (w * 255).astype(np.uint8))
     cx, cy = (wd - 1) / 2.0, (h - 1) / 2.0
@@ -540,10 +703,25 @@ def render(args):
             return gx, gy
         return (cx + (gx - cx) / overscan).astype(np.float32), (cy + (gy - cy) / overscan).astype(np.float32)
 
+    use_splat = args.renderer != "layers"
+    k3 = np.ones((3, 3), np.uint8)
+    w_lo, w_hi = cv2.erode(w, k3), cv2.dilate(w, k3)
+    splat_tol = float(args.splat_tol)
+    step_w = float(args.step_high)
+    same_x = np.abs(w[:, 1:] - w[:, :-1]) <= step_w
+    same_y = np.abs(w[1:] - w[:-1]) <= step_w
+
     def maps_at_t(t):
         gx, gy = rotated_grid(xs_g, ys_g, cx, cy, focal, yaw_end * t, pitch_end * t)
         gx, gy = pre_scale(gx, gy)
-        return build_maps(w, cx, cy, Tz * t, Tx_end * t, Ty_end * t, layers, (gx, gy), w_bg, layer_tol)
+        if not use_splat:
+            return build_maps(w, cx, cy, Tz * t, Tx_end * t, Ty_end * t, layers, (gx, gy), w_bg, layer_tol)
+
+        def fwd(X, Y):
+            if overscan > 1.0:
+                X = cx + (X - cx) * overscan; Y = cy + (Y - cy) * overscan
+            return rotate_forward(X, Y, cx, cy, focal, yaw_end * t, pitch_end * t)
+        return build_maps_splat(w, w_lo, w_hi, cx, cy, Tz * t, Tx_end * t, Ty_end * t, (gx, gy), fwd, w_bg, splat_tol, xs_g, ys_g, step_w, same_x, same_y)
 
     # ── the plate: exactly the pixels the move will reveal, inpainted once ──
     t_plate0 = time.time()
@@ -558,8 +736,21 @@ def render(args):
         # its other half in the plate — which then shows up as a ghost copy
         # behind the moved object (Sep-22 pendant). A generous band removes
         # the whole object where it will be revealed.
+        # v64.4: the growth is GEODESIC through the near objects' footprint
+        # (w above the local background) plus a 4 px margin — a partly
+        # revealed object is still removed whole, but a fixed 61 px band no
+        # longer hands LaMa the detail around thin fixtures to repaint (the
+        # vent grille under the pendant came back as plain cabinet).
         reach = int(min(61, 11 + 0.5 * max(abs(Tx_end), abs(Ty_end), (args.zoom - 1.0) * frame_w / 2.0)))
-        plate_mask = cv2.dilate(plate_mask, np.ones((reach | 1, reach | 1), np.uint8))
+        fg_src = ((w - w_bg) > 0.04).astype(np.uint8)
+        grown = cv2.dilate(plate_mask, np.ones((9, 9), np.uint8))
+        geo = plate_mask.copy()
+        for _ in range(reach):
+            nxt = cv2.dilate(geo, k3) & fg_src
+            if np.array_equal(nxt, geo):
+                break
+            geo = nxt
+        plate_mask = np.maximum(grown, cv2.dilate(geo, np.ones((5, 5), np.uint8)))
         plate_mask = cv2.morphologyEx(plate_mask, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
     lama = load_lama(args.lama) if args.lama else None
     plate, plate_engine, plate_tiles = build_plate(bgr, plate_mask, lama)
@@ -591,7 +782,40 @@ def render(args):
     id_x, id_y = pre_scale(xs_g, ys_g)
     identity = (id_x, id_y, np.zeros((h, wd), bool))
     crop = (slice(my, my + frame_h), slice(mx, mx + frame_w))
-    frame0 = cv2.remap(full, id_x * sx_src, id_y * sy_src, cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT_101)[crop]
+    # ── sampling the photo (v64.4) ──
+    # The source is supersampled (1.75x the canvas). A Lanczos remap straight
+    # to canvas resolution does not prefilter, so a 1.75x minification aliases:
+    # fine texture and bright thin edges (LED bars) crawl as the sub-pixel
+    # phase changes every frame — the "grain" in the motion. "super" resamples
+    # AT source resolution (cubic, ~1:1) and area-averages down, which is a
+    # proper box prefilter; "prefilter" Gaussian-blurs the source once to the
+    # canvas Nyquist and keeps the Lanczos; "none" is the v64.3 behaviour.
+    aa = args.aa
+    src_pf = full
+    if aa == "prefilter":
+        m = max(sx_src, sy_src)
+        if m > 1.05:
+            src_pf = cv2.GaussianBlur(full, (0, 0), m / np.sqrt(12.0))
+
+    def sample(mxx, myy):
+        if aa == "super" and (fw, fh) != (wd, h):
+            MX = cv2.resize(mxx * sx_src, (fw, fh), interpolation=cv2.INTER_LINEAR)
+            MY = cv2.resize(myy * sy_src, (fw, fh), interpolation=cv2.INTER_LINEAR)
+            fr = cv2.remap(full, MX, MY, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT_101)
+            return cv2.resize(fr, (wd, h), interpolation=cv2.INTER_AREA)
+        return cv2.remap(src_pf, mxx * sx_src, myy * sy_src, cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT_101)
+
+    # The area average is a box filter: alias-free but ~20% below a Lanczos
+    # resample in acutance. A mild unsharp mask (0.35 at 0.8 px, no halo on
+    # the LED bars at 3x) puts the crispness back without the crawl.
+    us_amount = float(args.unsharp)
+
+    def finish(frame_c):
+        if us_amount <= 0:
+            return frame_c
+        return cv2.addWeighted(frame_c, 1.0 + us_amount, cv2.GaussianBlur(frame_c, (0, 0), 0.8), -us_amount, 0)
+
+    frame0 = finish(sample(id_x, id_y)[crop])
     for i in range(n):
         k0 = (i // every) * every
         k1 = min(n - 1, k0 + every)
@@ -617,15 +841,20 @@ def render(args):
             if i == n - 1:
                 fx, fy = mxx[crop], myy[crop]
                 oob_last = int(((fx < 0) | (fx > wd - 1) | (fy < 0) | (fy > h - 1)).sum())
-            frame = cv2.remap(full, mxx * sx_src, myy * sy_src, cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT_101)
+            frame = sample(mxx, myy)
             if hole.any():
                 holes += int(hole[crop].sum())
-                fill = cv2.remap(plate, mxx, myy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
-                # soft edge on the fill: the hole boundary is quantised by the
-                # depth layers, a 1.5 px feather hides the sawtooth along it
-                alpha = cv2.GaussianBlur(hole.astype(np.float32), (0, 0), 1.2)[..., None]
-                frame = (frame.astype(np.float32) * (1.0 - alpha) + fill.astype(np.float32) * alpha).astype(np.uint8)
-            frame = frame[crop]
+                # soft edge on the fill: the hole boundary is pixel-quantised,
+                # a ~1.5 px feather hides the sawtooth along it; the blend is
+                # done inside the holes' bounding box only
+                ys_h, xs_h = np.where(hole)
+                y0b, y1b = max(0, ys_h.min() - 4), min(h, ys_h.max() + 5)
+                x0b, x1b = max(0, xs_h.min() - 4), min(wd, xs_h.max() + 5)
+                bb = (slice(y0b, y1b), slice(x0b, x1b))
+                fill = cv2.remap(plate, mxx[bb], myy[bb], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+                alpha = cv2.GaussianBlur(hole[bb].astype(np.float32), (0, 0), 1.2)[..., None]
+                frame[bb] = (frame[bb].astype(np.float32) * (1.0 - alpha) + fill.astype(np.float32) * alpha).astype(np.uint8)
+            frame = finish(frame[crop])
         proc.stdin.write(np.ascontiguousarray(frame).tobytes())
         for kk in [k for k in key if k < k0 and k != n - 1]:
             del key[kk]
@@ -659,6 +888,7 @@ def check(args):
         info["ok"] = False; info["error"] = f"onnxruntime missing: {e}"
     if not info["model_present"]:
         info["ok"] = False; info["error"] = "depth model missing"
+    info["renderer"] = args.renderer; info["aa"] = args.aa
     info["lama"] = os.path.abspath(args.lama) if args.lama else None
     info["lama_present"] = bool(args.lama and os.path.exists(args.lama))
     emit(info)
@@ -691,12 +921,20 @@ def main():
     ap.add_argument("--preset", default="medium")
     ap.add_argument("--depth-res", type=int, default=770)
     ap.add_argument("--min-seg", type=int, default=70)
-    ap.add_argument("--layers", type=int, default=32)
-    ap.add_argument("--map-every", type=int, default=4, help="compute warp maps every N frames, interpolate between (4 = maps at 7.5 fps; the move is smooth so the lerp is exact to <0.5 px)")
-    ap.add_argument("--model", default=os.path.join(here, "..", "models", "dav2_small.onnx"))
+    ap.add_argument("--layers", type=int, default=32, help="depth layers of the legacy layered renderer")
+    ap.add_argument("--renderer", default="splat", choices=["splat", "layers"], help="splat: exact per-frame z-buffer maps (v64.4); layers: v64.3 layered inverse")
+    ap.add_argument("--splat-tol", type=float, default=0.03, help="disparity tolerance of the splat consistency test")
+    ap.add_argument("--step-high", type=float, default=0.10, help="5x5 disparity range that makes a depth step an occlusion edge (hardened; a gap under motion, filled from the plate)")
+    ap.add_argument("--step-low", type=float, default=0.06, help="hysteresis: a steep band is hardened along its whole length once any part exceeds --step-high")
+    ap.add_argument("--aa", default="super", choices=["super", "prefilter", "none"], help="anti-aliasing of the photo resample (see render())")
+    ap.add_argument("--unsharp", type=float, default=0.35, help="unsharp-mask amount on the finished frame (0 = off)")
+    ap.add_argument("--map-every", type=int, default=1, help="compute warp maps every N frames and lerp between (1 = every frame; >1 trades edge stability for speed)")
+    ap.add_argument("--model", default=None, help="Depth Anything V2 ONNX (default: models/dav2_base.onnx, else models/dav2_small.onnx)")
     ap.add_argument("--depth-out", default=None)
     ap.add_argument("--report", default=None)
     args = ap.parse_args()
+    if not args.model:
+        args.model = default_model_path(here)
     if args.check:
         check(args)
     if not args.src or not args.out:

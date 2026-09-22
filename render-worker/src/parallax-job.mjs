@@ -6,11 +6,21 @@
 // hands back a clip in the same shape generateKenBurnsFallback returns.
 //
 // Why a Python sidecar and not Node: the warp is dense per-pixel work
-// (layered inverse mapping with a z-test, Lanczos resampling) — numpy/OpenCV
-// do a 1080x1920 frame in ~0.3s; the same loops in JS are 5-10x slower and
-// the depth model already runs through onnxruntime either way. The Docker
-// image installs python3 + numpy + opencv-contrib-headless + onnxruntime and
-// downloads the Depth Anything V2 small ONNX at build time (see Dockerfile).
+// (a forward z-buffer per frame, exact inverse maps, anti-aliased resampling)
+// — numpy/OpenCV do a 1080x1920 frame in ~0.5s; the same loops in JS are
+// 5-10x slower and the depth model already runs through onnxruntime either
+// way. The Docker image installs python3 + numpy + opencv-contrib-headless +
+// onnxruntime and downloads the Depth Anything V2 BASE ONNX (v64.4; small
+// remains a drop-in via PARALLAX_MODEL_PATH) and big-LaMa at build time.
+//
+// v64.4 (Sep-22, "the light looks grainy"): tools/parallax.py now builds exact
+// maps every frame (no 4-frame keyframe lerp, no depth layers), resamples
+// with a real prefilter, and uses the base depth model, which sees a frame
+// light as an open frame instead of a solid card. Knobs, all optional:
+//   PARALLAX_RENDERER=splat|layers   layers = the v64.3 renderer (rollback)
+//   PARALLAX_AA=super|prefilter|none none = the v64.3 Lanczos (rollback)
+//   PARALLAX_STEP_HIGH / _LOW        occlusion-edge hysteresis (0.10 / 0.06)
+//   PARALLAX_MAP_EVERY               1 (every frame); >1 = the v64.3 lerp
 //
 // Where it sits (Sep-21 stage-2 bake-off, MODEL_BAKEOFF_SEP2026.md §4b): on
 // 9:16 production crops no hosted image-to-video API gives a controlled
@@ -29,6 +39,7 @@
 // Every failure fails CLOSED to the existing floor (homography drift), so a
 // broken Python on the host can never drop a scene.
 
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -36,11 +47,17 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOOL_PATH = path.join(HERE, "..", "tools", "parallax.py");
-const MODEL_PATH = process.env.PARALLAX_MODEL_PATH || path.join(HERE, "..", "models", "dav2_small.onnx");
+const MODEL_PATH = process.env.PARALLAX_MODEL_PATH || defaultModelPath();
 const LAMA_PATH = process.env.PARALLAX_LAMA_PATH || path.join(HERE, "..", "models", "lama_fp32.onnx");
 const PYTHON = process.env.PARALLAX_PYTHON || "python3";
 const SUPERSAMPLE = Math.min(2.5, Math.max(1, Number(process.env.PARALLAX_SUPERSAMPLE) || 1.75));
 const FPS = 30;
+
+/** v64.4: Depth Anything V2 base when the image has it, else the v64 small. */
+export function defaultModelPath() {
+  const base = path.join(HERE, "..", "models", "dav2_base.onnx");
+  try { fs.accessSync(base); return base; } catch { return path.join(HERE, "..", "models", "dav2_small.onnx"); }
+}
 
 export const PARALLAX_MODES = ["off", "floor", "interior", "all"];
 
@@ -268,6 +285,10 @@ export async function renderParallax({
   if (move.arc) args.push("--arc");
   if (process.env.PARALLAX_MAP_EVERY) args.push("--map-every", String(process.env.PARALLAX_MAP_EVERY));
   if (process.env.PARALLAX_LAYERS) args.push("--layers", String(process.env.PARALLAX_LAYERS));
+  if (/^(splat|layers)$/.test(process.env.PARALLAX_RENDERER || "")) args.push("--renderer", process.env.PARALLAX_RENDERER);
+  if (/^(super|prefilter|none)$/.test(process.env.PARALLAX_AA || "")) args.push("--aa", process.env.PARALLAX_AA);
+  if (Number(process.env.PARALLAX_STEP_HIGH) > 0) args.push("--step-high", String(Number(process.env.PARALLAX_STEP_HIGH)));
+  if (Number(process.env.PARALLAX_STEP_LOW) > 0) args.push("--step-low", String(Number(process.env.PARALLAX_STEP_LOW)));
   // stronger depth separation on lateral moves (the plate now carries the reveal)
   args.push("--near-ratio", String(Number(process.env.PARALLAX_NEAR_RATIO) || (move.truckX !== 0 ? 4 : 3)));
 

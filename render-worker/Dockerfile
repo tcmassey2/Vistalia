@@ -4,7 +4,7 @@
 # system deps (X11 dev libs, xvfb, build-essential, Mesa).
 # v64: python3 sidecar for the depth-parallax engine (tools/parallax.py) —
 # numpy + opencv-contrib-headless + onnxruntime with the Depth Anything V2
-# small ONNX and (v64.3) big-LaMa baked in (~470 MB). No X11, no GL.
+# base ONNX (v64.4) and (v64.3) big-LaMa baked in (~760 MB). No X11, no GL.
 # Render Pro 4GB plan recommended. Smaller plans WILL OOM on Gen-4 renders.
 
 FROM node:20-bookworm-slim
@@ -58,15 +58,17 @@ RUN pip3 install --no-cache-dir --break-system-packages \
       "opencv-contrib-python-headless>=4.10,<4.14" \
       "onnxruntime>=1.19,<1.26"
 
-# Depth Anything V2 small (Apache-2.0, ~99 MB fp32 ONNX). Baked into the
-# image so a cold container never downloads at render time; the size check
-# fails the build rather than shipping an HTML error page as a model.
-# Override the path at runtime with PARALLAX_MODEL_PATH.
+# Depth Anything V2 BASE (Apache-2.0, ~390 MB fp32 ONNX; v64.4 — the small
+# model returned a frame light as a solid card, base sees the open frame and
+# the cables, +2-3 s per scene on CPU). Baked into the image so a cold
+# container never downloads at render time; the size check fails the build
+# rather than shipping an HTML error page as a model. Override the path at
+# runtime with PARALLAX_MODEL_PATH (the v64 small model is a drop-in).
 RUN mkdir -p /app/models \
   && curl -fsSL --retry 3 --retry-delay 5 \
-       -o /app/models/dav2_small.onnx \
-       "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx" \
-  && python3 -c "import os,sys; s=os.path.getsize('/app/models/dav2_small.onnx'); print('depth model', s, 'bytes'); sys.exit(0 if s > 50_000_000 else 1)"
+       -o /app/models/dav2_base.onnx \
+       "https://huggingface.co/onnx-community/depth-anything-v2-base/resolve/main/onnx/model.onnx" \
+  && python3 -c "import os,sys; s=os.path.getsize('/app/models/dav2_base.onnx'); print('depth model', s, 'bytes'); sys.exit(0 if s > 300_000_000 else 1)"
 
 # v64.3: big-LaMa (Apache-2.0, Carve's ONNX export, ~208 MB) inpaints the
 # strip a lateral move reveals behind foreground objects — once per scene,
@@ -92,7 +94,7 @@ COPY . .
 RUN node -e "require('@remotion/renderer').ensureBrowser().then(() => console.log('Chromium ready')).catch(err => { console.error(err); process.exit(1); })"
 
 # v64: prove the sidecar imports and sees the model, at build time.
-RUN python3 tools/parallax.py --check --model /app/models/dav2_small.onnx --lama /app/models/lama_fp32.onnx
+RUN python3 tools/parallax.py --check --model /app/models/dav2_base.onnx --lama /app/models/lama_fp32.onnx
 
 ENV PORT=8787
 ENV NODE_ENV=production

@@ -135,10 +135,13 @@ PARALLAX_MARGIN_X=0.13   # photo kept beyond the frame edge for lateral moves (f
 PARALLAX_LAMA_PATH=/app/models/lama_fp32.onnx   # big-LaMa for the revealed strip; missing → Telea fallback, logged as "plate telea"
 PARALLAX_ZOOM_MAX=1.30   # push cap; keep ≤ PARALLAX_SUPERSAMPLE/1.3 so the last frame stays sharper than native
 PARALLAX_SUPERSAMPLE=1.75 # crop scale fed to the renderer (1–2.5)
-PARALLAX_MAP_EVERY=3     # warp maps every N frames (lerped); 2 = slower, marginally finer
-PARALLAX_LAYERS=32       # depth layers for the z-test
+PARALLAX_MAP_EVERY=1     # v64.4: exact maps every frame; >1 lerps between keyframes (the v64.3 4-frame jerk — speed knob only)
+PARALLAX_RENDERER=splat  # v64.4 forward z-buffer renderer; "layers" = the v64.3 layered inverse (rollback)
+PARALLAX_AA=super        # anti-aliased resample (cubic at source res + area + 0.35 unsharp); "none" = the v64.3 Lanczos (rollback)
+PARALLAX_STEP_HIGH=0.10  PARALLAX_STEP_LOW=0.06   # occlusion-edge hysteresis on the depth map (5x5 disparity range)
+PARALLAX_LAYERS=32       # depth layers of the legacy layered renderer only
 PARALLAX_NEAR_RATIO=3    # assumed far/near depth ratio (relative depth's unknown shift); higher = stronger parallax, more fill
-PARALLAX_PYTHON=python3  PARALLAX_MODEL_PATH=/app/models/dav2_small.onnx
+PARALLAX_PYTHON=python3  PARALLAX_MODEL_PATH=/app/models/dav2_base.onnx   # v64.4: Depth Anything V2 BASE (small still works as a drop-in)
 ```
 
 A generated clip that fails ONLY on camera travel (over-push / pull-back / static) skips the prompt ladder and goes straight to the floor — travel is the engine's property on that photo, not the prompt's (Sep-22 smoke test: 1.23 → 1.48 → 1.35 → 1.17 across four prompts). Morph / edge / flicker failures keep the full ladder. The slideshow guard judges generative scenes only; parallax scenes print their own line (≈0.6–1.2 YDIF is by design: exact camera, no redraw).
