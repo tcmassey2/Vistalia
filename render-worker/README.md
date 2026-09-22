@@ -127,13 +127,18 @@ PARALLAX_MODE=interior   # production setting: interiors render on parallax as t
                          # exteriors/pools/twilights stay generative + measured gate + parallax floor
 PARALLAX_MODE=all        # every scene on parallax
 MEASURED_GATE=1|0        # force the measured gate on/off (default: on whenever PARALLAX_MODE != off)
-GATE_ZOOM_MIN=1.01 GATE_ZOOM_MAX=1.16 GATE_RIGID_MAX=0.15 GATE_LINES_MIN=50 GATE_FLICKER_MAX=3.0
-PARALLAX_SUPERSAMPLE=1.5 # crop scale fed to the renderer (1–2)
+GATE_ZOOM_MIN=1.01 GATE_ZOOM_MAX=1.16 GATE_ZOOM_MAX_EXTERIOR=1.35   # camera-travel budgets (interior / exterior rooms)
+GATE_RIGID_MAX=0.04 GATE_LINES_MIN=50 GATE_FLICKER_MAX=1.5           # per-step morph residual, edge survival, exposure pumping
+PARALLAX_VELOCITY=1.0    # scales the whole move (v64.2: 3.7%/s push at the v39-floor speed, gain 0.6–2.2 by scene length)
+PARALLAX_ZOOM_MAX=1.30   # push cap; keep ≤ PARALLAX_SUPERSAMPLE/1.3 so the last frame stays sharper than native
+PARALLAX_SUPERSAMPLE=1.75 # crop scale fed to the renderer (1–2.5)
 PARALLAX_MAP_EVERY=3     # warp maps every N frames (lerped); 2 = slower, marginally finer
 PARALLAX_LAYERS=32       # depth layers for the z-test
-PARALLAX_NEAR_RATIO=4    # assumed far/near depth ratio (relative depth's unknown shift)
+PARALLAX_NEAR_RATIO=3    # assumed far/near depth ratio (relative depth's unknown shift); higher = stronger parallax, more fill
 PARALLAX_PYTHON=python3  PARALLAX_MODEL_PATH=/app/models/dav2_small.onnx
 ```
+
+A generated clip that fails ONLY on camera travel (over-push / pull-back / static) skips the prompt ladder and goes straight to the floor — travel is the engine's property on that photo, not the prompt's (Sep-22 smoke test: 1.23 → 1.48 → 1.35 → 1.17 across four prompts). Morph / edge / flicker failures keep the full ladder. The slideshow guard judges generative scenes only; parallax scenes print their own line (≈0.6–1.2 YDIF is by design: exact camera, no redraw).
 
 Checks: `npm run parallax:check` (imports + model present), `npm run test:parallax` (routing, choreography, gate thresholds), `python3 tools/clip-gate.py --clip some.mp4`. Everything fails closed: Python or model missing → the generative ladder and the v39 homography floor exactly as before. Cost: ~50–100 s of worker CPU per 5-second interior scene, serialised; interiors are $0 in generation.
 

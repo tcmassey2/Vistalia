@@ -340,10 +340,19 @@ def render(args):
     w_bg, plate = background_model(w, bgr)
     ys_g, xs_g = np.mgrid[0:h, 0:wd].astype(np.float32)
     focal = 0.85 * max(wd, h)
+    # Overscan (v64.2): a yaw/pitch drift shifts the FAR plane by
+    # focal·tan(angle) px while the far plane barely zooms, so without a
+    # margin the last frames would sample outside the crop and reflect at
+    # the edge. Start the whole move zoomed in by s0 so every corner stays
+    # inside the source through t = 1 (checked at both ends; linear between).
+    far_zoom_end = 1.0 / (1.0 - Tz * lo)
+    need_x = abs(focal * np.tan(np.deg2rad(args.yaw))) / (wd / 2.0) + 0.01
+    need_y = abs(focal * np.tan(np.deg2rad(args.pitch))) / (h / 2.0) + 0.01
+    overscan = max(1.0, (1.0 + max(need_x, need_y)) / far_zoom_end) if (abs(args.yaw) > 1e-6 or abs(args.pitch) > 1e-6) else 1.0
     n = int(round(args.seconds * args.fps))
     bend = line_bend(segs, w, cx, cy, Tz, Tx_end) if len(segs) else {"segments": 0, "bend_mean_px": 0, "bend_p95_px": 0, "bend_max_px": 0}
     print(f"[parallax] {fw}x{fh} -> {wd}x{h} depth {t_depth:.1f}s lines {n_lines}/{len(segs)} layers {len(layers)} "
-          f"Tz {Tz:.4f} (near x{1/(1-Tz):.3f}, far x{1/(1-Tz*lo):.3f}) bend p95 {bend['bend_p95_px']} max {bend['bend_max_px']}", flush=True)
+          f"Tz {Tz:.4f} (near x{1/(1-Tz):.3f}, far x{1/(1-Tz*lo):.3f}) overscan {overscan:.3f} bend p95 {bend['bend_p95_px']} max {bend['bend_max_px']}", flush=True)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{wd}x{h}",
            "-r", str(args.fps), "-i", "-", "-an", "-c:v", "libx264", "-preset", args.preset, "-crf", str(args.crf),
@@ -353,17 +362,26 @@ def render(args):
     except Exception as e:
         fail(f"ffmpeg spawn failed: {e}")
     holes = 0
+    oob_last = 0                  # map samples outside the crop at the last frame (should be 0 with overscan)
     every = max(1, int(args.map_every))
     key = {}
+
+    def pre_scale(gx, gy):
+        if overscan <= 1.0:
+            return gx, gy
+        return (cx + (gx - cx) / overscan).astype(np.float32), (cy + (gy - cy) / overscan).astype(np.float32)
 
     def maps_at(i):
         t = ease(i / max(1, n - 1), args.ease)
         if t <= 0:
             return None
-        grid = rotated_grid(xs_g, ys_g, cx, cy, focal, args.yaw * t, args.pitch * t)
-        return build_maps(w, cx, cy, Tz * t, Tx_end * t, layers, grid, w_bg, layer_tol)
+        gx, gy = rotated_grid(xs_g, ys_g, cx, cy, focal, args.yaw * t, args.pitch * t)
+        gx, gy = pre_scale(gx, gy)
+        return build_maps(w, cx, cy, Tz * t, Tx_end * t, layers, (gx, gy), w_bg, layer_tol)
 
-    frame0 = bgr if (wd, h) == (fw, fh) else cv2.resize(full, (wd, h), interpolation=cv2.INTER_AREA)
+    id_x, id_y = pre_scale(xs_g, ys_g)
+    identity = (id_x, id_y, np.zeros((h, wd), bool))
+    frame0 = cv2.remap(full, id_x * sx_src, id_y * sy_src, cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT_101)
     for i in range(n):
         k0 = (i // every) * every
         k1 = min(n - 1, k0 + every)
@@ -375,8 +393,8 @@ def render(args):
         if m0 is None and m1 is None:
             frame = frame0
         else:
-            if m0 is None:                   # first keyframe is the identity map
-                m0 = (xs_g, ys_g, np.zeros((h, wd), bool))
+            if m0 is None:                   # first keyframe is the (pre-scaled) identity map
+                m0 = identity
             a = 0.0 if k1 == k0 else (i - k0) / (k1 - k0)
             if a <= 0:
                 mx, my, hole = m0
@@ -386,6 +404,8 @@ def render(args):
                 mx = m0[0] * (1 - a) + m1[0] * a
                 my = m0[1] * (1 - a) + m1[1] * a
                 hole = m0[2] | m1[2]
+            if i == n - 1:
+                oob_last = int(((mx < 0) | (mx > wd - 1) | (my < 0) | (my > h - 1)).sum())
             frame = cv2.remap(full, mx * sx_src, my * sy_src, cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT_101)
             if hole.any():
                 holes += int(hole.sum())
@@ -398,8 +418,8 @@ def render(args):
     rc = proc.wait()
     summary = {"ok": rc == 0, "out": args.out, "width": wd, "height": h, "src_width": fw, "src_height": fh,
                "seconds": args.seconds, "fps": args.fps, "frames": n, "zoom": args.zoom, "truck": Tx_end,
-               "yaw": args.yaw, "pitch": args.pitch, "Tz": round(Tz, 5), "layers": int(len(layers)),
-               "lines_regularised": n_lines, "mean_hole_px": int(holes / max(1, n)),
+               "yaw": args.yaw, "pitch": args.pitch, "Tz": round(Tz, 5), "overscan": round(float(overscan), 4), "layers": int(len(layers)),
+               "lines_regularised": n_lines, "mean_hole_px": int(holes / max(1, n)), "oob_last_px": oob_last,
                "depth_s": round(t_depth, 1), "elapsed_s": round(time.time() - t0, 1), **bend}
     if rc != 0:
         summary["error"] = f"ffmpeg exited {rc}"

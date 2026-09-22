@@ -38,7 +38,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOOL_PATH = path.join(HERE, "..", "tools", "parallax.py");
 const MODEL_PATH = process.env.PARALLAX_MODEL_PATH || path.join(HERE, "..", "models", "dav2_small.onnx");
 const PYTHON = process.env.PARALLAX_PYTHON || "python3";
-const SUPERSAMPLE = Math.min(2, Math.max(1, Number(process.env.PARALLAX_SUPERSAMPLE) || 1.5));
+const SUPERSAMPLE = Math.min(2.5, Math.max(1, Number(process.env.PARALLAX_SUPERSAMPLE) || 1.75));
 const FPS = 30;
 
 export const PARALLAX_MODES = ["off", "floor", "interior", "all"];
@@ -71,22 +71,42 @@ export function parallaxPolicy(scene = {}) {
 // out"), varied by a small yaw/pitch drift — a rotation is exact for any
 // depth (no disocclusion), so it adds life without adding artefacts. Trucks
 // wait for a better plate inpainter (Sep-21 note in tools/parallax.py).
+//
+// v64.2 VELOCITY (Sep-22 smoke test): the first production render put four
+// interiors on parallax at a fixed 6-8% push and the slideshow guard read
+// them at YDIF 0.29-0.88 — "floor" territory, the same slow drift Troy called
+// "a little brutal" on long hero scenes (v62.35/v62.67). The palette below
+// is a TOTAL displacement at a 3.5 s reference, scaled by duration so the
+// per-frame camera speed stays constant (the v39 floor's rule, gain capped
+// at 2.2), and it lands where the pipeline's own floor already lives
+// (zoom 1.13 + 1.5° at 3.5 s). The push is exact and hallucination-free, so
+// the only budget is resolution: the crop is 1.75× supersampled and the
+// zoom is capped at PARALLAX_ZOOM_MAX (1.30) so the last frame still
+// samples ≥ 1.3 source px per output px. PARALLAX_VELOCITY scales it all.
+const REF_DURATION_SEC = 3.5;
 const MOVES = [
-  { zoom: 1.07, yaw: 0.0, pitch: 0.0 },     // clean push
-  { zoom: 1.06, yaw: 0.45, pitch: -0.15 },  // push + slow turn right
-  { zoom: 1.08, yaw: 0.0, pitch: 0.2 },     // hero push, tilt up
-  { zoom: 1.06, yaw: -0.45, pitch: -0.15 }, // push + slow turn left
-  { zoom: 1.07, yaw: 0.25, pitch: 0.0 },    // push, settle right
-  { zoom: 1.07, yaw: -0.25, pitch: 0.1 }    // push, settle left
+  { zoom: 1.13, yaw: 0.0, pitch: 0.0 },     // clean push
+  { zoom: 1.11, yaw: 0.9, pitch: -0.25 },   // push + slow turn right
+  { zoom: 1.15, yaw: 0.0, pitch: 0.35 },    // hero push, tilt up
+  { zoom: 1.11, yaw: -0.9, pitch: -0.25 },  // push + slow turn left
+  { zoom: 1.12, yaw: 0.5, pitch: 0.0 },     // push, settle right
+  { zoom: 1.12, yaw: -0.5, pitch: 0.2 }     // push, settle left
 ];
+const zoomMax = () => Math.min(1.45, Math.max(1.08, Number(process.env.PARALLAX_ZOOM_MAX) || 1.30));
+const velocity = () => Math.min(2.5, Math.max(0.4, Number(process.env.PARALLAX_VELOCITY) || 1.0));
 
-export function parallaxMove(sceneIndex = 0, cameraMotion = "push_in") {
+export function parallaxMove(sceneIndex = 0, cameraMotion = "push_in", durationSec = REF_DURATION_SEC) {
+  const ZOOM_MAX = zoomMax();
+  const VELOCITY = velocity();
   const motion = String(cameraMotion || "push_in").toLowerCase();
   let mv = MOVES[(sceneIndex * 5 + 1) % MOVES.length];
   if (motion === "pull_out") mv = MOVES[2];               // legacy pull-outs render as the hero push
   else if (motion === "lateral_pan" || motion === "detail_sweep") mv = MOVES[sceneIndex % 2 === 0 ? 1 : 3];
-  // longer scenes get a touch more travel so per-second velocity stays visible (v62.35 idea, capped)
-  return mv;
+  const dur = Number(durationSec) > 0 ? Number(durationSec) : REF_DURATION_SEC;
+  const gain = Math.min(2.2, Math.max(0.6, dur / REF_DURATION_SEC)) * VELOCITY;
+  const zoom = Math.min(ZOOM_MAX, +(1 + (mv.zoom - 1) * gain).toFixed(3));
+  const rot = Math.min(1.6, gain);   // rotation needs overscan; it grows more slowly than the push
+  return { zoom, yaw: +(mv.yaw * rot).toFixed(2), pitch: +(mv.pitch * rot).toFixed(2), gain: +gain.toFixed(2) };
 }
 
 /** Parse the renderer's stdout: the last "[parallax] {...}" line is the summary. */
@@ -160,7 +180,7 @@ export async function renderParallax({
 }) {
   if (!(await parallaxAvailable())) throw new Error("parallax renderer unavailable on this host");
   const duration = Math.min(12, Math.max(1.6, Number(durationSec) || 5));
-  const move = parallaxMove(sceneIndex, cameraMotion);
+  const move = parallaxMove(sceneIndex, cameraMotion, duration);
   const W = Math.round(width * SUPERSAMPLE / 2) * 2;
   const H = Math.round(height * SUPERSAMPLE / 2) * 2;
 
@@ -185,7 +205,7 @@ export async function renderParallax({
   ];
   if (process.env.PARALLAX_MAP_EVERY) args.push("--map-every", String(process.env.PARALLAX_MAP_EVERY));
   if (process.env.PARALLAX_LAYERS) args.push("--layers", String(process.env.PARALLAX_LAYERS));
-  if (process.env.PARALLAX_NEAR_RATIO) args.push("--near-ratio", String(process.env.PARALLAX_NEAR_RATIO));
+  args.push("--near-ratio", String(Number(process.env.PARALLAX_NEAR_RATIO) || 3));
 
   const t0 = Date.now();
   try {
@@ -197,7 +217,7 @@ export async function renderParallax({
     const st = await fsp.stat(outPath).catch(() => null);
     if (!st || st.size < 20000) throw new Error(`parallax wrote ${st ? st.size : 0} bytes`);
     console.info(
-      `[parallax] scene ${sceneIndex + 1} (${roomType || "?"}): ${duration}s zoom ${move.zoom} yaw ${move.yaw} pitch ${move.pitch} ` +
+      `[parallax] scene ${sceneIndex + 1} (${roomType || "?"}): ${duration}s zoom ${move.zoom} yaw ${move.yaw} pitch ${move.pitch} (gain ${move.gain}) ` +
       `— ${summary.elapsed_s}s, lines ${summary.lines_regularised}, bend p95 ${summary.bend_p95_px}px max ${summary.bend_max_px}px, ` +
       `holes ${summary.mean_hole_px}px/frame (${((Date.now() - t0) / 1000).toFixed(1)}s wall)`
     );

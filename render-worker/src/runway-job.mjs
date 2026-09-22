@@ -29,7 +29,7 @@ import { stitchWithCrossfades, stitchWithSimpleConcat } from "./stitch.mjs";
 import { qcVeoClip, qcEnabled, qcMasterSceneCheck, qcSwapCandidatePhoto } from "./veo-qc.mjs";
 import { isMinimaxModel } from "./veo-job.mjs";
 import { parallaxPolicy, renderParallax } from "./parallax-job.mjs";
-import { gateClip, gateEnabled } from "./clip-gate.mjs";
+import { gateClip, gateEnabled, motionBudgetOnly } from "./clip-gate.mjs";
 
 /* v63.0 ENGINE FAMILIES. Every "is this Kling?" gate in this file was
    really asking one of three different questions, and the MiniMax H3
@@ -69,7 +69,7 @@ const isVerticalSourceEngine = () => isKlingEngine() || isMinimaxEngine();
 // PARALLAX_MODE set, end on the exact engine instead of a fourth roll.
 async function qcClipMeasured(args) {
   const verdict = await qcVeoClip(args);
-  return gateClip(verdict, args.clipPath, { sceneIndex: args.sceneIndex });
+  return gateClip(verdict, args.clipPath, { sceneIndex: args.sceneIndex, roomType: args.roomType });
 }
 
 const RUNWAY_API_BASE = process.env.RUNWAY_API_BASE || "https://api.dev.runwayml.com/v1";
@@ -1206,6 +1206,26 @@ export async function renderRunwayJob(body, options = {}) {
           // on the unchecked scene every time. The final sweep gives these
           // scenes a 3-frame high-scrutiny inspection instead of 2.
           let shipChecked = verdict.checked;
+          // v64.2: a clip the vision judge passed but the measured gate
+          // failed ONLY on camera travel skips the prompt ladder — the
+          // Sep-22 smoke test re-rolled one exterior 1.23 → 1.48 → 1.35 →
+          // 1.17 across four prompts and four generations before flooring.
+          // Travel is the engine's property on this photo; the floor is the
+          // exact engine. Morph/lines/flicker failures keep the full ladder.
+          if (verdict.checked && !verdict.pass && motionBudgetOnly(verdict)) {
+            try {
+              console.warn(`[gate] scene ${index + 1} (${scene.roomType || "?"}): camera travel outside budget (${verdict.reasons.join(", ")}) with the vision judge ${verdict.reasons.every((r) => r.startsWith("measured_")) ? "passing" : "silent"} — no regen (prompt-independent); PREMIUM PHOTO MOTION floor.`);
+              const floor = await generateKenBurnsFallback(scene, manifest, tempDir, index, {
+                durationSec: Number(scene.duration) > 0 ? Number(scene.duration) + 0.5 : undefined
+              });
+              qcFloorCount++;
+              scenesCompleted++;
+              touchWatchdog();
+              return { ...floor, usedPhotoMotionFloor: true, attemptsUsed, floorReason: `motion_budget:${verdict.reasons.join("|").slice(0, 80)}` };
+            } catch (floorErr) {
+              console.warn(`[gate] scene ${index + 1}: floor failed after a motion-budget fail (${floorErr.message}) — continuing down the ladder.`);
+            }
+          }
           if (verdict.checked && !verdict.pass && !usedConstrained) {
             console.warn(`[qc] scene ${index + 1} failed QC (${verdict.reasons.join(", ")}) — regenerating constrained.`);
             qcRetryCount++;
@@ -2813,7 +2833,12 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     try {
       const mm = await measureClipMotion(clip.clipPath);
       if (mm && Number.isFinite(mm.mean)) {
-        motionStats.push({ scene: clip.sceneIndex + 1, ydif: mm.mean, jitter: mm.jitter, shimmer: mm.shimmer, spike: mm.spike, engine: clip.engineUsed || "" });
+        // v64.2: label deterministic clips so the slideshow guard judges the
+        // generative scenes (where stillness means broken wiring) and reports
+        // the parallax scenes against their own band.
+        const engineLabel = (clip.parallaxPrimary || clip.floorEngine === "parallax") ? "parallax"
+          : (clip.fallback || clip.usedPhotoMotionFloor) ? "photo_motion" : (clip.engineUsed || "");
+        motionStats.push({ scene: clip.sceneIndex + 1, ydif: mm.mean, jitter: mm.jitter, shimmer: mm.shimmer, spike: mm.spike, engine: engineLabel });
       }
     } catch { /* motion telemetry must never block a render */ }
     // v60.9 KLING GIMBAL PASS (Troy: "the camera bounces as if someone is
@@ -3055,9 +3080,22 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
         : "";
       console.log(`[motion] scene ${m.scene} YDIF=${m.ydif.toFixed(2)}${smooth}${m.engine && m.engine !== "veo" ? ` (${m.engine})` : ""}`);
     }
-    const sorted = motionStats.map((m) => m.ydif).sort((a, b) => a - b);
+    // v64.2: the ≈2.2 / ≈0.7 / <1.0 bands were calibrated on generative
+    // clips, where frame-to-frame redraw (boil) inflates YDIF. Depth-parallax
+    // scenes are exact and boil-free, so they read 0.6–1.2 by construction at
+    // the v39-floor camera speed; judging them by the generative band would
+    // cry "slideshow" at every interior. The median below is over generative
+    // scenes only; deterministic scenes get their own line.
+    const generative = motionStats.filter((m) => m.engine !== "parallax" && m.engine !== "photo_motion");
+    const deterministic = motionStats.filter((m) => m.engine === "parallax" || m.engine === "photo_motion");
+    const judged = generative.length ? generative : motionStats;
+    const sorted = judged.map((m) => m.ydif).sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
-    const dead = motionStats.filter((m) => m.ydif < 1.0).length;
+    const dead = judged.filter((m) => m.ydif < 1.0).length;
+    if (deterministic.length) {
+      const ds = deterministic.map((m) => m.ydif).sort((a, b) => a - b);
+      console.log(`[motion] deterministic scenes: ${deterministic.length}/${motionStats.length} (${deterministic.map((m) => `${m.scene}:${m.ydif.toFixed(2)}`).join(" ")}) median ${ds[Math.floor(ds.length / 2)].toFixed(2)} — exact camera, no redraw; ≈0.6–1.2 at the v39-floor speed is by design, <0.4 means the move is too small for the scene length.`);
+    }
     // v60.7: label which pass this is. The stitch runs once pre-sweep and
     // again after floor replacements — only the SECOND pass measures what
     // the customer receives. The fdc8e72 canary logged a proud 2.38
@@ -3066,7 +3104,7 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
     // alone again.
     const postSweep = clipResults.some((c) => c.sweepReplaced);
     const passLabel = postSweep ? "SHIPPED (post-sweep re-stitch)" : "pre-sweep";
-    console.log(`[motion] summary [${passLabel}] — median YDIF ${median.toFixed(2)}, scenes<1.0: ${dead}/${motionStats.length} (≈2.2 healthy, ≈0.7 floor, <1.0 slideshow-suspect)`);
+    console.log(`[motion] summary [${passLabel}] — ${generative.length ? "generative " : ""}median YDIF ${median.toFixed(2)}, scenes<1.0: ${dead}/${judged.length} (≈2.2 healthy, ≈0.7 floor, <1.0 slideshow-suspect)`);
     // v62.51: median smoothness across scenes — baseline-building telemetry
     // for the gimbal-rails verdict, decomposed so foliage can't impersonate
     // a shaky camera. No bands printed until a few renders establish what
@@ -3084,8 +3122,8 @@ export async function stitchClipsAndOverlays(clipResults, manifest, outputPath, 
         ` across ${motionStats.length} scene(s) — baseline building, telemetry only`
       );
     }
-    if (median < 1.3) {
-      console.warn(`[motion] ALERT: median ${median.toFixed(2)} < 1.3 — this ${postSweep ? "SHIPPED master" : "render"} will read as a photo slideshow. Check engine duration/prompt wiring (v60.5) and the sweep floor count before shipping.`);
+    if (generative.length && median < 1.3) {
+      console.warn(`[motion] ALERT: generative median ${median.toFixed(2)} < 1.3 — this ${postSweep ? "SHIPPED master" : "render"} will read as a photo slideshow. Check engine duration/prompt wiring (v60.5) and the sweep floor count before shipping.`);
     }
   }
 

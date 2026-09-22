@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 """
-Vistalia — measured clip gate (v64). Numbers, not a vision-model opinion, for
-the three customer faults on a GENERATED clip:
+Vistalia — measured clip gate (v64.2). Numbers, not a vision-model opinion, for
+the three customer faults on a GENERATED clip.
 
-  motion wrong   zoom_orb / zoom_flow  — affine magnification first→last frame
-                 travel_px             — mean flow magnitude first→last
-  morph/invent   rigid_last            — 1 − SSIM(frame0, last frame warped back by
-                                         dense optical flow), on lightly blurred
-                                         frames; camera motion and parallax are
-                                         absorbed, what remains is morph/boil
-                 line_persist_pct      — long straight edges (LSD) of frame 0 still
-                                         present in the flow-compensated last frame
-  flicker        lum_flicker           — std of mean luma across sampled frames
+v64.2: the Sep-22 smoke test showed a single first→last dense flow cannot
+follow Kling's 25-50% pushes (DIS flow saturates, reports zoom ≈ 1.00 and a
+huge "residual" that is really uncompensated camera motion, not morph). The
+flow is now CHAINED over ~8 sampled frames: each step is small enough to
+track, the zoom is the product of the per-step affine scales, the residual is
+measured per step (boil/morph shows up in every step; camera motion does not),
+and the composed field warps the last frame back for straight-edge persistence.
 
-Calibrated on the Sep-20/21 bake-off (MODEL_BAKEOFF_SEP2026.md §3/§4b): a
-static re-encode scores rigid 0.00 / lines 99%; a synthetic 6% zoom of the
-same photo 0.004 / ~78%; Kling v3 Pro on the 9:16 crops 0.02–0.27 / 25–69%.
-Analysis runs at ~540 px wide so a 5 s clip takes ~1–2 s.
+  zoom            product of per-step affine scales of the chained flow (1.07 = 7% push);
+                  zoom_orb is an independent sparse-feature cross-check
+  travel_px       mean total displacement first→last at 1080 px width
+  rigid_step      worst per-step 1−SSIM after warping the next frame back (blurred frames):
+                  morph / boil / redraw
+  rigid_total     1−SSIM(first, last warped back through the composed field)
+  line_persist    % of frame-0 straight edges (LSD) still present after warping the last frame back
+  lum_flicker     std of the per-step change in mean luma (gray levels)
 
-Usage:  clip-gate.py --clip clip.mp4 [--frames 8]    → last stdout line is JSON
+Usage:  clip-gate.py --clip clip.mp4 [--frames 9]    → last stdout line is JSON
 """
 import argparse, json, sys
 
@@ -54,12 +56,7 @@ def read_frames(path, n_samples, width=540):
     return out, n
 
 
-def gray(f):
-    return cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
-
-
 def ssim(a, b):
-    """Gaussian-window SSIM on float gray images (skimage-equivalent, no dependency)."""
     a = a.astype(np.float32); b = b.astype(np.float32)
     C1, C2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
     mu_a = cv2.GaussianBlur(a, (11, 11), 1.5); mu_b = cv2.GaussianBlur(b, (11, 11), 1.5)
@@ -70,9 +67,12 @@ def ssim(a, b):
     return float(m.mean())
 
 
+_dis = None
 def dense_flow(g0, g1):
-    dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
-    return dis.calc(g0, g1, None)
+    global _dis
+    if _dis is None:
+        _dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
+    return _dis.calc(g0, g1, None)
 
 
 def flow_affine_scale(flow):
@@ -103,6 +103,24 @@ def orb_scale(g0, g1):
     return float(np.sqrt(M[0, 0] ** 2 + M[0, 1] ** 2)), int(inl.sum())
 
 
+def warp_back(img, flow):
+    """Sample img at p + flow(p): brings frame k+1 back onto frame k's grid."""
+    h, w = flow.shape[:2]
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    return cv2.remap(img, xs + flow[..., 0], ys + flow[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+
+
+def compose(acc, step):
+    """acc: frame0→frame k field; step: frame k→k+1 field. Returns frame0→k+1."""
+    h, w = acc.shape[:2]
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    sx = cv2.remap(step[..., 0], xs + acc[..., 0], ys + acc[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    sy = cv2.remap(step[..., 1], xs + acc[..., 0], ys + acc[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    out = acc.copy()
+    out[..., 0] += sx; out[..., 1] += sy
+    return out
+
+
 def line_persistence(g0, g_last_warped, min_len=40):
     try:
         lsd = cv2.createLineSegmentDetector(cv2.LSD_REFINE_STD)
@@ -116,8 +134,7 @@ def line_persistence(g0, g_last_warped, min_len=40):
     l0 = l0[L >= min_len]
     if len(l0) == 0:
         return None, 0
-    e1 = cv2.Canny(g_last_warped, 60, 140)
-    e1 = cv2.dilate(e1, np.ones((3, 3), np.uint8))
+    e1 = cv2.dilate(cv2.Canny(g_last_warped, 60, 140), np.ones((3, 3), np.uint8))
     kept = 0
     for x1, y1, x2, y2 in l0:
         n = int(max(8, np.hypot(x2 - x1, y2 - y1) / 3))
@@ -128,37 +145,47 @@ def line_persistence(g0, g_last_warped, min_len=40):
     return round(100.0 * kept / len(l0), 1), int(len(l0))
 
 
-def warp_back(img, flow):
-    h, w = flow.shape[:2]
-    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
-    return cv2.remap(img, xs + flow[..., 0], ys + flow[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", required=True)
-    ap.add_argument("--frames", type=int, default=8)
+    ap.add_argument("--frames", type=int, default=9)
     a = ap.parse_args()
     try:
         frames, n = read_frames(a.clip, a.frames)
-        g = [gray(f) for f in frames]
-        g0, gl = g[0], g[-1]
-        flow = dense_flow(g0, gl)
-        travel = float(np.hypot(flow[..., 0], flow[..., 1]).mean())
-        zf = flow_affine_scale(flow)
-        zo, inl = orb_scale(g0, gl)
-        # rigidity on lightly blurred frames: soft engines can't score rigid by being blurry
-        b0 = cv2.GaussianBlur(g0, (0, 0), 1.2); bl = cv2.GaussianBlur(gl, (0, 0), 1.2)
-        rigid = round(1.0 - ssim(b0, warp_back(bl, flow)), 3)
-        lp, nl = line_persistence(g0, warp_back(gl, flow))
-        lum = [float(x.mean()) for x in g]
-        flicker = round(float(np.std(np.diff(lum))), 3)
-        # scale zoom back to the shipped frame size is not needed: affine scale is dimensionless
+        g = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
+        gb = [cv2.GaussianBlur(x, (0, 0), 1.2) for x in g]   # rigidity on lightly blurred frames
+        acc = None
+        scales, steps_rigid, lum = [], [], [float(g[0].mean())]
+        for k in range(1, len(g)):
+            f = dense_flow(g[k - 1], g[k])
+            s = flow_affine_scale(f)
+            if s is not None:
+                scales.append(s)
+            steps_rigid.append(1.0 - ssim(gb[k - 1], warp_back(gb[k], f)))
+            lum.append(float(g[k].mean()))
+            acc = f if acc is None else compose(acc, f)
+        zoom_flow = float(np.prod(scales)) if scales else None
+        zo, inl = orb_scale(g[0], g[-1])
+        travel = float(np.hypot(acc[..., 0], acc[..., 1]).mean()) * (1080.0 / max(1, g[0].shape[1]))
+        rigid_total = 1.0 - ssim(gb[0], warp_back(gb[-1], acc))
+        lp, nl = line_persistence(g[0], warp_back(g[-1], acc))
+        # zoom: chained flow is the primary (tracks big pushes step by step);
+        # a well-supported ORB estimate that disagrees by >8% flags the flow
+        # as unreliable, in which case the larger of the two is reported.
+        zoom = zoom_flow if zoom_flow is not None else (zo or 1.0)
+        flow_ok = True
+        if zo is not None and inl >= 60 and zoom_flow is not None and abs(zo - zoom_flow) > 0.08:
+            flow_ok = False
+            zoom = max(zo, zoom_flow)
         out = {"ok": True, "clip": a.clip, "frames_total": n, "sampled": len(frames),
-               "zoom_flow": round(zf, 3) if zf else None, "zoom_orb": round(zo, 3) if zo else None, "orb_inliers": inl,
-               "zoom": round(zo if (zo and inl >= 40) else (zf or 1.0), 3),
-               "travel_px": round(travel * (1080.0 / max(1, g0.shape[1])), 1),
-               "rigid_last": rigid, "line_persist_pct": lp, "lines_f0": nl, "lum_flicker": flicker}
+               "zoom": round(zoom, 3), "zoom_flow": round(zoom_flow, 3) if zoom_flow else None,
+               "zoom_orb": round(zo, 3) if zo else None, "orb_inliers": inl, "flow_ok": flow_ok,
+               "travel_px": round(travel, 1),
+               "rigid_step": round(float(max(steps_rigid)), 3) if steps_rigid else None,
+               "rigid_step_med": round(float(np.median(steps_rigid)), 3) if steps_rigid else None,
+               "rigid_total": round(rigid_total, 3),
+               "line_persist_pct": lp, "lines_f0": nl,
+               "lum_flicker": round(float(np.std(np.diff(lum))), 3)}
         emit(out); sys.exit(0)
     except Exception as e:
         emit({"ok": False, "error": str(e)}); sys.exit(3)
