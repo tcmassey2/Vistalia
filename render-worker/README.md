@@ -118,7 +118,7 @@ For local verification without Supabase upload, omit the Supabase variables. The
 
 ## Depth-parallax engine + measured gate (v64)
 
-`tools/parallax.py` (python3 + numpy + opencv-contrib-headless + onnxruntime, Depth Anything V2 small baked into the Docker image at `/app/models/dav2_small.onnx`) renders a scene from the depth of the customer's photo: exact 6–8% dolly, native resolution, every pixel from the photo. `src/parallax-job.mjs` drives it; `src/clip-gate.mjs` + `tools/clip-gate.py` measure every generated clip. Decision record: `~/Documents/EstateMotion/MODEL_BAKEOFF_SEP2026.md` §4b/§8.
+`tools/parallax.py` (python3 + numpy + opencv-contrib-headless + onnxruntime, Depth Anything V2 small and big-LaMa baked into the Docker image under `/app/models/`) renders a scene from the depth of the customer's photo: an exact dolly, truck or arc at native resolution, every pixel from the photo; the strip a lateral move reveals behind foreground objects is inpainted once per scene with LaMa. The crop keeps photo beyond the frame edge so a truck reveals the room, not a zoom. `src/parallax-job.mjs` drives it; `src/clip-gate.mjs` + `tools/clip-gate.py` measure every generated clip. Decision record: `~/Documents/EstateMotion/MODEL_BAKEOFF_SEP2026.md` §4b/§8.
 
 ```
 PARALLAX_MODE=off        # default — v63 behaviour, nothing changes
@@ -130,6 +130,9 @@ MEASURED_GATE=1|0        # force the measured gate on/off (default: on whenever 
 GATE_ZOOM_MIN=1.01 GATE_ZOOM_MAX=1.16 GATE_ZOOM_MAX_EXTERIOR=1.35   # camera-travel budgets (interior / exterior rooms)
 GATE_RIGID_MAX=0.04 GATE_LINES_MIN=50 GATE_FLICKER_MAX=1.5           # per-step morph residual, edge survival, exposure pumping
 PARALLAX_VELOCITY=1.0    # scales the whole move (v64.2: 3.7%/s push at the v39-floor speed, gain 0.6–2.2 by scene length)
+PARALLAX_LATERAL=1.0     # v64.3: scales trucks/arcs (0 = push-only); scene order arc-right, push, truck-left, truck-right, hero-push, arc-left
+PARALLAX_MARGIN_X=0.13   # photo kept beyond the frame edge for lateral moves (fraction of frame width); Y 0.05
+PARALLAX_LAMA_PATH=/app/models/lama_fp32.onnx   # big-LaMa for the revealed strip; missing → Telea fallback, logged as "plate telea"
 PARALLAX_ZOOM_MAX=1.30   # push cap; keep ≤ PARALLAX_SUPERSAMPLE/1.3 so the last frame stays sharper than native
 PARALLAX_SUPERSAMPLE=1.75 # crop scale fed to the renderer (1–2.5)
 PARALLAX_MAP_EVERY=3     # warp maps every N frames (lerped); 2 = slower, marginally finer

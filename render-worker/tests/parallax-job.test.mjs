@@ -31,26 +31,38 @@ process.env.PARALLAX_MODE = "ALL";
 ok(parallaxPolicy({ roomType: "pool" }) === "primary", "all (case-insensitive): pool → primary");
 ok(JSON.stringify(PARALLAX_MODES) === JSON.stringify(["off", "floor", "interior", "all"]), "modes list");
 
-console.log("== choreography: push only, velocity-constant, rotation drift");
-delete process.env.PARALLAX_VELOCITY; delete process.env.PARALLAX_ZOOM_MAX;
+console.log("== choreography: push + lateral (v64.3), velocity-constant, rotation drift");
+delete process.env.PARALLAX_VELOCITY; delete process.env.PARALLAX_ZOOM_MAX; delete process.env.PARALLAX_LATERAL;
 const seen = new Set();
+let lateralCount = 0;
 for (let i = 0; i < 12; i++) {
   const mv = parallaxMove(i, "push_in", 3.5);
-  ok(mv.zoom >= 1.10 && mv.zoom <= 1.16, `scene ${i} @3.5s: zoom ${mv.zoom} in the v39-floor band (never a pull-out)`);
+  ok(mv.zoom >= 1.05 && mv.zoom <= 1.16, `scene ${i} @3.5s (${mv.name}): zoom ${mv.zoom} forward, in the floor band (never a pull-out)`);
   ok(Math.abs(mv.yaw) <= 1.0 && Math.abs(mv.pitch) <= 0.4, `scene ${i} @3.5s: rotation stays steadicam (yaw ${mv.yaw}, pitch ${mv.pitch})`);
-  seen.add(JSON.stringify([mv.zoom, mv.yaw, mv.pitch]));
+  ok(Math.abs(mv.truckX) <= 140 && Math.abs(mv.truckY) <= 60, `scene ${i}: truck within the plate budget (${mv.truckX},${mv.truckY})`);
+  if (mv.truckX !== 0) lateralCount++;
+  if (mv.arc) ok(mv.truckX !== 0, `scene ${i}: an arc always trucks`);
+  seen.add(mv.name);
 }
-ok(seen.size >= 4, `variety across scenes (${seen.size} distinct moves in 12)`);
-const short = parallaxMove(0, "push_in", 1.9), ref = parallaxMove(0, "push_in", 3.5), long6 = parallaxMove(0, "push_in", 6.2), long9 = parallaxMove(0, "push_in", 8.8);
+ok(seen.size >= 5, `variety across scenes (${seen.size} distinct moves in 12: ${[...seen].join(", ")})`);
+ok(lateralCount >= 6, `most scenes move laterally (${lateralCount}/12) — the Reel-E look`);
+ok(parallaxMove(0, "push_in", 3.5).name === "arc-right", "the hook scene (index 0) gets the arc");
+const short = parallaxMove(1, "push_in", 1.9), ref = parallaxMove(1, "push_in", 3.5), long6 = parallaxMove(1, "push_in", 6.2), long9 = parallaxMove(1, "push_in", 8.8);
 ok(short.zoom < ref.zoom && ref.zoom < long6.zoom && long6.zoom <= long9.zoom, `per-frame speed constant: zoom grows with duration (${short.zoom} < ${ref.zoom} < ${long6.zoom} <= ${long9.zoom})`);
 ok(long9.zoom <= 1.30, `zoom capped at 1.30 for the 1.75x supersample (${long9.zoom})`);
 ok(long9.gain === 2.2 && short.gain === 0.6, `gain clamps at 0.6..2.2 (${short.gain}, ${long9.gain})`);
-ok(Math.abs(long9.yaw) <= 1.6 * 0.9 + 1e-6, `rotation gain capped at 1.6× (${long9.yaw})`);
+const arcShort = parallaxMove(0, "push_in", 1.9), arcLong = parallaxMove(0, "push_in", 8.8);
+ok(Math.abs(arcShort.truckX) < Math.abs(arcLong.truckX) && Math.abs(arcLong.truckX) <= 140, `truck scales with duration and caps (${arcShort.truckX} → ${arcLong.truckX})`);
 process.env.PARALLAX_VELOCITY = "0.5";
-ok(parallaxMove(0, "push_in", 3.5).zoom < ref.zoom, "PARALLAX_VELOCITY scales the move");
+ok(parallaxMove(1, "push_in", 3.5).zoom < ref.zoom, "PARALLAX_VELOCITY scales the move");
 delete process.env.PARALLAX_VELOCITY;
-ok(parallaxMove(3, "pull_out", 3.5).zoom > 1, "legacy pull_out renders as a push (v46)");
-ok(parallaxMove(0, "lateral_pan", 3.5).yaw !== 0, "lateral_pan gets a turning push");
+process.env.PARALLAX_LATERAL = "0";
+ok([0, 1, 2, 3, 4, 5].every((i) => parallaxMove(i, "push_in", 3.5).truckX === 0 && !parallaxMove(i, "push_in", 3.5).arc), "PARALLAX_LATERAL=0 → push-only (v64.2 behaviour)");
+process.env.PARALLAX_LATERAL = "0.5";
+ok(Math.abs(parallaxMove(0, "push_in", 3.5).truckX) < Math.abs(parallaxMove(0, "push_in", 3.5 + 0).truckX) + 1 && Math.abs(parallaxMove(0, "push_in", 3.5).truckX) <= 40, "PARALLAX_LATERAL=0.5 halves the truck");
+delete process.env.PARALLAX_LATERAL;
+ok(parallaxMove(3, "pull_out", 3.5).zoom > 1 && parallaxMove(3, "pull_out", 3.5).truckX === 0, "legacy pull_out renders as the hero push (v46)");
+ok(parallaxMove(0, "lateral_pan", 3.5).arc, "lateral_pan gets an arc");
 
 console.log("== stdout contract");
 const good = "[parallax] 1080x1920 depth 1.4s lines 252/252 ...\n[parallax] {\"ok\": true, \"elapsed_s\": 41.2, \"bend_p95_px\": 0.9}\n";

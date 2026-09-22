@@ -3,8 +3,8 @@
 # the repo but not routed by server.mjs, so we don't need its heavy
 # system deps (X11 dev libs, xvfb, build-essential, Mesa).
 # v64: python3 sidecar for the depth-parallax engine (tools/parallax.py) —
-# numpy + opencv-contrib-headless + onnxruntime and the Depth Anything V2
-# small ONNX baked in (~260 MB). No X11, no GL: the warp is plain OpenCV.
+# numpy + opencv-contrib-headless + onnxruntime with the Depth Anything V2
+# small ONNX and (v64.3) big-LaMa baked in (~470 MB). No X11, no GL.
 # Render Pro 4GB plan recommended. Smaller plans WILL OOM on Gen-4 renders.
 
 FROM node:20-bookworm-slim
@@ -68,6 +68,15 @@ RUN mkdir -p /app/models \
        "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx" \
   && python3 -c "import os,sys; s=os.path.getsize('/app/models/dav2_small.onnx'); print('depth model', s, 'bytes'); sys.exit(0 if s > 50_000_000 else 1)"
 
+# v64.3: big-LaMa (Apache-2.0, Carve's ONNX export, ~208 MB) inpaints the
+# strip a lateral move reveals behind foreground objects — once per scene,
+# CPU. Without it the renderer falls back to OpenCV Telea (smeary) and logs
+# "plate telea". Override the path with PARALLAX_LAMA_PATH.
+RUN curl -fsSL --retry 3 --retry-delay 5 \
+       -o /app/models/lama_fp32.onnx \
+       "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx" \
+  && python3 -c "import os,sys; s=os.path.getsize('/app/models/lama_fp32.onnx'); print('lama model', s, 'bytes'); sys.exit(0 if s > 150_000_000 else 1)"
+
 # Install dependencies. Using `npm install` rather than `npm ci` because
 # the lock file isn't regenerated in the sandbox where edits happen.
 # Tolerates lock-file drift. Regenerate the lock locally + swap to
@@ -83,7 +92,7 @@ COPY . .
 RUN node -e "require('@remotion/renderer').ensureBrowser().then(() => console.log('Chromium ready')).catch(err => { console.error(err); process.exit(1); })"
 
 # v64: prove the sidecar imports and sees the model, at build time.
-RUN python3 tools/parallax.py --check --model /app/models/dav2_small.onnx
+RUN python3 tools/parallax.py --check --model /app/models/dav2_small.onnx --lama /app/models/lama_fp32.onnx
 
 ENV PORT=8787
 ENV NODE_ENV=production
